@@ -31,7 +31,7 @@ jobs:
     name: build-listing
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: https://yergoddamnright.github.io/YGDR-Animator-Editor/
     runs-on: ubuntu-latest
     steps:
       
