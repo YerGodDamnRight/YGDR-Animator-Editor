@@ -1,9 +1,11 @@
 {
-    "name": "VRChatPackageTemplate.Editor",
-    "references": [],
-    "includePlatforms": [
-        "Editor"
+    "name": "com.ygdr.animator.Editor",
+    "rootNamespace": "",
+    "references": [
+        "VRC.SDKBase",
+        "com.ygdr.animator"
     ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
