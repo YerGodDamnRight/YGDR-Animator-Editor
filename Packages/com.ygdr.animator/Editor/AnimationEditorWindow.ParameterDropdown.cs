@@ -10,6 +10,7 @@ namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow
     {
+        /* Opens an AdvancedDropdown listing all controller parameters below rect, invoking onSelected with the chosen name. */
         void ShowParameterDropdown(Rect rect, Action<string> onSelected)
         {
             if (_controller == null || _controller.parameters.Length == 0) return;

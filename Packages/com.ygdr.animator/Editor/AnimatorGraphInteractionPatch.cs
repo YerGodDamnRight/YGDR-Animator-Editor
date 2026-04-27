@@ -24,6 +24,7 @@ namespace YGDR.Editor.Animation
         static HashSet<AnimatorState> _prepasteStateSet;
         static AnimatorStateMachine _pasteSM;
 
+        /* Lazily resolves and caches the m_Graph FieldInfo from the GraphGUI instance type. */
         static FieldInfo MGraphField(object instance) =>
             _mGraphField ??= AccessTools.Field(instance.GetType(), "m_Graph");
 
@@ -176,7 +177,7 @@ namespace YGDR.Editor.Animation
                 {
                     if (states[i].state != newState) continue;
                     var childAnimatorState = states[i];
-                    childAnimatorState.position = new Vector3(mousePos.x - 80, mousePos.y - 22, 0);
+                    childAnimatorState.position = new Vector3(mousePos.x - 100, mousePos.y - 22, 0);
                     states[i] = childAnimatorState;
                     break;
                 }
@@ -233,6 +234,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Updates PatchStateChainTransition.SnapTarget to the center of whichever state node the mouse is over, or null. */
         static void UpdateSnapTarget(object graphGUI, Vector2 mousePos)
         {
             var graph = MGraphField(graphGUI)?.GetValue(graphGUI);
@@ -251,6 +253,7 @@ namespace YGDR.Editor.Animation
             PatchStateChainTransition.SnapTarget = null;
         }
 
+        /* Returns the nodes collection from a graph object, trying the nodes property then the nodes field. */
         internal static IEnumerable GetNodes(object graph)
         {
             var traverse = Traverse.Create(graph);
@@ -326,6 +329,7 @@ namespace YGDR.Editor.Animation
         internal static Rect ChainSourceRect { get; private set; }
         internal static Vector2? SnapTarget { get; set; }
         private static AnimatorState _chainSource;
+        static FieldInfo _stateField;
 
         internal static void Clear()
         {
@@ -350,7 +354,8 @@ namespace YGDR.Editor.Animation
                 var currentEvent = Event.current;
                 if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0) return;
 
-                var nodeState = AccessTools.Field(AnimatorEditorInit.StateNodeType, "state")?.GetValue(__instance) as AnimatorState;
+                _stateField ??= AccessTools.Field(AnimatorEditorInit.StateNodeType, "state");
+                var nodeState = _stateField?.GetValue(__instance) as AnimatorState;
                 if (nodeState == null) return;
 
                 if (currentEvent.control && currentEvent.clickCount == 2)
@@ -389,15 +394,18 @@ namespace YGDR.Editor.Animation
     {
         static AnimatorStateTransition[] _clipboard;
         static AnimatorState _pasteSource;
+        static FieldInfo _stateField;
 
         internal static bool PasteActive { get; private set; }
         internal static Rect PasteSourceRect { get; private set; }
         internal static bool HasClipboard => _clipboard != null && _clipboard.Length > 0;
         internal static int ClipboardCount => _clipboard?.Length ?? 0;
 
+        /* Stores the given transitions as the copy clipboard for later paste. */
         internal static void SetClipboard(AnimatorStateTransition[] transitions) =>
             _clipboard = transitions;
 
+        /* Activates paste mode, recording the source state and its node rect for preview line drawing. */
         internal static void BeginPaste(AnimatorState source, Rect sourceRect)
         {
             PasteActive = true;
@@ -430,7 +438,8 @@ namespace YGDR.Editor.Animation
                 var currentEvent = Event.current;
                 if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0 || currentEvent.clickCount != 1) return;
 
-                var destinationState = AccessTools.Field(AnimatorEditorInit.StateNodeType, "state")?.GetValue(__instance) as AnimatorState;
+                _stateField ??= AccessTools.Field(AnimatorEditorInit.StateNodeType, "state");
+                var destinationState = _stateField?.GetValue(__instance) as AnimatorState;
                 if (destinationState == null || destinationState == _pasteSource) return;
 
                 Undo.RegisterCompleteObjectUndo(_pasteSource, "Paste Transitions");
@@ -449,6 +458,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Copies all timing, interruption, flag, and condition settings from sourceTransition to destinationTransition. */
         static void CopyTransitionSettings(AnimatorStateTransition destinationTransition, AnimatorStateTransition sourceTransition)
         {
             destinationTransition.hasExitTime          = sourceTransition.hasExitTime;

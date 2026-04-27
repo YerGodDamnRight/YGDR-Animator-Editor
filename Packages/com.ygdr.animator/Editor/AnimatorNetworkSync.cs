@@ -23,6 +23,8 @@ namespace YGDR.Editor.Animation
 
     internal static class AnimatorNetworkSync
     {
+        /* Duplicates all states in parentSM into a remote-only mirror layer driven by a sync parameter, wiring IsLocal conditions on all transitions.
+           Adds parameter drivers to original states and optionally packs the mirror states into a sub SM. */
         internal static void NetworkSync(AnimatorStateMachine parentSM, NetworkSyncConfig config)
         {
             var entriesList = new List<(AnimatorState state, Vector3 position)>();
@@ -256,6 +258,7 @@ namespace YGDR.Editor.Animation
             EditorUtility.SetDirty(targetSM);
         }
 
+        /* Returns a set of behaviour types that should be stripped from state copies, based on config flags. */
         static System.Collections.Generic.HashSet<System.Type> BuildRemovedTypeSet(NetworkSyncConfig config)
         {
             var removedTypes = new System.Collections.Generic.HashSet<System.Type>();
@@ -265,6 +268,7 @@ namespace YGDR.Editor.Animation
             return removedTypes;
         }
 
+        /* Recursively collects all states with their node positions from sm and all nested sub state machines. */
         static void CollectStates(AnimatorStateMachine sm, List<(AnimatorState state, Vector3 position)> result)
         {
             foreach (var childState in sm.states)
@@ -273,6 +277,7 @@ namespace YGDR.Editor.Animation
                 CollectStates(childStateMachine.stateMachine, result);
         }
 
+        /* Recursively collects all anyState transitions from sm and all nested sub state machines. */
         static void CollectAnyTransitions(AnimatorStateMachine sm, List<AnimatorStateTransition> result)
         {
             foreach (var anyStateTransition in sm.anyStateTransitions)
@@ -281,6 +286,8 @@ namespace YGDR.Editor.Animation
                 CollectAnyTransitions(childStateMachine.stateMachine, result);
         }
 
+        /* Appends sync conditions to the transition: a single int-equals condition in int mode, or per-bit bool conditions in bool mode.
+           value is the state's index in the sync table; bits are encoded LSB-first across syncParams. */
         static void AddSyncConditions(AnimatorStateTransition transition, bool useBool, string[] syncParams, int value)
         {
             if (!useBool)
@@ -297,6 +304,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns the minimum number of bits needed to represent n distinct integer values. */
         static int BitsRequired(int n)
         {
             if (n <= 1) return 1;
@@ -305,6 +313,7 @@ namespace YGDR.Editor.Animation
             return bits;
         }
 
+        /* Computes the axis-aligned bounding rectangle of the given state node positions. */
         static Rect GetBoundingBox(IEnumerable<(AnimatorState state, Vector3 position)> entries)
         {
             float minX = float.MaxValue, minY = float.MaxValue;

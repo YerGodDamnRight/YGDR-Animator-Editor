@@ -22,6 +22,36 @@ namespace YGDR.Editor.Animation
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color(0.8f, 0.2f, 0.2f) }
             };
+
+            static GUIStyle s_boolBtnTrue;
+            internal static GUIStyle BoolBtnTrue
+            {
+                get
+                {
+                    if (s_boolBtnTrue != null) return s_boolBtnTrue;
+                    s_boolBtnTrue = new GUIStyle(EditorStyles.miniButton) { alignment = TextAnchor.MiddleCenter };
+                    s_boolBtnTrue.normal.textColor  = new Color(0.2f, 0.8f, 0.2f);
+                    s_boolBtnTrue.hover.textColor   = new Color(0.2f, 0.8f, 0.2f);
+                    s_boolBtnTrue.active.textColor  = new Color(0.2f, 0.8f, 0.2f);
+                    s_boolBtnTrue.focused.textColor = new Color(0.2f, 0.8f, 0.2f);
+                    return s_boolBtnTrue;
+                }
+            }
+
+            static GUIStyle s_boolBtnFalse;
+            internal static GUIStyle BoolBtnFalse
+            {
+                get
+                {
+                    if (s_boolBtnFalse != null) return s_boolBtnFalse;
+                    s_boolBtnFalse = new GUIStyle(EditorStyles.miniButton) { alignment = TextAnchor.MiddleCenter };
+                    s_boolBtnFalse.normal.textColor  = new Color(0.8f, 0.2f, 0.2f);
+                    s_boolBtnFalse.hover.textColor   = new Color(0.8f, 0.2f, 0.2f);
+                    s_boolBtnFalse.active.textColor  = new Color(0.8f, 0.2f, 0.2f);
+                    s_boolBtnFalse.focused.textColor = new Color(0.8f, 0.2f, 0.2f);
+                    return s_boolBtnFalse;
+                }
+            }
             internal static readonly GUIStyle TabActive = new(EditorStyles.toolbarButton)
             {
                 fontStyle = FontStyle.Bold,

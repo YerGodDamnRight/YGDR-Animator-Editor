@@ -19,7 +19,8 @@ namespace YGDR.Editor.Animation
         AnimatorStateMachine _activeStateMachine;
         string _controllerName = "—";
         string _layerName = "—";
-        bool _showSharedConditions;
+        UnityEngine.Object _cachedGraph;
+        bool _showSharedConditions = true;
 
         [MenuItem("YGDR/YGDR Animator Editor")]
         static void Open()
@@ -54,12 +55,19 @@ namespace YGDR.Editor.Animation
         {
             if (AnimatorEditorInit.GraphType == null || AnimatorEditorInit.GetActiveStateMachineMethod == null) return;
 
-            var graphs = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.GraphType);
             AnimatorStateMachine activeStateMachine = null;
-            foreach (var graph in graphs)
+            if (_cachedGraph != null)
+                activeStateMachine = AnimatorEditorInit.GetActiveStateMachineMethod.Invoke(_cachedGraph, null) as AnimatorStateMachine;
+
+            if (activeStateMachine == null)
             {
-                activeStateMachine = AnimatorEditorInit.GetActiveStateMachineMethod.Invoke(graph, null) as AnimatorStateMachine;
-                if (activeStateMachine != null) break;
+                _cachedGraph = null;
+                var graphs = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.GraphType);
+                foreach (var graph in graphs)
+                {
+                    activeStateMachine = AnimatorEditorInit.GetActiveStateMachineMethod.Invoke(graph, null) as AnimatorStateMachine;
+                    if (activeStateMachine != null) { _cachedGraph = graph; break; }
+                }
             }
 
             if (activeStateMachine == null)
@@ -88,6 +96,7 @@ namespace YGDR.Editor.Animation
             Repaint();
         }
 
+        /* Returns true if sm is target or recursively contains target as a nested sub state machine. */
         static bool SMContainsOrIs(AnimatorStateMachine sm, AnimatorStateMachine target)
         {
             if (sm == target) return true;
@@ -139,6 +148,7 @@ namespace YGDR.Editor.Animation
             GUILayout.FlexibleSpace();
         }
 
+        /* GUILayout.Button that shows the finger-pointer cursor on hover. */
         static bool CursorBtn(string text, GUIStyle style, params GUILayoutOption[] options)
         {
             bool clicked = GUILayout.Button(text, style, options);
@@ -146,6 +156,7 @@ namespace YGDR.Editor.Animation
             return clicked;
         }
 
+        /* GUI.Button at rect with a finger-pointer cursor (string label overload). */
         static bool CursorBtn(Rect rect, string text, GUIStyle style)
         {
             bool clicked = GUI.Button(rect, text, style);
@@ -153,6 +164,7 @@ namespace YGDR.Editor.Animation
             return clicked;
         }
 
+        /* GUI.Button at rect with a finger-pointer cursor (GUIContent overload for tooltip support). */
         static bool CursorBtn(Rect rect, GUIContent content, GUIStyle style)
         {
             bool clicked = GUI.Button(rect, content, style);
@@ -160,6 +172,7 @@ namespace YGDR.Editor.Animation
             return clicked;
         }
 
+        /* Draws a full-width dark header bar containing label, spanning edge-to-edge regardless of scroll indent. */
         static void DrawSectionHeader(string label)
         {
             var rect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
@@ -175,7 +188,7 @@ namespace YGDR.Editor.Animation
             var rect = EditorGUILayout.GetControlRect(false, 18f, GUILayout.ExpandWidth(true));
             EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.3f));
             GUI.Label(rect, "Created by YerGodDamnRight", Styles.FooterLabel);
-            GUI.Label(rect, "V0.8.0", Styles.FooterVersion);
+            GUI.Label(rect, "V0.9.1", Styles.FooterVersion);
         }
 
         static void DrawSeparator()

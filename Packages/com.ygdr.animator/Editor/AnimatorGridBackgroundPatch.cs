@@ -69,6 +69,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Emits GL.LINES for a uniform grid of vertical and horizontal lines at gridSize spacing within gridRect. */
         static void DrawGridLinesGL(Rect gridRect, float gridSize)
         {
             if (gridSize < 1f) gridSize = 1f;
@@ -84,6 +85,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws a uniform grid of 1px-wide vertical and horizontal rects at gridSize spacing within gridRect using EditorGUI.DrawRect. Used in image-background mode where GL cannot be mixed with GUI texture calls. */
         static void DrawGridRectsGUI(Rect gridRect, float gridSize, Color color)
         {
             if (gridSize < 1f) gridSize = 1f;

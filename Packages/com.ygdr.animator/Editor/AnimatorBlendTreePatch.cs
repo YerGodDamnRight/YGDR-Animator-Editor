@@ -38,10 +38,8 @@ namespace YGDR.Editor.Animation
         static MethodBase TargetMethod()
         {
             var graphGUIType = AccessTools.TypeByName("UnityEditor.Graphs.AnimationBlendTree.GraphGUI");
-            Debug.Log($"[YGDR BT] GraphGUI type: {graphGUIType?.FullName ?? "NULL"}");
             if (graphGUIType == null) return null;
             var method = AccessTools.Method(graphGUIType, "NodeGUI");
-            Debug.Log($"[YGDR BT] NodeGUI: {method?.Name ?? "NULL"}");
             return method;
         }
 
@@ -58,6 +56,7 @@ namespace YGDR.Editor.Animation
         static GUIStyle _nameLabelStyle;
         static Color _nameLabelColor;
 
+        /* Returns a centered label style for the node title, rebuilding the cached instance only when color changes. */
         static GUIStyle GetNameLabelStyle(Color color)
         {
             if (_nameLabelStyle != null && _nameLabelColor == color) return _nameLabelStyle;
@@ -75,6 +74,7 @@ namespace YGDR.Editor.Animation
         static GUIStyle _blendTypeLabelStyle;
         static Color _blendTypeLabelColor;
 
+        /* Returns a small bold label style for the blend type badge, rebuilding the cached instance only when color changes. */
         static GUIStyle GetBlendTypeLabelStyle(Color color)
         {
             if (_blendTypeLabelStyle != null && _blendTypeLabelColor == color) return _blendTypeLabelStyle;
@@ -89,12 +89,13 @@ namespace YGDR.Editor.Animation
             return _blendTypeLabelStyle;
         }
 
+        /* Returns a short display string for a blend tree type (e.g. "1D", "2D Simple", "Direct"). */
         static string BlendTypeLabel(BlendTreeType blendType) => blendType switch
         {
             BlendTreeType.Simple1D              => "1D",
             BlendTreeType.SimpleDirectional2D   => "2D Simple",
-            BlendTreeType.FreeformDirectional2D => "Freeform Dir",
-            BlendTreeType.FreeformCartesian2D   => "Freeform Cart",
+            BlendTreeType.FreeformDirectional2D => "Free Dir",
+            BlendTreeType.FreeformCartesian2D   => "Free Cart",
             BlendTreeType.Direct                => "Direct",
             _                                   => blendType.ToString()
         };
@@ -162,6 +163,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws an inline TextField over the node title for rename input, committing on Enter and cancelling on Escape. */
         static void DrawRenameField(Motion motion, Rect titleRect)
         {
             const string controlName = "BlendTreeRenameField";
@@ -213,8 +215,7 @@ namespace YGDR.Editor.Animation
             var graphGUIType = AccessTools.TypeByName("UnityEditor.Graphs.AnimationBlendTree.GraphGUI");
             if (graphGUIType == null) return null;
             var method = AccessTools.Method(graphGUIType, "OnGraphGUI");
-            Debug.Log($"[YGDR BT] OnGraphGUI: {method?.Name ?? "NULL"}");
-            return method;
+return method;
         }
 
         static FieldInfo _varPinInField;
@@ -223,6 +224,7 @@ namespace YGDR.Editor.Animation
         static Color[] _savedVarPinOutColors;
         static Color[] _savedEditorLabelColors;
 
+        /* Lazily resolves and caches a static GUIStyle field from UnityEditor.Graphs.Styles by name. */
         static GUIStyle ResolveStyleField(ref FieldInfo cache, string fieldName)
         {
             if (cache != null) return cache.GetValue(null) as GUIStyle;
@@ -232,6 +234,7 @@ namespace YGDR.Editor.Animation
             return cache?.GetValue(null) as GUIStyle;
         }
 
+        /* Replaces text color in all 8 GUIStyleState slots of style with color, returning the originals for later restore. */
         static Color[] OverrideSlotTextColors(GUIStyle style, Color color)
         {
             if (style == null) return null;
@@ -247,6 +250,7 @@ namespace YGDR.Editor.Animation
             return saved;
         }
 
+        /* Overwrites a single GUIStyleState's textColor with color and saves the original into savedColor. */
         static void ApplyState(GUIStyleState state, Color color, ref Color savedColor, out GUIStyleState result)
         {
             savedColor = state.textColor;
@@ -254,6 +258,7 @@ namespace YGDR.Editor.Animation
             result = state;
         }
 
+        /* Restores all 8 GUIStyleState text colors on style from the array returned by OverrideSlotTextColors. */
         static void RestoreSlotTextColors(GUIStyle style, Color[] saved)
         {
             if (style == null || saved == null) return;
@@ -267,6 +272,7 @@ namespace YGDR.Editor.Animation
             RestoreState(style.onFocused, saved[7], out var s7); style.onFocused = s7;
         }
 
+        /* Restores a single GUIStyleState's textColor from a previously saved value. */
         static void RestoreState(GUIStyleState state, Color savedColor, out GUIStyleState result)
         {
             state.textColor = savedColor;
@@ -391,6 +397,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns true if destNode is a blend tree node that is neither the dragging node nor one of its ancestors. */
         static bool IsValidDropTarget(object destNode)
         {
             if (ReferenceEquals(destNode, BlendTreeReparentState.DraggingNode)) return false;
@@ -403,7 +410,7 @@ namespace YGDR.Editor.Animation
             return true;
         }
 
-        // Returns true if potentialAncestor is in node's ancestor chain (cycle guard)
+        /* Returns true if potentialAncestor appears anywhere in node's parent chain, used to prevent reparent cycles. */
         static bool IsAncestor(object potentialAncestor, object node)
         {
             var cursor = Traverse.Create(node).Property("parent").GetValue();
@@ -415,6 +422,7 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
+        /* Returns the first graph node whose position rect contains mousePos, or null if none match. */
         static object FindNodeUnderMouse(object graphGUI, Vector2 mousePos)
         {
             var graph = Traverse.Create(graphGUI).Property("graph").GetValue();
@@ -429,6 +437,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Moves the dragging node from its current parent blend tree to destNode's blend tree, preserving threshold and position. */
         static void ExecuteReparent(object graphGUI, object destNode)
         {
             var draggingNode = BlendTreeReparentState.DraggingNode;
@@ -466,6 +475,7 @@ namespace YGDR.Editor.Animation
             RebuildGraph(graphGUI);
         }
 
+        /* Returns the index of motion in blendTree.children, or -1 if not found. */
         static int FindMotionIndex(BlendTree blendTree, Motion motion)
         {
             var children = blendTree.children;
@@ -476,6 +486,7 @@ namespace YGDR.Editor.Animation
             return -1;
         }
 
+        /* Draws a line from the dragging node to the mouse and highlights valid drop targets with a green overlay. */
         static void DrawDragPreview(object graphGUI, Vector2 mousePos)
         {
             var draggingRect = Traverse.Create(BlendTreeReparentState.DraggingNode).Field("position").GetValue<Rect>();
@@ -501,6 +512,7 @@ namespace YGDR.Editor.Animation
 
         // --- Clip drag-drop ---
 
+        /* Updates DragAndDrop.visualMode to Copy when the mouse is over a node, or Rejected otherwise. */
         static void HandleClipDragUpdated(object graphGUI, Vector2 mousePos)
         {
             if (GetDraggedClip() == null)
@@ -514,6 +526,7 @@ namespace YGDR.Editor.Animation
                 : DragAndDropVisualMode.Rejected;
         }
 
+        /* Performs the clip drop: adds as a new child if the target is a blend tree node, or replaces motion if target is a leaf. */
         static void HandleClipDragPerform(object graphGUI, Vector2 mousePos)
         {
             var clip = GetDraggedClip();
@@ -537,6 +550,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Adds clip as a new child of blendTree, auto-sets its threshold via extrapolation, and rebuilds the graph. */
         static void AddClipToBlendTree(object graphGUI, BlendTree blendTree, AnimationClip clip)
         {
             Undo.RegisterCompleteObjectUndo(blendTree, "Add Motion to Blend Tree");
@@ -546,6 +560,7 @@ namespace YGDR.Editor.Animation
             RebuildGraph(graphGUI);
         }
 
+        /* Replaces the motion on a leaf node with clip by writing directly to the parent blend tree's children array. */
         static void ReplaceLeafMotion(object graphGUI, object node, AnimationClip clip)
         {
             var parentNode = Traverse.Create(node).Property("parent").GetValue();
@@ -567,7 +582,7 @@ namespace YGDR.Editor.Animation
             RebuildGraph(graphGUI);
         }
 
-        // Reimplemented from ILSpy: SetNewThresholdOnLastChild on GraphGUI
+        /* Sets the last child's threshold by extrapolating from the two preceding children; uses 0 if there is only one child. */
         static void SetNewThresholdOnLastChild(BlendTree blendTree)
         {
             if (blendTree.useAutomaticThresholds) return;
@@ -586,6 +601,7 @@ namespace YGDR.Editor.Animation
             blendTree.children = children;
         }
 
+        /* Calls BuildFromBlendTree on the internal graph object to refresh blend tree node layout after a structural change. */
         static void RebuildGraph(object graphGUI)
         {
             var graph = Traverse.Create(graphGUI).Property("graph").GetValue();
@@ -662,6 +678,7 @@ namespace YGDR.Editor.Animation
         internal static string RenameText;
         internal static bool JustStarted;
 
+        /* Initializes the rename session for motion, storing the node reference and pre-filling the text field with the current name. */
         internal static void Begin(Motion motion, object node)
         {
             RenameTarget     = motion;

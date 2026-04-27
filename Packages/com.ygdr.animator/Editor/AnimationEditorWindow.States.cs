@@ -75,6 +75,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Truncates text to fit within maxWidth pixels using style's CalcSize, appending an ellipsis when trimmed. */
         static string TruncateToFit(string text, GUIStyle style, float maxWidth)
         {
             if (style.CalcSize(new GUIContent(text)).x <= maxWidth) return text;
@@ -132,7 +133,34 @@ namespace YGDR.Editor.Animation
                         EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.name != first.name);
                         EditorGUI.BeginChangeCheck();
                         string newName = EditorGUILayout.TextField(empty ? "" : first.name);
-                        if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.name = newName);
+                        if (EditorGUI.EndChangeCheck())
+                        {
+                            if (multi)
+                            {
+                                var layerStateNames = CollectLayerStateNamesExcluding(_selectedStates);
+                                int nextIndex = 1;
+                                for (int i = 0; i < _selectedStates.Length; i++)
+                                {
+                                    string candidate;
+                                    if (i == 0)
+                                    {
+                                        candidate = newName;
+                                    }
+                                    else
+                                    {
+                                        do { candidate = newName + " " + nextIndex++; } while (layerStateNames.Contains(candidate));
+                                    }
+                                    layerStateNames.Add(candidate);
+                                    Undo.RecordObject(_selectedStates[i], "Edit State");
+                                    _selectedStates[i].name = candidate;
+                                    EditorUtility.SetDirty(_selectedStates[i]);
+                                }
+                            }
+                            else
+                            {
+                                SetStateOnAll(state => state.name = newName);
+                            }
+                        }
                         EditorGUI.showMixedValue = false;
                     }
 
@@ -411,6 +439,7 @@ namespace YGDR.Editor.Animation
             return result;
         }
 
+        /* Draws one row of the shared parameter driver list: name dropdown, type popup, value/range/chance field (adapted to param type and ChangeType), and remove button. */
         void DrawDriverParamRow(DriverParamEntry entry)
         {
             var row = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
@@ -495,6 +524,7 @@ namespace YGDR.Editor.Animation
                 RemoveDriverParam(entry);
         }
 
+        /* Returns a shallow copy of original with any provided fields overridden. Used to produce immutable replacements for driver parameter rows. */
         static VRC_AvatarParameterDriver.Parameter CloneParam(
             VRC_AvatarParameterDriver.Parameter original,
             string name = null,
@@ -513,6 +543,7 @@ namespace YGDR.Editor.Animation
             chance   = chance   ?? original.chance
         };
 
+        /* Replaces the parameter at entry's position across all selected states' drivers with replacement, matched by DriverParamsMatch. */
         void ReplaceDriverParam(DriverParamEntry entry, VRC_AvatarParameterDriver.Parameter replacement)
         {
             foreach (var state in _selectedStates)
@@ -527,6 +558,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Removes entry's parameter from every selected state's driver, destroying the driver component entirely if its list becomes empty. */
         void RemoveDriverParam(DriverParamEntry entry)
         {
             foreach (var state in _selectedStates)
@@ -577,6 +609,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns the index of the first parameter in driver.parameters that matches target via DriverParamsMatch, or -1 if not found. */
         static int FindDriverParamIndex(VRCAvatarParameterDriver driver, VRC_AvatarParameterDriver.Parameter target)
         {
             var parameters = driver.parameters;
@@ -585,6 +618,7 @@ namespace YGDR.Editor.Animation
             return -1;
         }
 
+        /* Returns true if a and b share the same name, type, and value fields (uses min/max/chance for Random type). */
         static bool DriverParamsMatch(VRC_AvatarParameterDriver.Parameter a, VRC_AvatarParameterDriver.Parameter b)
         {
             if (a.name != b.name || a.type != b.type) return false;
@@ -598,6 +632,7 @@ namespace YGDR.Editor.Animation
         static VRCAvatarParameterDriver GetDriverForState(AnimatorState state)
             => state.behaviours.OfType<VRCAvatarParameterDriver>().FirstOrDefault();
 
+        /* Returns the existing VRCAvatarParameterDriver on state, or adds and registers a new one via Undo. */
         static VRCAvatarParameterDriver GetOrCreateDriver(AnimatorState state)
         {
             var driver = state.behaviours.OfType<VRCAvatarParameterDriver>().FirstOrDefault();
@@ -845,6 +880,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws the foldable clips list with a size int field and a ReorderableList for editing, reordering, and removing audio clips across all statesWithAudio. */
         void DrawPlayAudioClipsList(AnimatorState[] statesWithAudio)
         {
             var first = GetAudioForState(statesWithAudio[0]);
@@ -1016,6 +1052,7 @@ namespace YGDR.Editor.Animation
         static VRCAnimatorPlayAudio GetAudioForState(AnimatorState state)
             => state.behaviours.OfType<VRCAnimatorPlayAudio>().FirstOrDefault();
 
+        /* Returns the existing VRCAnimatorPlayAudio on state, or adds and registers a new one via Undo. */
         static VRCAnimatorPlayAudio GetOrCreateAudio(AnimatorState state)
         {
             var audio = state.behaviours.OfType<VRCAnimatorPlayAudio>().FirstOrDefault();
@@ -1123,6 +1160,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws a single tracking body-part row with label and three radio toggles (NoChange/Tracking/Animation), applying set to all selected states on change. */
         void DrawTrackingRow(
             string label,
             AnimatorState[] statesWithTracking,
@@ -1150,6 +1188,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws one radio Toggle for targetType; sets all selected states to targetType via set when clicked while not already selected. */
         void DrawTrackingRadio(
             AnimatorState[] statesWithTracking,
             Func<VRCAnimatorTrackingControl, VRC_AnimatorTrackingControl.TrackingType> get,
@@ -1177,6 +1216,7 @@ namespace YGDR.Editor.Animation
         static VRCAnimatorTrackingControl GetTrackingForState(AnimatorState state)
             => state.behaviours.OfType<VRCAnimatorTrackingControl>().FirstOrDefault();
 
+        /* Returns the existing VRCAnimatorTrackingControl on state, or adds and registers a new one via Undo. */
         static VRCAnimatorTrackingControl GetOrCreateTracking(AnimatorState state)
         {
             var tracking = state.behaviours.OfType<VRCAnimatorTrackingControl>().FirstOrDefault();
@@ -1187,6 +1227,7 @@ namespace YGDR.Editor.Animation
             return tracking;
         }
 
+        /* Draws a "Set All" radio toggle that sets every tracking field on all selected states to targetType when clicked. */
         void DrawSetAllTrackingRadio(
             AnimatorState[] statesWithTracking,
             VRC_AnimatorTrackingControl.TrackingType targetType,
@@ -1207,12 +1248,14 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns true if every tracking field on ctrl equals type, used to determine "Set All" radio state. */
         static bool TrackingAllFieldsAre(VRCAnimatorTrackingControl ctrl, VRC_AnimatorTrackingControl.TrackingType type)
             => ctrl.trackingHead == type && ctrl.trackingLeftHand == type && ctrl.trackingRightHand == type
             && ctrl.trackingHip == type && ctrl.trackingLeftFoot == type && ctrl.trackingRightFoot == type
             && ctrl.trackingLeftFingers == type && ctrl.trackingRightFingers == type
             && ctrl.trackingEyes == type && ctrl.trackingMouth == type;
 
+        /* Sets every tracking body-part field on ctrl to type in a single statement. */
         static void TrackingSetAllFields(VRCAnimatorTrackingControl ctrl, VRC_AnimatorTrackingControl.TrackingType type)
         {
             ctrl.trackingHead = ctrl.trackingLeftHand = ctrl.trackingRightHand = ctrl.trackingHip =
@@ -1246,6 +1289,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Builds a forward-slash path from sourceTransform up to root (exclusive). Returns "/name" prefixed with slash when root is null, indicating no avatar descriptor was found. */
         static string GetAudioSourcePath(Transform sourceTransform, Transform root)
         {
             string path = sourceTransform.name;
@@ -1256,6 +1300,7 @@ namespace YGDR.Editor.Animation
 
         // ── Helpers ───────────────────────────────────────────────────────────
 
+        /* Draws an EditorGUILayout.Popup listing all Int parameters in the active controller and returns the selected parameter name. */
         string DrawIntParamDropdown(string current)
         {
             string[] intParameterNames = _controller != null
@@ -1276,6 +1321,7 @@ namespace YGDR.Editor.Animation
             return intParameterNames[selectedIndex];
         }
 
+        /* Draws an EditorGUILayout.Popup listing all Float parameters in the active controller and returns the selected parameter name. */
         string DrawFloatParamDropdown(string current)
         {
             string[] floatParameterNames = _controller != null
@@ -1296,6 +1342,7 @@ namespace YGDR.Editor.Animation
             return floatParameterNames[selectedIndex];
         }
 
+        /* Sets Selection.objects to all outgoing transitions from every state in states. */
         internal static void SelectOutgoingTransitions(AnimatorState[] states)
         {
             Selection.objects = states
@@ -1304,6 +1351,7 @@ namespace YGDR.Editor.Animation
                 .ToArray();
         }
 
+        /* Sets Selection.objects to all transitions across all layers of controller that point to any state in states. */
         internal static void SelectIncomingTransitions(AnimatorController controller, AnimatorState[] states)
         {
             if (controller == null) return;
@@ -1314,6 +1362,7 @@ namespace YGDR.Editor.Animation
             Selection.objects = incoming.Cast<UnityEngine.Object>().ToArray();
         }
 
+        /* Recursively collects into result all anyState and state transitions within sm (and nested sub SMs) whose destinationState is in targets. */
         static void CollectIncoming(AnimatorStateMachine sm, HashSet<AnimatorState> targets, List<AnimatorStateTransition> result)
         {
             foreach (var transition in sm.anyStateTransitions)
@@ -1329,6 +1378,7 @@ namespace YGDR.Editor.Animation
 
         // ── Alignment ─────────────────────────────────────────────────────────
 
+        /* Aligns all selected states to the X (vertical=true) or Y (vertical=false) coordinate of the last selected state, using the last-selected state as anchor. */
         void AlignStates(bool vertical)
         {
             if (_selectedStates.Length < 2 || _controller == null) return;
@@ -1349,6 +1399,7 @@ namespace YGDR.Editor.Animation
             EditorUtility.SetDirty(_controller);
         }
 
+        /* Evenly spaces all selected states along the vertical or horizontal axis between their minimum and maximum coordinate. */
         void DistributeStates(bool vertical)
         {
             if (_selectedStates.Length < 3 || _controller == null) return;
@@ -1394,6 +1445,7 @@ namespace YGDR.Editor.Animation
                 RegisterSMUndosRecursive(layer.stateMachine, name);
         }
 
+        /* Registers a complete object undo for sm and all nested sub state machines under name. */
         static void RegisterSMUndosRecursive(AnimatorStateMachine sm, string name)
         {
             Undo.RegisterCompleteObjectUndo(sm, name);
@@ -1401,6 +1453,7 @@ namespace YGDR.Editor.Animation
                 RegisterSMUndosRecursive(childStateMachine.stateMachine, name);
         }
 
+        /* Moves each state in targets found within sm (or its descendants) to match anchor's X (vertical) or Y (horizontal) coordinate. Removes found states from targets to avoid double-visiting. */
         static void ApplyAlignment(AnimatorStateMachine sm, HashSet<AnimatorState> targets, bool vertical, Vector2 anchor)
         {
             var states = sm.states;
@@ -1423,6 +1476,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Writes the pre-computed positions from newPositions to each matching state in sm and its descendants, removing found states from targets. */
         static void ApplyDistribution(AnimatorStateMachine sm, HashSet<AnimatorState> targets, Dictionary<AnimatorState, Vector2> newPositions)
         {
             var states = sm.states;
@@ -1443,6 +1497,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Searches all layers of the active controller for target and returns its node position, or null if not found. */
         Vector2? FindStatePosition(AnimatorState target)
         {
             foreach (var layer in _controller.layers)
@@ -1453,6 +1508,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Recursively searches sm and nested sub SMs for target, returning the node position or null. */
         static Vector2? FindStatePositionInSM(AnimatorStateMachine sm, AnimatorState target)
         {
             foreach (var childState in sm.states)
@@ -1465,6 +1521,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Applies mutate to every selected state under a single Undo.RecordObject call per state. */
         void SetStateOnAll(Action<AnimatorState> mutate)
         {
             foreach (var state in _selectedStates)
@@ -1473,6 +1530,27 @@ namespace YGDR.Editor.Animation
                 mutate(state);
                 EditorUtility.SetDirty(state);
             }
+        }
+
+        /* Returns the set of all state names across every layer of the active controller, excluding the states in exclude. Used to find available names when batch-renaming. */
+        HashSet<string> CollectLayerStateNamesExcluding(AnimatorState[] exclude)
+        {
+            var excludeSet = new HashSet<AnimatorState>(exclude);
+            var names = new HashSet<string>();
+            if (_controller == null) return names;
+            foreach (var layer in _controller.layers)
+                CollectStateNamesExcluding(layer.stateMachine, excludeSet, names);
+            return names;
+        }
+
+        /* Recursively adds state names from sm and all nested sub SMs into names, skipping any state present in exclude. */
+        static void CollectStateNamesExcluding(AnimatorStateMachine sm, HashSet<AnimatorState> exclude, HashSet<string> names)
+        {
+            foreach (var childState in sm.states)
+                if (!exclude.Contains(childState.state))
+                    names.Add(childState.state.name);
+            foreach (var childStateMachine in sm.stateMachines)
+                CollectStateNamesExcluding(childStateMachine.stateMachine, exclude, names);
         }
     }
 }

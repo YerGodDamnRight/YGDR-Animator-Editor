@@ -45,6 +45,9 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool  transitionOverlayEnabled          = false;
         [SerializeField] internal bool  transitionIndicatorArrowsEnabled  = true;
         [SerializeField] internal Color transitionOverlayColor            = new Color(1.0f, 1.0f, 1.0f, 1.0f);
+        [SerializeField] internal bool  transitionSelectionColorEnabled    = true;
+        [SerializeField] internal Color transitionIncomingColor           = new Color(0.2f, 0.9f, 0.3f, 1.0f);
+        [SerializeField] internal Color transitionOutgoingColor           = new Color(1.0f, 0.45f, 0.1f, 1.0f);
         [SerializeField] internal Color transitionOverlayArrowColor       = new Color(0.6f, 0.6f, 0.6f, 1.0f);
         [SerializeField] internal Color transitionArrowNoConditionColor   = new Color(1.0f, 0.28f, 0.0f, 1.0f);
         [SerializeField] internal Color transitionArrowInstantColor       = new Color(0.0f, 0.25f, 0.66f, 1.0f);
@@ -75,6 +78,7 @@ namespace YGDR.Editor.Animation
 
         // Node colors
         [SerializeField] internal bool  nodeColorEnabled      = false;
+        [SerializeField] internal bool  nodeColor3DEnabled    = false;
         [SerializeField] internal Color stateNodeColor        = new(0.30f, 0.30f, 0.30f, 1f);
         [SerializeField] internal Color defaultStateColor     = new(0.60f, 0.35f, 0.10f, 1f);
         [SerializeField] internal Color subStateMachineColor  = new(0.35f, 0.25f, 0.50f, 1f);
@@ -146,6 +150,7 @@ namespace YGDR.Editor.Animation
 
         // ── Creation defaults ─────────────────────────────────────────────────
 
+        /* Applies all configured transition defaults (exit time, duration, interruption, etc.) to the given transition. */
         internal static void ApplyTransitionDefaults(AnimatorStateTransition transition)
         {
             var settings = Load();
@@ -161,6 +166,7 @@ namespace YGDR.Editor.Animation
             transition.canTransitionToSelf = settings.transCanTransitionToSelf;
         }
 
+        /* Applies all configured state defaults (tag, speed, mirror, WD, IK, etc.) to the given state. */
         internal static void ApplyStateDefaults(AnimatorState state)
         {
             var settings = Load();

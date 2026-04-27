@@ -57,27 +57,6 @@ namespace YGDR.Editor.Animation
             var offLayers   = layers.Where(layer => GetLayerWDState(layer) == WDState.Off).ToArray();
             var mixedLayers = layers.Where(layer => GetLayerWDState(layer) == WDState.Mixed).ToArray();
 
-            // Mixed
-            if (mixedLayers.Length > 0)
-            {
-                EditorGUILayout.Space(4);
-                using (new EditorGUILayout.HorizontalScope(Styles.SectionHeader))
-                    GUILayout.Label("Mixed", Styles.HeaderLabel, GUILayout.Height(24));
-
-                foreach (var layer in mixedLayers)
-                {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        GUILayout.Label(layer.name, Styles.SmallLabel);
-                        GUILayout.FlexibleSpace();
-                        if (CursorBtn("→ On", Styles.IconBtn, GUILayout.Width(52)))
-                            SetLayerWD(layer, true);
-                        if (CursorBtn("→ Off", Styles.IconBtn, GUILayout.Width(52)))
-                            SetLayerWD(layer, false);
-                    }
-                }
-            }
-
             // WD On / WD Off — 4-quarter grid: [name][→][←][name]
             EditorGUILayout.Space(4);
 
@@ -91,14 +70,11 @@ namespace YGDR.Editor.Animation
             float quarterWidth = halfWidth / 2f;
 
             // Headers
+            GUI.Label(new Rect(rect.x, rect.y, rect.width, 24f), GUIContent.none, Styles.SectionHeader);
             GUI.Label(new Rect(rect.x,             rect.y, halfWidth, 24f), "WD On",  WDHeaderStyle);
             GUI.Label(new Rect(rect.x + halfWidth, rect.y, halfWidth, 24f), "WD Off", WDHeaderStyle);
 
-            // Separator
-            var separatorColor = EditorGUIUtility.isProSkin ? new Color(0.13f, 0.13f, 0.13f) : new Color(0.6f, 0.6f, 0.6f);
-            EditorGUI.DrawRect(new Rect(rect.x, rect.y + 26f, rect.width, 1f), separatorColor);
-
-            float rowY = rect.y + 28f;
+            float rowY = rect.y + 26f;
 
             if (maxRows == 0)
             {
@@ -122,6 +98,34 @@ namespace YGDR.Editor.Animation
 
                     if (hasOff)
                         GUI.Label(new Rect(rect.x + halfWidth + quarterWidth, rowY, quarterWidth, lineHeight), offLayers[i].name, WDLabelStyle);
+                }
+            }
+
+            // Mixed
+            if (mixedLayers.Length > 0)
+            {
+                EditorGUILayout.Space(4);
+                using (new EditorGUILayout.HorizontalScope(Styles.SectionHeader))
+                {
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label("Mixed", WDHeaderStyle, GUILayout.Height(24));
+                    GUILayout.FlexibleSpace();
+                }
+
+                foreach (var layer in mixedLayers)
+                {
+                    var rowRect    = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+                    float btnWidth  = 48f;
+                    float gap       = 8f;
+                    float nameWidth = WDLabelStyle.CalcSize(new GUIContent(layer.name)).x;
+                    float groupWidth = btnWidth + gap + nameWidth + gap + btnWidth;
+                    float groupX    = rowRect.x + (rowRect.width - groupWidth) / 2f;
+
+                    if (CursorBtn(new Rect(groupX, rowRect.y, btnWidth, rowRect.height), "← On", Styles.IconBtn))
+                        SetLayerWD(layer, true);
+                    GUI.Label(new Rect(groupX + btnWidth + gap, rowRect.y, nameWidth, rowRect.height), layer.name, WDLabelStyle);
+                    if (CursorBtn(new Rect(groupX + btnWidth + gap + nameWidth + gap, rowRect.y, btnWidth, rowRect.height), "→ Off", Styles.IconBtn))
+                        SetLayerWD(layer, false);
                 }
             }
         }
@@ -211,6 +215,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws a two-button exclusive toggle row with a left-aligned label and cursor-rect on both buttons. */
         static void DrawNetworkToggleRow(string label, ref bool value, string falseLabel, string trueLabel)
         {
             var rect           = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
@@ -229,6 +234,7 @@ namespace YGDR.Editor.Animation
 
         // ── WD helpers ────────────────────────────────────────────────────────
 
+        /* Returns On, Off, or Mixed depending on whether states in the layer have Write Defaults enabled, disabled, or both. */
         WDState GetLayerWDState(AnimatorControllerLayer layer)
         {
             bool hasOn = false, hasOff = false;
@@ -237,6 +243,7 @@ namespace YGDR.Editor.Animation
             return hasOn ? WDState.On : WDState.Off;
         }
 
+        /* Recursively sets hasOn and hasOff flags based on writeDefaultValues across all states in sm and its sub SMs. */
         static void CollectWDState(AnimatorStateMachine sm, ref bool hasOn, ref bool hasOff)
         {
             foreach (var childState in sm.states)
@@ -248,12 +255,14 @@ namespace YGDR.Editor.Animation
                 CollectWDState(childStateMachine.stateMachine, ref hasOn, ref hasOff);
         }
 
+        /* Sets Write Defaults on all states in a layer recursively and marks the controller dirty. */
         void SetLayerWD(AnimatorControllerLayer layer, bool value)
         {
             SetSMWD(layer.stateMachine, value);
             EditorUtility.SetDirty(_controller);
         }
 
+        /* Recursively sets writeDefaultValues on all states in sm and its sub SMs, registering each for undo. */
         static void SetSMWD(AnimatorStateMachine sm, bool value)
         {
             Undo.RegisterCompleteObjectUndo(sm, "Set Write Defaults");

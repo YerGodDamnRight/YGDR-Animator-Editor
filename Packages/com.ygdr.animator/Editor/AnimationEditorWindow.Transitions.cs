@@ -67,6 +67,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Simulates the pill layout to compute the total height needed for GetControlRect before drawing. */
         float CalcPillsHeight(float areaW, float pillH, float gap)
         {
             float currentX = 4f;
@@ -81,6 +82,7 @@ namespace YGDR.Editor.Animation
             return rows * (pillH + gap);
         }
 
+        /* Returns a "Source → Destination" display string for a transition, resolving anyState, exit, and SM destinations. */
         string GetTransitionLabel(AnimatorStateTransition transition)
         {
             string sourceName = FindSrcName(_controller, transition) ?? "Any State";
@@ -91,6 +93,7 @@ namespace YGDR.Editor.Animation
             return $"{sourceName} → {destinationName}";
         }
 
+        /* Searches all layers in the controller for the state that owns the transition, returning its name or null. */
         static string FindSrcName(AnimatorController controller, AnimatorStateTransition transition)
         {
             if (controller == null) return null;
@@ -102,6 +105,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Recursively searches sm and its sub-SMs for the state or anyState that owns the transition, returning its name. */
         static string FindSrcInSM(AnimatorStateMachine sm, AnimatorStateTransition transition)
         {
             if (sm.anyStateTransitions.Contains(transition)) return "Any State";
@@ -315,6 +319,8 @@ namespace YGDR.Editor.Animation
             return result;
         }
 
+        /* Draws one condition row: parameter dropdown, mode/value controls, and a remove button.
+           Layout is split into parameter (50%), mode (25%), value, and remove columns. */
         void DrawConditionRow(int rowIdx, CondEntry entry)
         {
             var row = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
@@ -353,13 +359,9 @@ namespace YGDR.Editor.Animation
             if (parameterType == AnimatorControllerParameterType.Bool)
             {
                 bool isTrue = condition.mode != AnimatorConditionMode.IfNot;
-                float toggleWidth = EditorGUIUtility.singleLineHeight;
-                var toggleRect = new Rect(conditionModeRect.x + (conditionModeRect.width - toggleWidth) * 0.5f, conditionModeRect.y, toggleWidth, conditionModeRect.height);
-                EditorGUI.BeginChangeCheck();
-                isTrue = EditorGUI.Toggle(toggleRect, isTrue);
-                if (EditorGUI.EndChangeCheck())
-                    ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = isTrue ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, threshold = 0f });
-                GUI.Label(valueRect, isTrue ? "True" : "False", isTrue ? Styles.CondTrue : Styles.CondFalse);
+                var boolButtonRect = new Rect(conditionModeRect.x, conditionModeRect.y, conditionModeRect.width + valueColumnWidth, conditionModeRect.height);
+                if (CursorBtn(boolButtonRect, isTrue ? "True" : "False", isTrue ? Styles.BoolBtnTrue : Styles.BoolBtnFalse))
+                    ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = isTrue ? AnimatorConditionMode.IfNot : AnimatorConditionMode.If, threshold = 0f });
             }
             else if (parameterType != AnimatorControllerParameterType.Trigger)
             {
@@ -396,6 +398,7 @@ namespace YGDR.Editor.Animation
                 RemoveConditionFromTargets(entry);
         }
 
+        /* Looks up the parameter type by name from the active controller, defaulting to Float if not found. */
         AnimatorControllerParameterType GetParamType(string paramName)
         {
             var parameter = _controller?.parameters.FirstOrDefault(x => x.name == paramName);
@@ -428,6 +431,7 @@ namespace YGDR.Editor.Animation
             _                             => mode.ToString()
         };
 
+        /* Replaces the entry's condition with replacement on one transition (individual mode) or all selected transitions (shared mode). */
         void ReplaceConditionOnTargets(CondEntry entry, AnimatorCondition replacement)
         {
             if (!_showSharedConditions)
@@ -446,6 +450,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Removes the entry's condition from one transition (individual mode) or from all selected transitions (shared mode). */
         void RemoveConditionFromTargets(CondEntry entry)
         {
             IEnumerable<AnimatorStateTransition> targets = _showSharedConditions
@@ -489,6 +494,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns the logical inverse of a condition mode (If↔IfNot, Equals↔NotEqual, Greater↔Less). */
         static AnimatorConditionMode ReverseMode(AnimatorConditionMode mode) => mode switch
         {
             AnimatorConditionMode.If       => AnimatorConditionMode.IfNot,
@@ -500,6 +506,7 @@ namespace YGDR.Editor.Animation
             _                             => mode
         };
 
+        /* Returns the index of the condition matching target by parameter name and mode, or -1 if not found. */
         static int FindConditionIndex(AnimatorStateTransition transition, AnimatorCondition target)
         {
             var conditions = transition.conditions;
@@ -509,6 +516,7 @@ namespace YGDR.Editor.Animation
             return -1;
         }
 
+        /* Clears and re-adds all conditions on the transition, substituting replacement at replaceIdx. */
         static void RebuildConditions(AnimatorStateTransition transition, int replaceIdx, AnimatorCondition replacement)
         {
             Undo.RecordObject(transition, "Edit Condition");
@@ -611,6 +619,7 @@ namespace YGDR.Editor.Animation
             EditorUtility.SetDirty(controller);
         }
 
+        /* Creates a new transition in sm with the same source/destination topology as original (anyState, exit, state, or SM). */
         static AnimatorStateTransition CreateMatchingTransition(AnimatorStateMachine sm, AnimatorState srcState, bool isAnyState, AnimatorStateTransition original)
         {
             if (isAnyState)
@@ -626,6 +635,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Copies all timing, interruption, and flag settings from sourceTransition to destinationTransition (no conditions). */
         static void CopyTransitionSettings(AnimatorStateTransition sourceTransition, AnimatorStateTransition destinationTransition)
         {
             destinationTransition.hasExitTime = sourceTransition.hasExitTime;
@@ -640,6 +650,7 @@ namespace YGDR.Editor.Animation
             destinationTransition.canTransitionToSelf = sourceTransition.canTransitionToSelf;
         }
 
+        /* Returns the SM that directly contains the transition (as anyState or as a state's transition), searching all layers. */
         static AnimatorStateMachine FindOwnerSM(AnimatorController controller, AnimatorStateTransition transition)
         {
             foreach (var layer in controller.layers)
@@ -650,6 +661,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Recursively searches sm and its sub-SMs for the one that directly contains the transition. */
         static AnimatorStateMachine FindOwnerSMRecursive(AnimatorStateMachine sm, AnimatorStateTransition transition)
         {
             if (sm.anyStateTransitions.Contains(transition)) return sm;
@@ -663,6 +675,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Removes a transition from sm's anyState list or from the source state that owns it. */
         static void DeleteTransition(AnimatorStateMachine sm, AnimatorStateTransition transition)
         {
             if (sm.anyStateTransitions.Contains(transition))
@@ -680,6 +693,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns a stable string key identifying the transition's source (anystate or state instance ID), used to group transitions for merge. */
         static string GetSrcKey(AnimatorController controller, AnimatorStateTransition transition)
         {
             if (controller == null) return "?";
@@ -702,6 +716,7 @@ namespace YGDR.Editor.Animation
 
         // ── Utility ───────────────────────────────────────────────────────────
 
+        /* Applies mutate to every selected transition with undo recording, then marks each dirty. */
         void SetOnAll(Action<AnimatorStateTransition> mutate)
         {
             foreach (var transition in _selectedTransitions)

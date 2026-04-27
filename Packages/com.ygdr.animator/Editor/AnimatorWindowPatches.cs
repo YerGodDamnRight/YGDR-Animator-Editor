@@ -202,7 +202,7 @@ namespace YGDR.Editor.Animation
     [HarmonyPriority(Priority.Low)]
     internal static class PatchParameterContextMenu
     {
-        // Find the ReorderableList field by type since the name is internal
+        /* Finds the ReorderableList field on a ParameterControllerView instance by type, since the field name is internal. */
         static ReorderableList FindParamList(object instance)
         {
             foreach (var field in instance.GetType().GetFields(
@@ -249,6 +249,7 @@ namespace YGDR.Editor.Animation
             menu.ShowAsContext();
         }
 
+        /* Changes the type of a parameter at the given index and fixes all affected transition conditions across all layers. */
         static void ConvertParameter(UnityEditor.Animations.AnimatorController controller, int index,
             UnityEngine.AnimatorControllerParameterType newType)
         {
@@ -266,6 +267,7 @@ namespace YGDR.Editor.Animation
                 FixConditionsForConversion(layer.stateMachine, paramName, sourceType, newType);
         }
 
+        /* Recursively updates conditions on all transitions in sm that reference paramName to match the new parameter type. */
         static void FixConditionsForConversion(UnityEditor.Animations.AnimatorStateMachine sm, string paramName,
             UnityEngine.AnimatorControllerParameterType sourceType, UnityEngine.AnimatorControllerParameterType newType)
         {
@@ -295,6 +297,7 @@ namespace YGDR.Editor.Animation
                 FixConditionsForConversion(childStateMachine.stateMachine, paramName, sourceType, newType);
         }
 
+        /* Maps a condition to the nearest valid mode for newType (e.g. Equals→If when Int→Bool), returning false if no mapping exists. */
         static bool TryConvertCondition(UnityEditor.Animations.AnimatorCondition condition,
             UnityEngine.AnimatorControllerParameterType sourceType, UnityEngine.AnimatorControllerParameterType newType,
             out UnityEditor.Animations.AnimatorCondition result)
@@ -415,6 +418,7 @@ namespace YGDR.Editor.Animation
             menu.ShowAsContext();
         }
 
+        /* Snapshots the selected layer and its state machine to the layer clipboard and Unity's built-in pasteboard. */
         static void CopyLayer(object layerView)
         {
             var reorderableList = (ReorderableList)WindowPatchReflection.LayerListField.GetValue(layerView);
@@ -424,6 +428,7 @@ namespace YGDR.Editor.Animation
             Unsupported.CopyStateMachineDataToPasteboard(_layerClipboard.stateMachine, controller, reorderableList.index);
         }
 
+        /* Duplicates the clipboard layer below the selected one, promoting the pasted sub-SM and syncing parameters if cross-controller. */
         static void PasteLayer(object layerView)
         {
             if (_layerClipboard == null) return;
@@ -486,6 +491,7 @@ namespace YGDR.Editor.Animation
             Traverse.Create(layerView).Property("selectedLayerIndex").SetValue(targetIndex);
         }
 
+        /* Applies clipboard layer properties (mask, weight, blending) to the selected layer without touching its state machine. */
         static void PasteLayerSettings(object layerView)
         {
             if (_layerClipboard == null) return;
@@ -496,6 +502,7 @@ namespace YGDR.Editor.Animation
             controller.layers = layers;
         }
 
+        /* Copies avatar mask, blending mode, weight, IK pass, and sync settings from sourceLayer to destinationLayer. */
         static void PasteLayerProperties(UnityEditor.Animations.AnimatorControllerLayer destinationLayer, UnityEditor.Animations.AnimatorControllerLayer sourceLayer)
         {
             destinationLayer.avatarMask                = sourceLayer.avatarMask;
@@ -506,6 +513,7 @@ namespace YGDR.Editor.Animation
             destinationLayer.syncedLayerIndex          = sourceLayer.syncedLayerIndex;
         }
 
+        /* Recursively collects all parameters referenced by states and transitions in sm into queued, for cross-controller paste sync. */
         static void GatherSmParams(UnityEditor.Animations.AnimatorStateMachine sm,
             ref Dictionary<string, UnityEngine.AnimatorControllerParameter> src,
             ref Dictionary<string, UnityEngine.AnimatorControllerParameter> queued)
@@ -534,6 +542,7 @@ namespace YGDR.Editor.Animation
                 GatherSmParams(childStateMachine.stateMachine, ref src, ref queued);
         }
 
+        /* Recursively collects all parameters referenced by a blend tree (blend params + direct child params) into queued. */
         static void GatherBtParams(UnityEditor.Animations.BlendTree blendTree,
             ref Dictionary<string, UnityEngine.AnimatorControllerParameter> src,
             ref Dictionary<string, UnityEngine.AnimatorControllerParameter> queued)
@@ -608,6 +617,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Recursively tallies writeDefaultValues-on and -off state counts across sm and all nested sub state machines. */
         static void CountWD(UnityEditor.Animations.AnimatorStateMachine sm, ref int writeDefaultsOnCount, ref int writeDefaultsOffCount)
         {
             foreach (var childState in sm.states)
@@ -678,6 +688,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Renders content as a miniLabel inside a GUILayout.BeginArea bounded by rect. */
         static void DrawBarLabel(Rect rect, GUIContent content)
         {
             GUILayout.BeginArea(rect);

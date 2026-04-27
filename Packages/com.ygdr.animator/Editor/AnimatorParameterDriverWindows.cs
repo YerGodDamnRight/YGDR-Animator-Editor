@@ -26,6 +26,7 @@ namespace YGDR.Editor.Animation
             public float Value;
         }
 
+        /* Opens the Add Parameter Driver window scoped to the given states, pre-populating the parameter list from the controller. */
         internal static void Open(AnimatorStateMachine stateMachine, AnimatorState[] states)
         {
             var window = GetWindow<AddParameterDriverWindow>(true, "Add Parameter Driver");
@@ -148,6 +149,7 @@ namespace YGDR.Editor.Animation
             public float Value;
         }
 
+        /* Opens the Multi Transition Conditions window for the selected transitions, pre-loading their existing conditions. */
         internal static void Open(AnimatorStateMachine stateMachine, AnimatorStateTransition[] transitions)
         {
             var window = GetWindow<MultiTransitionConditionsWindow>(true, "Multi Transition Conditions");
@@ -178,6 +180,7 @@ namespace YGDR.Editor.Animation
             Repaint();
         }
 
+        /* Builds a TransitionEntry from a transition's current conditions, mapping each to a parameter index and mode. */
         TransitionEntry BuildEntry(AnimatorStateTransition transition)
         {
             var entry = new TransitionEntry { Transition = transition, Label = GetLabel(_stateMachine, transition) };
@@ -297,6 +300,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Enumerates the GUI control names of all numeric value fields, used to implement Tab key focus cycling. */
         List<string> BuildValueControlNames()
         {
             var names = new List<string>();
@@ -328,6 +332,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Returns a "Source → Destination" label for a transition within the given SM, resolving anyState and exit cases. */
         static string GetLabel(AnimatorStateMachine stateMachine, AnimatorStateTransition transition)
         {
             string sourceName;
@@ -364,6 +369,7 @@ namespace YGDR.Editor.Animation
 
         readonly List<int> _selections = new(); // -1 = none
 
+        /* Opens the Remove Parameter Drivers window scoped to the given states, listing all parameters from the controller. */
         internal static void Open(AnimatorStateMachine stateMachine, AnimatorState[] states)
         {
             var window = GetWindow<RemoveParameterDriverWindow>(true, "Remove Parameter Drivers");
@@ -454,6 +460,7 @@ namespace YGDR.Editor.Animation
             GUI.enabled = true;
         }
 
+        /* Removes all VRCAvatarParameterDrivers from each state that reference any parameter in paramNames. */
         void Apply(HashSet<string> paramNames)
         {
             if (_states == null || paramNames.Count == 0) return;

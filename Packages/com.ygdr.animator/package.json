@@ -1,9 +1,8 @@
 {
   "name": "com.ygdr.animator",
   "displayName": "YGDR Animator Editor",
-  "version": "0.8.0",
+  "version": "0.9.1",
   "description": "Unity Animator Editor extended QOL features",
-  "dependencies": {},
   "gitDependencies": {},
   "vpmDependencies": {
     "com.vrchat.base": "^3.10.3"

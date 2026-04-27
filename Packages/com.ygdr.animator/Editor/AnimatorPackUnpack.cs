@@ -9,6 +9,8 @@ namespace YGDR.Editor.Animation
 {
     internal static class AnimatorPackUnpack
     {
+        /* Moves the selected states into a new child sub state machine positioned at their centroid.
+           Uses direct array reassignment to avoid destroying the state sub-assets. */
         internal static void Pack(AnimatorStateMachine parentSM, AnimatorState[] selectedStates)
         {
             if (selectedStates == null || selectedStates.Length == 0) return;
@@ -59,6 +61,8 @@ namespace YGDR.Editor.Animation
             MarkDirty(controller, parentSM);
         }
 
+        /* Extracts all states and nested sub SMs from subStateMachine back into parentSM, then destroys the now-empty container.
+           State positions are preserved as they were stored as absolute coordinates during Pack. */
         internal static void Unpack(AnimatorStateMachine parentSM, AnimatorStateMachine subStateMachine)
         {
             if (subStateMachine == null) return;
@@ -107,7 +111,8 @@ namespace YGDR.Editor.Animation
             MarkDirty(controller, parentSM);
         }
 
-        // Places Entry, Any State, Exit, and parent portal above the bounding box of the given positions.
+        /* Positions the Entry, AnyState, Exit, and Parent nodes above the bounding box of the given state positions.
+           Used after Pack/Unpack to keep control nodes from overlapping state nodes. */
         internal static void ApplyBoundingBoxNodePositions(AnimatorStateMachine stateMachine, IEnumerable<Vector3> statePositions)
         {
             var positions = statePositions.ToArray();

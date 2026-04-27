@@ -21,13 +21,13 @@ namespace YGDR.Editor.Animation
             DrawGraphGridSection(settings);
             DrawSeparator();
             EditorGUILayout.Space(4);
+            DrawNodeColorsSection(settings);
+            DrawSeparator();
+            EditorGUILayout.Space(4);
             DrawOverlaySection(settings);
             DrawSeparator();
             EditorGUILayout.Space(4);
             DrawTransitionOverlaySection(settings);
-            DrawSeparator();
-            EditorGUILayout.Space(4);
-            DrawNodeColorsSection(settings);
             DrawSeparator();
             EditorGUILayout.Space(4);
             DrawTransitionDefaultsSection(settings);
@@ -113,6 +113,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws a labeled color field row with a Reset button that restores defaultColor and auto-saves. */
         void DrawGraphGridColorRow(string label, ref Color color, Color defaultColor, AnimatorDefaultSettings settings)
         {
             using (new EditorGUILayout.HorizontalScope())
@@ -219,6 +220,10 @@ namespace YGDR.Editor.Animation
                     if (EditorGUI.EndChangeCheck()) { settings.transitionShowLabel = showLabel; settings.Save(); }
                     GUILayout.Space(6);
                     EditorGUI.BeginChangeCheck();
+                    bool selectionColor = EditorGUILayout.ToggleLeft("Selection Colors", settings.transitionSelectionColorEnabled, GUILayout.Width(120));
+                    if (EditorGUI.EndChangeCheck()) { settings.transitionSelectionColorEnabled = selectionColor; settings.Save(); }
+                    GUILayout.Space(6);
+                    EditorGUI.BeginChangeCheck();
                     bool arrows = EditorGUILayout.ToggleLeft("Indicator Arrows", settings.transitionIndicatorArrowsEnabled, GUILayout.Width(115));
                     if (EditorGUI.EndChangeCheck()) { settings.transitionIndicatorArrowsEnabled = arrows; settings.Save(); }
                     GUILayout.Space(6);
@@ -228,8 +233,19 @@ namespace YGDR.Editor.Animation
                 }
 
                 DrawNodeColorRow("Transition Line",    ref settings.transitionOverlayColor,         new Color(1.0f, 1.0f, 1.0f, 1.0f), settings);
-                DrawNodeColorRow("No Condition ▶", ref settings.transitionArrowNoConditionColor, new Color(1.0f, 0.28f, 0.0f, 1.0f),  settings);
-                DrawNodeColorRow("Instant ▶", ref settings.transitionArrowInstantColor,     new Color(0.0f, 0.25f, 0.66f, 1.0f), settings);
+
+                using (new EditorGUI.DisabledScope(!settings.transitionSelectionColorEnabled))
+                {
+                    DrawNodeColorRow("Selection In",   ref settings.transitionIncomingColor,        new Color(0.0f, 1.0f, 1.0f, 1.0f), settings);
+                    DrawNodeColorRow("Selection Out",  ref settings.transitionOutgoingColor,        new Color(1.0f, 0.0f, 1.0f, 1.0f), settings);
+                }
+
+                using (new EditorGUI.DisabledScope(!settings.transitionIndicatorArrowsEnabled))
+                {
+                    DrawNodeColorRow("Default ▶",       ref settings.transitionOverlayArrowColor,    new Color(0.6f, 0.6f, 0.6f, 1.0f), settings);
+                    DrawNodeColorRow("No Condition ▶",  ref settings.transitionArrowNoConditionColor, new Color(1.0f, 0.28f, 0.0f, 1.0f), settings);
+                    DrawNodeColorRow("Instant ▶",       ref settings.transitionArrowInstantColor,     new Color(0.0f, 0.25f, 0.66f, 1.0f), settings);
+                }
             }
         }
 
@@ -260,6 +276,18 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUI.DisabledScope(!settings.nodeColorEnabled))
             {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("Visual Style", GUILayout.Width(115));
+                    EditorGUI.BeginChangeCheck();
+                    bool is3D = EditorGUILayout.ToggleLeft("Flat / 3D", settings.nodeColor3DEnabled);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        settings.nodeColor3DEnabled = is3D;
+                        settings.Save();
+                        PatchNodeStyles.Invalidate();
+                    }
+                }
                 DrawNodeColorRow("State Nodes",       ref settings.stateNodeColor,       new(0.30f, 0.30f, 0.30f, 1f), settings);
                 DrawNodeColorRow("Default State",     ref settings.defaultStateColor,    new(0.60f, 0.35f, 0.10f, 1f), settings);
                 DrawNodeColorRow("Sub State Machine", ref settings.subStateMachineColor, new(0.35f, 0.25f, 0.50f, 1f), settings);
@@ -269,6 +297,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Draws a labeled color field row with a Reset button that restores defaultColor and auto-saves. Shared by node color and transition overlay color rows. */
         void DrawNodeColorRow(string label, ref Color color, Color defaultColor, AnimatorDefaultSettings settings)
         {
             using (new EditorGUILayout.HorizontalScope())

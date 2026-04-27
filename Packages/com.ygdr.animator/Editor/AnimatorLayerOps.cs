@@ -9,6 +9,8 @@ namespace YGDR.Editor.Animation
 {
     internal static class AnimatorLayerOps
     {
+        /* Clears all anyState, entry, and state transitions in the top-level SM.
+           Does not recurse into sub state machines. */
         internal static void DeleteAllTransitions(AnimatorStateMachine stateMachine)
         {
             if (stateMachine == null) return;
@@ -32,6 +34,8 @@ namespace YGDR.Editor.Animation
             if (controller != null) AssetDatabase.SaveAssets();
         }
 
+        /* Creates a reversed copy of each selected transition with all conditions negated.
+           Skips anyState, exit, and sub-SM-destination transitions. */
         internal static void ReverseNegateTransitions(AnimatorStateMachine activeSM, AnimatorStateTransition[] transitions)
         {
             if (transitions == null || transitions.Length == 0) return;
@@ -80,6 +84,7 @@ namespace YGDR.Editor.Animation
             AssetDatabase.SaveAssets();
         }
 
+        /* Adds an empty transition from every source state to every destination state (full cross-product). */
         internal static void MultiTransition(AnimatorStateMachine activeSM, AnimatorState[] sourceStates, AnimatorState[] destinationStates)
         {
             if (sourceStates == null || destinationStates == null || sourceStates.Length == 0 || destinationStates.Length == 0) return;
@@ -96,6 +101,8 @@ namespace YGDR.Editor.Animation
             AssetDatabase.SaveAssets();
         }
 
+        /* For each selected transition, adds a copy pointing to each new destination state with all settings preserved.
+           Original transitions are not removed. */
         internal static void RedirectTransitions(AnimatorStateMachine activeSM, AnimatorStateTransition[] transitions, AnimatorState[] destinationStates)
         {
             if (transitions == null || destinationStates == null || destinationStates.Length == 0) return;
@@ -124,6 +131,8 @@ namespace YGDR.Editor.Animation
             AssetDatabase.SaveAssets();
         }
 
+        /* Duplicates each selected transition onto every new source state, keeping the original destinations and all settings.
+           Original transitions on the original sources are not removed. */
         internal static void ReplicateTransitions(AnimatorStateMachine activeSM, AnimatorStateTransition[] transitions, AnimatorState[] newSourceStates)
         {
             if (transitions == null || newSourceStates == null || newSourceStates.Length == 0) return;
@@ -150,6 +159,7 @@ namespace YGDR.Editor.Animation
             AssetDatabase.SaveAssets();
         }
 
+        /* Copies all conditions, timing, interruption, and flag settings from sourceTransition to destinationTransition. */
         static void CopyTransitionSettings(AnimatorStateTransition sourceTransition, AnimatorStateTransition destinationTransition)
         {
             foreach (var condition in sourceTransition.conditions)
@@ -165,6 +175,8 @@ namespace YGDR.Editor.Animation
             destinationTransition.solo = sourceTransition.solo;
         }
 
+        /* Recursively searches the SM hierarchy to find which state owns the given transition.
+           Returns null if the transition belongs to anyState or is not found in this subtree. */
         static AnimatorState FindStateContainingTransition(AnimatorStateMachine stateMachine, AnimatorStateTransition transition)
         {
             // Search direct states
@@ -184,6 +196,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        /* Returns the logical inverse of a condition mode (If↔IfNot, Greater↔Less, Equals↔NotEqual). */
         static AnimatorConditionMode NegateConditionMode(AnimatorConditionMode mode)
         {
             return mode switch

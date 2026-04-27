@@ -10,6 +10,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
+
 namespace YGDR.Editor.Animation
 {
     // ── State nodes ───────────────────────────────────────────────────────────
@@ -96,22 +97,27 @@ namespace YGDR.Editor.Animation
                 var graphPosition = Vector2.zero;
                 if (settings.overlayEnabled && settings.overlayShowCoords)
                 {
-                    _nodeGraphGetter ??= AccessTools.Method(__instance.GetType(), "get_graph");
-                    var graph = _nodeGraphGetter?.Invoke(__instance, null);
+                    if (_nodeGraphInvoker == null)
+                        _nodeGraphInvoker = MethodInvoker.GetHandler(AccessTools.Method(__instance.GetType(), "get_graph"));
+                    var graph = _nodeGraphInvoker?.Invoke(__instance);
                     if (graph != null)
                     {
-                        _activeStateMachineGetter ??= AccessTools.Method(graph.GetType(), "get_activeStateMachine");
-                        var activeSM = _activeStateMachineGetter?.Invoke(graph, null) as AnimatorStateMachine;
+                        if (_activeStateMachineInvoker == null)
+                            _activeStateMachineInvoker = MethodInvoker.GetHandler(AccessTools.Method(graph.GetType(), "get_activeStateMachine"));
+                        var activeSM = _activeStateMachineInvoker?.Invoke(graph) as AnimatorStateMachine;
                         if (activeSM != null)
                         {
-                            foreach (var childState in activeSM.states)
+                            bool stale = activeSM != _positionCacheSM
+                                      || EditorApplication.timeSinceStartup - _positionCacheTime > 0.02;
+                            if (stale)
                             {
-                                if (childState.state == state)
-                                {
-                                    graphPosition = new Vector2(childState.position.x, childState.position.y);
-                                    break;
-                                }
+                                _positionCacheSM   = activeSM;
+                                _positionCacheTime = EditorApplication.timeSinceStartup;
+                                _positionCache.Clear();
+                                foreach (var childState in activeSM.states)
+                                    _positionCache[childState.state] = new Vector2(childState.position.x, childState.position.y);
                             }
+                            _positionCache.TryGetValue(state, out graphPosition);
                         }
                     }
                 }
@@ -125,6 +131,7 @@ namespace YGDR.Editor.Animation
             catch (Exception e) { Debug.LogError($"[YGDR] State node overlay error: {e}"); }
         }
 
+        /* Draws all enabled overlay indicators (loop, empty, B, WD, S, M, motion name, coords) around the node rect according to settings. */
         static void DrawIndicators(AnimatorState state, Rect nodeRect, AnimatorDefaultSettings settings, Vector2 graphPosition)
         {
             var previousContentColor = GUI.contentColor;
@@ -186,6 +193,7 @@ namespace YGDR.Editor.Animation
             GUI.contentColor = previousContentColor;
         }
 
+        /* Returns true if motion is a looping AnimationClip, or a BlendTree whose every child motion is non-null and looping (recursive). */
         static bool IsLooping(Motion motion)
         {
             if (motion is AnimationClip clip) return clip.isLooping;
@@ -197,9 +205,13 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
-        static FieldInfo  _stateField;
-        static MethodInfo _nodeGraphGetter;
-        static MethodInfo _activeStateMachineGetter;
+        static FieldInfo           _stateField;
+        static FastInvokeHandler   _nodeGraphInvoker;
+        static FastInvokeHandler   _activeStateMachineInvoker;
+
+        static AnimatorStateMachine                        _positionCacheSM;
+        static double                                      _positionCacheTime;
+        static readonly Dictionary<AnimatorState, Vector2> _positionCache = new();
 
         static AnimatorState GetState(object node)
         {
@@ -219,6 +231,7 @@ namespace YGDR.Editor.Animation
             normal    = { textColor = Color.white },
         };
 
+        /* Draws the state name as a bold centred label above the node rect using settings.overlayActiveColor. */
         static void DrawNodeNameLabel(AnimatorState state, Rect nodeRect, AnimatorDefaultSettings settings)
         {
             var previousContentColor = GUI.contentColor;
@@ -239,6 +252,7 @@ namespace YGDR.Editor.Animation
 
         static bool _renameFieldHadFocus;
 
+        /* Draws an inline TextField above the node for renaming state; commits on Enter/focus-loss, cancels on Escape. */
         static void DrawRenameField(AnimatorState state, Rect nodeRect)
         {
             const string controlName = "StateRenameField";
@@ -281,6 +295,7 @@ namespace YGDR.Editor.Animation
 
         static bool _motionRenameFieldHadFocus;
 
+        /* Draws an inline TextField in the motion-name overlay area for renaming the state's motion asset; commits on Enter/focus-loss, cancels on Escape. */
         static void DrawMotionRenameField(AnimatorState state, Rect nodeRect)
         {
             const string controlName = "MotionRenameField";
@@ -324,31 +339,71 @@ namespace YGDR.Editor.Animation
     // ── Drag-and-drop clip onto existing node ─────────────────────────────────
 
     // Intercepts AnimatorStateMachine.AddState(name, position) during drag-and-drop.
-    // If the drop position lands within an existing node's rect, assigns the clip
-    // to that state and skips creating a new one.
+    // Single clip on existing node: assigns clip without creating a new state.
+    // Multiple clips: creates one state per clip, cascaded diagonally from drop position.
     [HarmonyPatch(typeof(AnimatorStateMachine), "AddState", new[] { typeof(string), typeof(Vector3) })]
     internal static class PatchAddStateDrop
     {
+        static int[]  _activeDropClipIds  = Array.Empty<int>();
+        static int    _activeDropCallIndex = 0;
+        static bool   _handlingDrop        = false;
+
         [HarmonyPrefix]
         static bool Prefix(AnimatorStateMachine __instance, Vector3 position, ref AnimatorState __result)
         {
+            if (_handlingDrop) return true;
             try
             {
-                var clip = DragAndDrop.objectReferences.OfType<AnimationClip>().FirstOrDefault();
-                if (clip == null) return true;
+                var clips = DragAndDrop.objectReferences.OfType<AnimationClip>().ToArray();
+                if (clips.Length == 0) return true;
 
-                const float nodeW = 200f, nodeH = 40f;
-                foreach (var childState in __instance.states)
+                // Single clip on existing node: assign without creating new state
+                if (clips.Length == 1)
                 {
-                    var nodeRect = new Rect(childState.position.x, childState.position.y, nodeW, nodeH);
-                    if (!nodeRect.Contains(new Vector2(position.x, position.y))) continue;
+                    const float nodeW = 200f, nodeH = 40f;
+                    foreach (var childState in __instance.states)
+                    {
+                        var nodeRect = new Rect(childState.position.x, childState.position.y, nodeW, nodeH);
+                        if (!nodeRect.Contains(new Vector2(position.x, position.y))) continue;
 
-                    Undo.RegisterCompleteObjectUndo(childState.state, "Assign Motion Clip");
-                    childState.state.motion = clip;
-                    EditorUtility.SetDirty(childState.state);
-                    __result = childState.state;
-                    return false;
+                        Undo.RegisterCompleteObjectUndo(childState.state, "Assign Motion Clip");
+                        childState.state.motion = clips[0];
+                        EditorUtility.SetDirty(childState.state);
+                        __result = childState.state;
+                        return false;
+                    }
+                    return true;
                 }
+
+                // Multiple clips: track call index per drop operation
+                var clipIds = clips.Select(c => c.GetInstanceID()).ToArray();
+                bool isSameDrop = clipIds.SequenceEqual(_activeDropClipIds) && _activeDropCallIndex < clips.Length;
+                if (!isSameDrop)
+                {
+                    _activeDropClipIds  = clipIds;
+                    _activeDropCallIndex = 0;
+                }
+
+                int callIndex = _activeDropCallIndex++;
+                if (callIndex >= clips.Length) return true;
+
+                const float cascadeStep = 20f;
+                var cascadePosition = position + new Vector3(callIndex * cascadeStep, callIndex * cascadeStep, 0f);
+
+                _handlingDrop = true;
+                try
+                {
+                    var newState = __instance.AddState(clips[callIndex].name, cascadePosition);
+                    if (newState != null)
+                    {
+                        Undo.RegisterCompleteObjectUndo(newState, "Drag Drop Clips");
+                        newState.motion = clips[callIndex];
+                        EditorUtility.SetDirty(newState);
+                    }
+                    __result = newState;
+                }
+                finally { _handlingDrop = false; }
+                return false;
             }
             catch (Exception e) { Debug.LogError($"[YGDR] AddState drop error: {e}"); }
             return true;
@@ -364,7 +419,7 @@ namespace YGDR.Editor.Animation
     internal static class PatchNodeStyles
     {
         static readonly Dictionary<string, GUIStyle> _styleCache = new();
-        static readonly Dictionary<(Color, bool, bool), Texture2D> _texCache = new();
+        static readonly Dictionary<(Color, bool, bool, bool), Texture2D> _texCache = new();
 
         static Texture2D _baseNode;
         static Texture2D _baseNodeActive;
@@ -372,6 +427,7 @@ namespace YGDR.Editor.Animation
         static Texture2D _baseSubSMActive;
 
         static (Color state, Color def, Color subSM, Color entry, Color exit, Color any) _cachedColors;
+        static bool _cached3DEnabled;
 
         [HarmonyTargetMethods]
         static IEnumerable<MethodBase> TargetMethods()
@@ -402,13 +458,15 @@ namespace YGDR.Editor.Animation
 
                 bool isSubStateMachine = styleName == "node hex";
                 var nodeColor          = ResolveColor(styleName, color, settings);
-                var texKey             = (nodeColor, isSubStateMachine, on);
+                var texKey             = (nodeColor, isSubStateMachine, on, settings.nodeColor3DEnabled);
 
                 if (!_texCache.TryGetValue(texKey, out var nodeTexture))
                 {
-                    var baseNormal       = isSubStateMachine ? _baseSubSM       : _baseNode;
+                    var baseNormal        = isSubStateMachine ? _baseSubSM       : _baseNode;
                     var baseActiveTexture = isSubStateMachine ? _baseSubSMActive : _baseNodeActive;
-                    nodeTexture = on ? CompositeClone(baseNormal, nodeColor, baseActiveTexture) : TintClone(baseNormal, nodeColor);
+                    nodeTexture = settings.nodeColor3DEnabled
+                        ? (on ? GradientCompositeClone(baseNormal, nodeColor, baseActiveTexture) : GradientTintClone(baseNormal, nodeColor))
+                        : (on ? CompositeClone(baseNormal, nodeColor, baseActiveTexture)         : TintClone(baseNormal, nodeColor));
                     _texCache[texKey] = nodeTexture;
                 }
 
@@ -423,25 +481,28 @@ namespace YGDR.Editor.Animation
             catch (Exception e) { Debug.LogError($"[YGDR] Node style error: {e}"); }
         }
 
-        static Color ResolveColor(string styleName, int colorIndex, AnimatorDefaultSettings s)
+        /* Maps the style name and Unity color index to the corresponding user-configured node color from settings. */
+        static Color ResolveColor(string styleName, int colorIndex, AnimatorDefaultSettings settings)
         {
-            if (styleName == "node hex") return s.subStateMachineColor;
+            if (styleName == "node hex") return settings.subStateMachineColor;
             return colorIndex switch
             {
-                5 => s.defaultStateColor,
-                3 => s.entryNodeColor,
-                6 => s.exitNodeColor,
-                2 => s.anyStateNodeColor,
-                _ => s.stateNodeColor
+                5 => settings.defaultStateColor,
+                3 => settings.entryNodeColor,
+                6 => settings.exitNodeColor,
+                2 => settings.anyStateNodeColor,
+                _ => settings.stateNodeColor
             };
         }
 
-        static bool ColorsChanged(AnimatorDefaultSettings s)
+        /* Returns true if any node color or the 3D flag differs from the cached snapshot, and updates the cache. Used to decide when to rebuild the texture cache. */
+        static bool ColorsChanged(AnimatorDefaultSettings settings)
         {
-            var current = (s.stateNodeColor, s.defaultStateColor, s.subStateMachineColor,
-                           s.entryNodeColor, s.exitNodeColor, s.anyStateNodeColor);
-            if (_cachedColors == current) return false;
-            _cachedColors = current;
+            var current = (settings.stateNodeColor, settings.defaultStateColor, settings.subStateMachineColor,
+                           settings.entryNodeColor, settings.exitNodeColor, settings.anyStateNodeColor);
+            if (_cachedColors == current && _cached3DEnabled == settings.nodeColor3DEnabled) return false;
+            _cachedColors    = current;
+            _cached3DEnabled = settings.nodeColor3DEnabled;
             return true;
         }
 
@@ -466,6 +527,7 @@ namespace YGDR.Editor.Animation
             _styleCache.Clear();
         }
 
+        /* Returns a new RGBA32 texture with every pixel of sourceTexture multiplied by tint. The result is not readable (Apply(false, false)) and is flagged HideAndDontSave. */
         static Texture2D TintClone(Texture2D sourceTexture, Color tint)
         {
             if (sourceTexture == null) return null;
@@ -479,7 +541,7 @@ namespace YGDR.Editor.Animation
             return resultTexture;
         }
 
-        // Tints base then alpha-composites overlay on top (selection highlight over tinted node).
+        /* Tints baseTexture by tint then alpha-composites overlay on top, producing a selection-highlight texture over a tinted node. */
         static Texture2D CompositeClone(Texture2D baseTexture, Color tint, Texture2D overlay)
         {
             if (baseTexture == null) return null;
@@ -504,6 +566,126 @@ namespace YGDR.Editor.Animation
             return resultTexture;
         }
 
+        /* Returns a new texture with tint applied and a vertical brightness gradient plus per-edge rim highlights baked in, giving nodes a 3D lit appearance. */
+        static Texture2D GradientTintClone(Texture2D sourceTexture, Color tint)
+        {
+            if (sourceTexture == null) return null;
+            int width = sourceTexture.width, height = sourceTexture.height;
+            var resultTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+
+            // ── Gradient tuning ──────────────────────────────────────────
+            const float GradientTopBrightness    = 1.0f;  // multiplier at top of node
+            const float GradientBottomBrightness = 0.75f; // multiplier at bottom of node
+            const float TopRimWidth              = 3f;   // pixels tall for top highlight
+            const float LeftRimWidth             = 4f;    // pixels wide — narrower because texture bevel is wider on left
+            const float RightRimWidth            = 6f;   // pixels wide for right highlight
+            const float SideRimFadeHeight        = 0.55f; // fraction of height over which side rim fades (0=top, 1=bottom)
+            const float TopRimStrength           = 0.65f; // top edge highlight strength (0–1)
+            const float LeftRimStrength          = 1.0f;  // left edge strength
+            const float RightRimStrength         = 1.0f;  // right edge strength
+            const float RimHighlightBrightness   = 0.85f; // target brightness of highlight (0=black, 1=white)
+            // ─────────────────────────────────────────────────────────────
+
+            // Separate source/output so neighbor reads are unaffected by writes
+            var sourcePixels = sourceTexture.GetPixels();
+            var outputPixels = new Color[sourcePixels.Length];
+            int topRimW   = Mathf.Max(1, (int)TopRimWidth);
+            int leftRimW  = Mathf.Max(1, (int)LeftRimWidth);
+            int rightRimW = Mathf.Max(1, (int)RightRimWidth);
+            int maxRimW   = Mathf.Max(topRimW, Mathf.Max(leftRimW, rightRimW));
+
+            // Unity GetPixels: row 0 = bottom, row height-1 = top
+            for (int i = 0; i < sourcePixels.Length; i++)
+            {
+                var sourcePixel = sourcePixels[i];
+                if (sourcePixel.a < 0.02f) { outputPixels[i] = Color.clear; continue; }
+
+                int x = i % width;
+                int y = i / width;
+
+                // t = 0 at top, 1 at bottom
+                float t          = height > 1 ? 1f - (float)y / (height - 1) : 0f;
+                float tSmooth    = t * t * (3f - 2f * t);
+                float brightness = Mathf.Lerp(GradientTopBrightness, GradientBottomBrightness, tSmooth);
+
+                var resultColor = new Color(
+                    Mathf.Clamp01(tint.r * sourcePixel.r * brightness),
+                    Mathf.Clamp01(tint.g * sourcePixel.g * brightness),
+                    Mathf.Clamp01(tint.b * sourcePixel.b * brightness),
+                    sourcePixel.a * tint.a
+                );
+
+                // Scan for nearest transparent pixel in each direction — works for any shape
+                int distUp = topRimW + 1, distLeft = leftRimW + 1, distRight = rightRimW + 1;
+                for (int d = 1; d <= maxRimW; d++)
+                {
+                    if (d <= topRimW   && distUp    > topRimW)   { int ny = y + d; if (ny >= height || sourcePixels[ny * width + x].a < 0.02f)  distUp    = d; }
+                    if (d <= leftRimW  && distLeft  > leftRimW)  { int nx = x - d; if (nx < 0       || sourcePixels[y  * width + nx].a < 0.02f) distLeft  = d; }
+                    if (d <= rightRimW && distRight > rightRimW) { int nx = x + d; if (nx >= width  || sourcePixels[y  * width + nx].a < 0.02f) distRight = d; }
+                }
+
+                float topRim   = Mathf.Clamp01(1f - (float)(distUp    - 1) / TopRimWidth);
+                float sideFade = Mathf.Clamp01(1f - t / SideRimFadeHeight);
+                float leftRim  = Mathf.Clamp01(1f - (float)(distLeft  - 1) / LeftRimWidth)  * sideFade;
+                float rightRim = Mathf.Clamp01(1f - (float)(distRight - 1) / RightRimWidth) * sideFade;
+
+                // Three separate lerp passes — independent strengths prevent baked-in
+                // texture asymmetry from amplifying into uneven left/right highlights.
+                float topAlpha   = topRim   * TopRimStrength   * sourcePixel.a;
+                float leftAlpha  = leftRim  * LeftRimStrength  * sourcePixel.a;
+                float rightAlpha = rightRim * RightRimStrength * sourcePixel.a;
+
+                if (topAlpha > 0f)
+                {
+                    resultColor.r = Mathf.Lerp(resultColor.r, RimHighlightBrightness, topAlpha);
+                    resultColor.g = Mathf.Lerp(resultColor.g, RimHighlightBrightness, topAlpha);
+                    resultColor.b = Mathf.Lerp(resultColor.b, RimHighlightBrightness, topAlpha);
+                }
+                if (leftAlpha > 0f)
+                {
+                    resultColor.r = Mathf.Lerp(resultColor.r, RimHighlightBrightness, leftAlpha);
+                    resultColor.g = Mathf.Lerp(resultColor.g, RimHighlightBrightness, leftAlpha);
+                    resultColor.b = Mathf.Lerp(resultColor.b, RimHighlightBrightness, leftAlpha);
+                }
+                if (rightAlpha > 0f)
+                {
+                    resultColor.r = Mathf.Lerp(resultColor.r, RimHighlightBrightness, rightAlpha);
+                    resultColor.g = Mathf.Lerp(resultColor.g, RimHighlightBrightness, rightAlpha);
+                    resultColor.b = Mathf.Lerp(resultColor.b, RimHighlightBrightness, rightAlpha);
+                }
+
+                outputPixels[i] = resultColor;
+            }
+
+            resultTexture.SetPixels(outputPixels);
+            resultTexture.Apply(false, false);
+            resultTexture.hideFlags = HideFlags.HideAndDontSave;
+            return resultTexture;
+        }
+
+        /* Applies GradientTintClone to baseTexture then alpha-composites overlay on top for the selected/active node state. */
+        static Texture2D GradientCompositeClone(Texture2D baseTexture, Color tint, Texture2D overlay)
+        {
+            var gradientTexture = GradientTintClone(baseTexture, tint);
+            if (gradientTexture == null) return null;
+
+            if (overlay != null && overlay.width == baseTexture.width && overlay.height == baseTexture.height)
+            {
+                var pixels        = gradientTexture.GetPixels();
+                var overlayPixels = overlay.GetPixels();
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    float a  = overlayPixels[i].a;
+                    pixels[i] = pixels[i] * (1f - a) + overlayPixels[i] * a;
+                }
+                gradientTexture.SetPixels(pixels);
+                gradientTexture.Apply(false, false);
+            }
+
+            return gradientTexture;
+        }
+
+        /* Finds a Texture2D asset named exactly name inside the package's Editor/Resources folder and loads it from disk into a new uncompressed texture. */
         static Texture2D LoadPNG(string name)
         {
             var guids = AssetDatabase.FindAssets($"{name} t:Texture2D", new[] { "Packages/com.ygdr.animator/Editor/Resources" });
@@ -710,15 +892,16 @@ namespace YGDR.Editor.Animation
         static GUIStyle LabelStyle => _labelStyle ??= new GUIStyle(EditorStyles.miniLabel)
             { alignment = TextAnchor.MiddleCenter };
 
-        static MethodInfo _getEdgePoints;
-        static MethodInfo _drawArrow;
-        static MethodInfo _edgeSizeMultiplier;
-        static MethodInfo _fromSlotGetter;
-        static MethodInfo _toSlotGetter;
-        static MethodInfo _slotNodeGetter;
-        static FieldInfo  _stateField;
-        static FieldInfo  _labelTransitionsField;
-        static FieldInfo  _labelTransitionContextField;
+        static MethodInfo        _getEdgePoints;           // kept as MethodInfo — has ref param
+        static FastInvokeHandler _drawArrowInvoker;
+        static FastInvokeHandler _edgeSizeMultiplierInvoker;
+        static FastInvokeHandler _fromSlotInvoker;
+        static FastInvokeHandler _toSlotInvoker;
+        static FastInvokeHandler _slotNodeInvoker;
+        static FieldInfo         _stateField;
+        static FieldInfo         _labelTransitionsField;
+        static FieldInfo         _labelTransitionContextField;
+        static EditorWindow      _cachedAnimatorWindow;
 
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() =>
@@ -736,9 +919,61 @@ namespace YGDR.Editor.Animation
                 if (IsEntryEdge(edge)) return;
                 bool selected = color.b > color.r + 0.15f;
                 __state = selected ? 1 : 2;
-                if (!selected) color = settings.transitionOverlayColor;
+                if (!selected)
+                {
+                    var inOutColor = ResolveInOutColor(edge, settings);
+                    color = inOutColor ?? settings.transitionOverlayColor;
+                }
             }
             catch (Exception e) { Debug.LogError($"[YGDR] DrawEdge prefix error: {e}"); }
+        }
+
+        /* Returns the incoming or outgoing highlight color when exactly one state node matching the current selection is on either end of edge, or null to use the default line color. */
+        static Color? ResolveInOutColor(object edge, AnimatorDefaultSettings settings)
+        {
+            if (!settings.transitionSelectionColorEnabled) return null;
+            var selectedObjects = Selection.objects;
+            if (selectedObjects == null || selectedObjects.Length != 1) return null;
+
+            if (_fromSlotInvoker == null)
+                _fromSlotInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(EdgeType, "fromSlot") ?? AccessTools.Method(EdgeType, "get_fromSlot"));
+            if (_toSlotInvoker == null)
+                _toSlotInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(EdgeType, "toSlot") ?? AccessTools.Method(EdgeType, "get_toSlot"));
+
+            var fromSlot = _fromSlotInvoker?.Invoke(edge);
+            var toSlot   = _toSlotInvoker?.Invoke(edge);
+            if (fromSlot == null || toSlot == null) return null;
+
+            if (_slotNodeInvoker == null)
+                _slotNodeInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(fromSlot.GetType(), "node") ?? AccessTools.Method(fromSlot.GetType(), "get_node"));
+            _stateField ??= AccessTools.Field(AnimatorEditorInit.StateNodeType, "state");
+
+            var fromNode = _slotNodeInvoker?.Invoke(fromSlot);
+            var toNode   = _slotNodeInvoker?.Invoke(toSlot);
+
+            if (IsNodeMatchingSelection(fromNode, selectedObjects)) return settings.transitionOutgoingColor;
+            if (IsNodeMatchingSelection(toNode, selectedObjects))   return settings.transitionIncomingColor;
+            return null;
+        }
+
+        /* Returns true if node is a StateNode or StateMachineNode whose underlying asset is present in selectedObjects. */
+        static bool IsNodeMatchingSelection(object node, UnityEngine.Object[] selectedObjects)
+        {
+            if (node == null) return false;
+            if (AnimatorEditorInit.StateNodeType.IsInstanceOfType(node))
+            {
+                var state = _stateField?.GetValue(node) as AnimatorState;
+                return state != null && System.Array.IndexOf(selectedObjects, state) >= 0;
+            }
+            if (AnimatorEditorInit.StateMachineNodeType.IsInstanceOfType(node))
+            {
+                var stateMachine = AnimatorEditorInit.GetSMNodeStateMachineMethod?.Invoke(node, null) as AnimatorStateMachine;
+                return stateMachine != null && System.Array.IndexOf(selectedObjects, stateMachine) >= 0;
+            }
+            return false;
         }
 
         [HarmonyPostfix]
@@ -772,8 +1007,8 @@ namespace YGDR.Editor.Animation
 
                 if (!animate) return;
 
-                 _edgeSizeMultiplier ??= AccessTools.PropertyGetter(EdgeGUIType, "edgeSizeMultiplier");
-                 float mult         = _edgeSizeMultiplier != null ? (float)_edgeSizeMultiplier.Invoke(__instance, null) : 1f;
+                 _edgeSizeMultiplierInvoker ??= MethodInvoker.GetHandler(AccessTools.PropertyGetter(EdgeGUIType, "edgeSizeMultiplier"));
+                 float mult         = _edgeSizeMultiplierInvoker != null ? (float)_edgeSizeMultiplierInvoker(__instance) : 1f;
                  float arrowSize    = 5f * mult;
                  float outlineWidth = 2f * mult;
 
@@ -786,15 +1021,19 @@ namespace YGDR.Editor.Animation
                      ? Vector3.Lerp(midPoint, destinationPoint, animationProgress * 2f)
                      : Vector3.Lerp(sourcePoint, midPoint, (animationProgress - 0.5f) * 2f);
 
-                 _drawArrow ??= AccessTools.Method(EdgeGUIType, "DrawArrow");
-                 _drawArrow?.Invoke(null, new object[] { arrowColor, cross, direction, animatedPosition, arrowSize, outlineWidth });
-                
-                 foreach (var w in Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType))
-                     ((EditorWindow)(object)w).Repaint();
+                 _drawArrowInvoker ??= MethodInvoker.GetHandler(AccessTools.Method(EdgeGUIType, "DrawArrow"));
+                 _drawArrowInvoker?.Invoke(null, arrowColor, cross, direction, animatedPosition, arrowSize, outlineWidth);
+
+                 if (_cachedAnimatorWindow == null)
+                     _cachedAnimatorWindow = Resources
+                         .FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType)
+                         .FirstOrDefault() as EditorWindow;
+                 _cachedAnimatorWindow?.Repaint();
             }
             catch (Exception e) { Debug.LogError($"[YGDR] DrawEdge postfix error: {e}"); }
         }
 
+        /* Reads the transitions list from the edge info object and returns a one-line label: condition summary, "N Conditions", "Invalid", or null to show nothing. */
         static string BuildLabel(object info)
         {
             if (info == null) return null;
@@ -827,6 +1066,7 @@ namespace YGDR.Editor.Animation
             "Neutral", "Fist", "OpenHand", "FingerPoint", "Victory", "RockNRoll", "HandGun", "ThumbsUp"
         };
 
+        /* Returns a short human-readable string for a single condition (e.g. "Param > 0.5", "Flag = True"), truncating parameter names over 16 chars. */
         static string FormatCondition(AnimatorCondition animatorCondition)
         {
             var parameterLabel = animatorCondition.parameter.Length > 16 ? animatorCondition.parameter[..16] + "\u2026" : animatorCondition.parameter;
@@ -842,6 +1082,7 @@ namespace YGDR.Editor.Animation
             };
         }
 
+        /* Returns the integer threshold as a string, appending the gesture name in parentheses when the parameter is GestureLeft or GestureRight. */
         static string FormatIntThreshold(AnimatorCondition animatorCondition)
         {
             int intValue = (int)animatorCondition.threshold;
@@ -851,6 +1092,7 @@ namespace YGDR.Editor.Animation
             return intValue.ToString();
         }
 
+        /* Draws text rotated to follow the edge direction at mid-point, offsetting above or below the line based on the horizontal component of dir. */
         static void DrawLabel(Vector2 mid, Vector2 dir, string text)
         {
             float yOffset = dir.x >= 0f ? LabelOffsetAbove : LabelOffsetBelow;
@@ -863,37 +1105,45 @@ namespace YGDR.Editor.Animation
             GUI.matrix = matrix;
         }
 
+        /* Returns true if the source slot of edge belongs to an EntryNode, used to skip entry transitions that should not be re-coloured. */
         static bool IsEntryEdge(object edge)
         {
-            _fromSlotGetter ??= AccessTools.PropertyGetter(EdgeType, "fromSlot")
-                             ?? AccessTools.Method(EdgeType, "get_fromSlot");
-            var slot = _fromSlotGetter?.Invoke(edge, null);
+            if (_fromSlotInvoker == null)
+                _fromSlotInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(EdgeType, "fromSlot") ?? AccessTools.Method(EdgeType, "get_fromSlot"));
+            var slot = _fromSlotInvoker?.Invoke(edge);
             if (slot == null) return false;
-            _slotNodeGetter ??= AccessTools.PropertyGetter(slot.GetType(), "node")
-                             ?? AccessTools.Method(slot.GetType(), "get_node");
-            var node = _slotNodeGetter?.Invoke(slot, null);
+            if (_slotNodeInvoker == null)
+                _slotNodeInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(slot.GetType(), "node") ?? AccessTools.Method(slot.GetType(), "get_node"));
+            var node = _slotNodeInvoker?.Invoke(slot);
             return node != null && AnimatorEditorInit.EntryNodeType.IsInstanceOfType(node);
         }
 
+        /* Returns true if either the source or destination StateNode of edge contains a state that is in the current selection, used to trigger animated arrow drawing. */
         static bool IsNodeSelected(object edge)
         {
             try
             {
-                _fromSlotGetter ??= AccessTools.PropertyGetter(EdgeType, "fromSlot")
-                                 ?? AccessTools.Method(EdgeType, "get_fromSlot");
-                _toSlotGetter   ??= AccessTools.PropertyGetter(EdgeType, "toSlot")
-                                 ?? AccessTools.Method(EdgeType, "get_toSlot");
-                _slotNodeGetter ??= AccessTools.PropertyGetter(
-                    _fromSlotGetter?.Invoke(edge, null)?.GetType() ?? typeof(object), "node")
-                    ?? AccessTools.Method(
-                    _fromSlotGetter?.Invoke(edge, null)?.GetType() ?? typeof(object), "get_node");
+                if (_fromSlotInvoker == null)
+                    _fromSlotInvoker = MethodInvoker.GetHandler(
+                        AccessTools.PropertyGetter(EdgeType, "fromSlot") ?? AccessTools.Method(EdgeType, "get_fromSlot"));
+                if (_toSlotInvoker == null)
+                    _toSlotInvoker = MethodInvoker.GetHandler(
+                        AccessTools.PropertyGetter(EdgeType, "toSlot") ?? AccessTools.Method(EdgeType, "get_toSlot"));
+
+                var fromSlotForType = _fromSlotInvoker?.Invoke(edge);
+                if (_slotNodeInvoker == null && fromSlotForType != null)
+                    _slotNodeInvoker = MethodInvoker.GetHandler(
+                        AccessTools.PropertyGetter(fromSlotForType.GetType(), "node")
+                        ?? AccessTools.Method(fromSlotForType.GetType(), "get_node"));
                 _stateField ??= AccessTools.Field(AnimatorEditorInit.StateNodeType, "state");
 
                 var selected = Selection.objects;
-                foreach (var slot in new[] { _fromSlotGetter?.Invoke(edge, null), _toSlotGetter?.Invoke(edge, null) })
+                foreach (var slot in new[] { fromSlotForType, _toSlotInvoker?.Invoke(edge) })
                 {
                     if (slot == null) continue;
-                    var node = _slotNodeGetter?.Invoke(slot, null);
+                    var node = _slotNodeInvoker?.Invoke(slot);
                     if (node == null || !AnimatorEditorInit.StateNodeType.IsInstanceOfType(node)) continue;
                     var state = _stateField?.GetValue(node) as AnimatorState;
                     if (state != null && System.Array.IndexOf(selected, state) >= 0) return true;
@@ -904,14 +1154,15 @@ namespace YGDR.Editor.Animation
         }
     }
 
-    // ── Transition arrow color ────────────────────────────────────────────────
-    // Intercepts DrawArrows to apply condition-based arrow color independently
-    // from the line color. Reflects into EdgeInfo.transitions to read each
-    // AnimatorStateTransition — entry edges (AnimatorTransition only) are skipped
-    // naturally. Color persists through selection.
-    //   Red   — any transition has no conditions AND no exit time
-    //   Green — any transition has duration == 0
-    //   Default — transitionOverlayArrowColor
+    /* ── Transition arrow color ────────────────────────────────────────────────
+     Intercepts DrawArrows to apply condition-based arrow color independently
+     from the line color. Reflects into EdgeInfo.transitions to read each
+     AnimatorStateTransition — entry edges (AnimatorTransition only) are skipped
+     naturally. Color persists through selection.
+       anyInvalid   — any transition has no conditions AND no exit time
+       allInstant — any transition has duration == 0
+       Default — transitionOverlayArrowColor
+    */
 
     [HarmonyPatch]
     internal static class PatchDrawArrows
@@ -940,7 +1191,8 @@ namespace YGDR.Editor.Animation
             catch (Exception e) { Debug.LogError($"[YGDR] DrawArrows prefix error: {e}"); }
         }
 
-        internal static Color? ResolveArrowColor(object info, AnimatorDefaultSettings s)
+        /* Inspects all AnimatorStateTransitions in info to determine arrow color: red for any invalid transition, green when all transitions are instant, default arrow color otherwise. */
+        internal static Color? ResolveArrowColor(object info, AnimatorDefaultSettings settings)
         {
             if (info == null) return null;
             var infoType = info.GetType();
@@ -949,8 +1201,8 @@ namespace YGDR.Editor.Animation
             var transitions = transitionsField?.GetValue(info) as System.Collections.IList;
             if (transitions == null || transitions.Count == 0) return null;
 
-            bool anyRed  = false;
-            bool allGreen = true;
+            bool anyArrowInvalid  = false;
+            bool allArrowInstant = true;
             bool hasStateTransition = false;
 
             foreach (var transitionContext in transitions)
@@ -964,14 +1216,14 @@ namespace YGDR.Editor.Animation
                 hasStateTransition = true;
                 bool hasConditions = stateTransition.conditions != null && stateTransition.conditions.Length > 0;
                 bool isValid = stateTransition.hasExitTime || hasConditions;
-                if (!isValid) anyRed = true;
-                if (stateTransition.duration != 0f) allGreen = false;
+                if (!isValid) anyArrowInvalid = true;
+                if (stateTransition.duration != 0f) allArrowInstant = false;
             }
 
             if (!hasStateTransition) return null;
-            if (anyRed) return s.transitionArrowNoConditionColor;
-            if (allGreen) return s.transitionArrowInstantColor;
-            return s.transitionOverlayColor;
+            if (anyArrowInvalid) return settings.transitionArrowNoConditionColor;
+            if (allArrowInstant) return settings.transitionArrowInstantColor;
+            return settings.transitionOverlayArrowColor;
         }
     }
 
@@ -983,6 +1235,7 @@ namespace YGDR.Editor.Animation
         internal static string RenameText;
         internal static bool JustStarted;
 
+        /* Starts an inline rename session for state, seeding the text field with the current name. */
         internal static void Begin(AnimatorState state)
         {
             RenameTarget = state;
@@ -1013,6 +1266,7 @@ namespace YGDR.Editor.Animation
         internal static string RenameText;
         internal static bool JustStarted;
 
+        /* Starts an inline rename session for stateMachine, seeding the text field with the current name. */
         internal static void Begin(AnimatorStateMachine stateMachine)
         {
             RenameTarget = stateMachine;
@@ -1044,6 +1298,7 @@ namespace YGDR.Editor.Animation
         internal static string RenameText;
         internal static bool JustStarted;
 
+        /* Starts an inline rename session for motion associated with state, seeding the text field with the current motion name. */
         internal static void Begin(Motion motion, AnimatorState state)
         {
             RenameTarget      = motion;
@@ -1099,6 +1354,7 @@ namespace YGDR.Editor.Animation
     {
         static readonly Dictionary<Type, MethodInfo> _positionGetters = new();
 
+        /* Returns the width and height of node's position Rect via reflection, falling back to (160, 40) if unavailable. */
         internal static Vector2 GetNodeSize(object node)
         {
             var type = node.GetType();
@@ -1108,6 +1364,7 @@ namespace YGDR.Editor.Animation
             return new Vector2(160f, 40f);
         }
 
+        /* Inserts Ldarg_0 + Call method before every Ret instruction in the IL stream, so method receives the node instance on each exit path. */
         internal static IEnumerable<CodeInstruction> InjectColorDraw(
             IEnumerable<CodeInstruction> instructions, MethodInfo method)
         {

@@ -44,8 +44,8 @@ namespace YGDR.Editor.Animation
             AccessTools.Method(AnimatorEditorInit.ExitNodeType, "NodeUI"),
         };
 
-        // For short methods (<30 IL instructions) with no existing GenericMenu.
-        // Receives Ldarg_1 = the graph parameter of NodeUI.
+        /* Entry point for short NodeUI methods: builds the state node context menu from scratch and shows it.
+           Receives the graph object via Ldarg_1 injection from the NodeUI IL. */
         internal static void CreateAndDisplay(object graph)
         {
             if (Event.current.type != EventType.ContextClick) return;
@@ -56,8 +56,8 @@ namespace YGDR.Editor.Animation
             Event.current.Use();
         }
 
-        // Injected before ShowAsContext() in longer methods.
-        // Receives Ldarg_0 = 'this' (the node instance).
+        /* Appends state-node context menu items to an existing GenericMenu based on current selection.
+           Injected before ShowAsContext() in longer NodeUI methods via Ldarg_0 (the node instance). */
         internal static void AddMenuItems(object node, GenericMenu menu)
         {
             try
@@ -276,6 +276,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Snapshots all behaviours of the given type from state into the JSON clipboard for later paste. */
         static void CopyBehavior(AnimatorState state, Type type)
         {
             _copiedBehaviorType = type;
@@ -284,6 +285,7 @@ namespace YGDR.Editor.Animation
                 _copiedBehaviorJsons.Add(EditorJsonUtility.ToJson(b));
         }
 
+        /* Replaces all behaviours of the clipboard type on each state with JSON-deserialized copies of the clipboard data. */
         static void PasteBehaviors(AnimatorState[] states)
         {
             if (_copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
@@ -304,6 +306,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Sets loop time on all animation clips referenced by the given states, recursing into blend trees. */
         static void SetClipLoopTime(AnimatorState[] states, bool loop)
         {
             foreach (var state in states)
@@ -317,6 +320,7 @@ namespace YGDR.Editor.Animation
                 }
         }
 
+        /* Recursively yields all AnimationClips reachable from a Motion, descending into BlendTree children. */
         static IEnumerable<AnimationClip> CollectClips(Motion motion)
         {
             if (motion is AnimationClip clip) { yield return clip; yield break; }
@@ -326,6 +330,7 @@ namespace YGDR.Editor.Animation
                         yield return c;
         }
 
+        /* Returns the graph object: calls get_graph() if the input has that method, otherwise treats it as the graph itself. */
         static object ResolveGraph(object nodeOrGraph)
         {
             var type = nodeOrGraph?.GetType();
@@ -352,6 +357,7 @@ namespace YGDR.Editor.Animation
             AccessTools.Method(AnimatorEditorInit.StateMachineNodeType, "NodeUI"),
         };
 
+        /* Entry point for short StateMachineNode NodeUI methods: builds and shows the sub-state machine context menu. */
         internal static void CreateAndDisplay(object graph)
         {
             if (Event.current.type != EventType.ContextClick) return;
@@ -362,6 +368,7 @@ namespace YGDR.Editor.Animation
             Event.current.Use();
         }
 
+        /* Appends Unpack to an existing GenericMenu when the selected object is a direct child sub state machine. */
         internal static void AddMenuItems(object node, GenericMenu menu)
         {
             try
@@ -444,6 +451,8 @@ namespace YGDR.Editor.Animation
                 AccessTools.TypeByName("UnityEditor.Graphs.AnimationStateMachine.GraphGUI"),
                 "HandleContextMenu");
 
+        /* Appends transition operation items (Reverse, Redirect, Replicate, Delete All) to the HandleContextMenu GenericMenu.
+           Receives the menu from the IL stack and the GraphGUI instance via Ldarg_0. */
         internal static GenericMenu AddItems(GenericMenu menu, object graphGUI)
         {
             try
@@ -585,6 +594,8 @@ namespace YGDR.Editor.Animation
     // Shared IL injection logic for both patch classes.
     internal static class MenuTranspilerHelper
     {
+        /* Injects CreateAndDisplay at the top of short NodeUI methods, or AddMenuItems before ShowAsContext in longer ones.
+           Short vs. long is determined by whether the method has more than 30 IL instructions. */
         internal static IEnumerable<CodeInstruction> Inject(
             IEnumerable<CodeInstruction> instructions,
             MethodInfo addMenuItemsMethod,
