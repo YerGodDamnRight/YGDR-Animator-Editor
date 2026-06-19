@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -21,14 +40,14 @@ namespace YGDR.Editor.Animation
             get
             {
                 if (_controller == null) return null;
-                if (_controllerSubTab == 0) return $"{_controller.layers.Length} layers";
+                if (_controllerSubTab == 0) return L10n.Get("controller.count.layers").Replace("{n}", _controller.layers.Length.ToString());
                 if (_controllerSubTab == 2 && _subAssetsByType != null)
                     return _subAssetTypeFilter switch
                     {
-                        0 => $"{_subAssetsByType[0]?.Length ?? 0} State Machines",
-                        1 => $"{_subAssetsByType[1]?.Length ?? 0} States",
-                        2 => $"{_subAssetsByType[2]?.Length ?? 0} Blend Trees",
-                        3 => $"{_subAssetsByType[3]?.Length ?? 0} Clips",
+                        0 => L10n.Get("controller.count.state_machines").Replace("{n}", (_subAssetsByType[0]?.Length ?? 0).ToString()),
+                        1 => L10n.Get("controller.count.states").Replace("{n}", (_subAssetsByType[1]?.Length ?? 0).ToString()),
+                        2 => L10n.Get("controller.count.blend_trees").Replace("{n}", (_subAssetsByType[2]?.Length ?? 0).ToString()),
+                        3 => L10n.Get("controller.count.clips").Replace("{n}", (_subAssetsByType[3]?.Length ?? 0).ToString()),
                         _ => null
                     };
                 return null;
@@ -57,7 +76,7 @@ namespace YGDR.Editor.Animation
             if (Event.current.type == EventType.Repaint)
                 EditorGUI.DrawRect(new Rect(rowRect.x, rowRect.y, tabsWidth, rowRect.height), Styles.PrimaryColor);
 
-            string[] labels = { "Write Defaults", "Network Sync", "Sub-Assets" };
+            string[] labels = { L10n.Get("controller.subtab.wd"), L10n.Get("controller.subtab.network_sync"), L10n.Get("controller.subtab.sub_assets") };
             float tabWidth   = tabsWidth / 3f;
             for (int i = 0; i < labels.Length; i++)
             {
@@ -70,7 +89,7 @@ namespace YGDR.Editor.Animation
 
             int orphanCount  = _orphanedAssets?.Length ?? 0;
             var cleanBtnRect = new Rect(rowRect.xMax - cleanWidth, rowRect.y, cleanWidth, 24f);
-            if (CursorBtn(cleanBtnRect, $"Clean ({orphanCount})", Styles.ControllerSubTabBtn) && orphanCount > 0)
+            if (CursorBtn(cleanBtnRect, L10n.Get("controller.clean").Replace("{n}", orphanCount.ToString()), Styles.ControllerSubTabBtn) && orphanCount > 0)
                 CleanOrphanedAssets();
         }
 
@@ -80,7 +99,7 @@ namespace YGDR.Editor.Animation
         {
             if (_controller == null)
             {
-                EditorGUILayout.LabelField("No controller selected", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("controller.no_controller"), Styles.EmptyLabel);
                 return;
             }
 
@@ -92,17 +111,24 @@ namespace YGDR.Editor.Animation
             const float middleGap = 8f;
 
             var btnRowRect  = EditorGUILayout.GetControlRect(false, 24f);
+            float pillW     = Styles.k_pillW;
             float halfWidth = (btnRowRect.width - middleGap) / 2f;
 
-            if (CursorBtn(new Rect(btnRowRect.x,                         btnRowRect.y, halfWidth, 24f), "Set All On",  Styles.IconBtn))
+            if (CursorBtn(new Rect(btnRowRect.x,                         btnRowRect.y, halfWidth, 24f), L10n.Get("controller.wd.set_all_on"),  Styles.IconBtn))
                 SetAllLayersWD(true);
-            if (CursorBtn(new Rect(btnRowRect.x + halfWidth + middleGap, btnRowRect.y, halfWidth, 24f), "Set All Off", Styles.IconBtn))
+            if (CursorBtn(new Rect(btnRowRect.x + halfWidth + middleGap, btnRowRect.y, halfWidth, 24f), L10n.Get("controller.wd.set_all_off"), Styles.IconBtn))
                 SetAllLayersWD(false);
 
-            float lineHeight  = EditorGUIUtility.singleLineHeight;
-            float rowHeight   = lineHeight + EditorGUIUtility.standardVerticalSpacing;
-            int   maxRows     = Mathf.Max(onLayers.Length, offLayers.Length);
-            float totalHeight = 28f + Mathf.Max(maxRows, 1) * rowHeight;
+            float lineHeight   = EditorGUIUtility.singleLineHeight;
+            float rowHeight    = lineHeight + 2f;
+            int   maxRows      = Mathf.Max(onLayers.Length, offLayers.Length);
+            float maxVisibleH  = 8f * rowHeight;
+            float onTotalRowH  = Mathf.Max(onLayers.Length,  1) * rowHeight;
+            float offTotalRowH = Mathf.Max(offLayers.Length, 1) * rowHeight;
+            float onDisplayH   = _wdScrollEnabled ? Mathf.Min(onTotalRowH,  maxVisibleH) : onTotalRowH;
+            float offDisplayH  = _wdScrollEnabled ? Mathf.Min(offTotalRowH, maxVisibleH) : offTotalRowH;
+            float rowsDisplayH = Mathf.Max(onDisplayH, offDisplayH);
+            float totalHeight  = 24f + rowsDisplayH;
 
             var rect = EditorGUILayout.GetControlRect(false, totalHeight);
 
@@ -114,42 +140,39 @@ namespace YGDR.Editor.Animation
                 EditorGUI.DrawRect(new Rect(rect.x + halfWidth + middleGap, rect.y, halfWidth, 24f), Styles.AccentColor);
             }
 
-            GUI.Label(new Rect(rect.x,                         rect.y, halfWidth, 24f), "Write Defaults On",  Styles.HeaderLabel);
-            GUI.Label(new Rect(rect.x + halfWidth + middleGap, rect.y, halfWidth, 24f), "Write Defaults Off", Styles.HeaderLabel);
+            GUI.Label(new Rect(rect.x,                         rect.y, halfWidth, 24f), L10n.Get("controller.wd.on_col"),  Styles.HeaderLabel);
+            GUI.Label(new Rect(rect.x + halfWidth + middleGap, rect.y, halfWidth, 24f), L10n.Get("controller.wd.off_col"), Styles.HeaderLabel);
 
-            float rowY = rect.y + 26f;
+            // Single pill on right edge of right column toggles both columns
+            float offX      = rect.x + halfWidth + middleGap;
+            var pillRect    = new Rect(rect.xMax - pillW, rect.y + 24f, pillW, rowsDisplayH);
+            bool newEnabled = GUI.Toggle(pillRect, _wdScrollEnabled, "", Styles.ScrollToggleBtn);
+            if (newEnabled != _wdScrollEnabled) { _wdScrollEnabled = newEnabled; _wdOnScrollPos = Vector2.zero; _wdOffScrollPos = Vector2.zero; }
+            EditorGUIUtility.AddCursorRect(pillRect, MouseCursor.Link);
 
-            if (maxRows == 0)
+            // On column rows
+            var onViewRect = new Rect(rect.x, rect.y + 24f, halfWidth, onDisplayH);
+            if (_wdScrollEnabled && onTotalRowH > maxVisibleH)
             {
-                GUI.Label(new Rect(rect.x,                         rowY, halfWidth, lineHeight), "—", Styles.EmptyLabel);
-                GUI.Label(new Rect(rect.x + halfWidth + middleGap, rowY, halfWidth, lineHeight), "—", Styles.EmptyLabel);
+                var contentRect = new Rect(0, 0, onViewRect.width, onTotalRowH);
+                _wdOnScrollPos = GUI.BeginScrollView(onViewRect, _wdOnScrollPos, contentRect, false, true, GUIStyle.none, GUI.skin.verticalScrollbar);
+                DrawWDOnRows(contentRect, onLayers, rowHeight);
+                GUI.EndScrollView();
             }
             else
+                DrawWDOnRows(onViewRect, onLayers, rowHeight);
+
+            // Off column rows
+            var offViewRect = new Rect(offX, rect.y + 24f, halfWidth - pillW, offDisplayH);
+            if (_wdScrollEnabled && offTotalRowH > maxVisibleH)
             {
-                for (int i = 0; i < maxRows; i++, rowY += rowHeight)
-                {
-                    bool hasOn  = i < onLayers.Length;
-                    bool hasOff = i < offLayers.Length;
-
-                    if (Event.current.type == EventType.Repaint && i % 2 == 1)
-                    {
-                        if (hasOn)  EditorGUI.DrawRect(new Rect(rect.x,                         rowY, halfWidth, rowHeight), Styles.RowAltColor);
-                        if (hasOff) EditorGUI.DrawRect(new Rect(rect.x + halfWidth + middleGap, rowY, halfWidth, rowHeight), Styles.RowAltColor);
-                    }
-
-                    if (hasOn)
-                        GUI.Label(new Rect(rect.x, rowY, halfWidth - 24f, lineHeight), onLayers[i].name, Styles.SmallLabelCenter);
-
-                    if (hasOn && CursorBtn(new Rect(rect.x + halfWidth - 24f, rowY, 24f, lineHeight), "→", Styles.IconBtn))
-                        SetLayerWD(onLayers[i], false);
-
-                    if (hasOff && CursorBtn(new Rect(rect.x + halfWidth + middleGap, rowY, 24f, lineHeight), "←", Styles.IconBtn))
-                        SetLayerWD(offLayers[i], true);
-
-                    if (hasOff)
-                        GUI.Label(new Rect(rect.x + halfWidth + middleGap + 24f, rowY, halfWidth - 24f, lineHeight), offLayers[i].name, Styles.SmallLabelCenter);
-                }
+                var contentRect = new Rect(0, 0, offViewRect.width, offTotalRowH);
+                _wdOffScrollPos = GUI.BeginScrollView(offViewRect, _wdOffScrollPos, contentRect, false, true, GUIStyle.none, GUI.skin.verticalScrollbar);
+                DrawWDOffRows(contentRect, offLayers, rowHeight);
+                GUI.EndScrollView();
             }
+            else
+                DrawWDOffRows(offViewRect, offLayers, rowHeight);
 
             if (mixedLayers.Length > 0)
             {
@@ -157,22 +180,32 @@ namespace YGDR.Editor.Animation
                 using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
                 {
                     GUILayout.FlexibleSpace();
-                    GUILayout.Label("Mixed", Styles.HeaderLabel, GUILayout.Height(24));
+                    GUILayout.Label(L10n.Get("controller.wd.mixed"), Styles.HeaderLabel, GUILayout.Height(24));
                     GUILayout.FlexibleSpace();
                 }
 
-                var mixedRowsRect = EditorGUILayout.BeginVertical(Styles.SectionPadded);
+                float mixedRowHeight  = EditorGUIUtility.singleLineHeight + 2f;
+                var   mixedRowsRect   = EditorGUILayout.GetControlRect(false, mixedLayers.Length * mixedRowHeight);
+
                 if (Event.current.type == EventType.Repaint && mixedRowsRect.height > 0)
                     EditorGUI.DrawRect(mixedRowsRect, Styles.SecondaryColor);
 
-                foreach (var layer in mixedLayers)
+                float mixedInnerX     = mixedRowsRect.x;
+                float mixedInnerWidth = mixedRowsRect.width;
+                float mixedInnerY     = mixedRowsRect.y;
+
+                for (int i = 0; i < mixedLayers.Length; i++)
                 {
-                    var rowRect     = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
-                    float btnWidth  = 48f;
-                    float gap       = 8f;
-                    float nameWidth = Styles.SmallLabelCenter.CalcSize(new GUIContent(layer.name)).x;
+                    var   layer      = mixedLayers[i];
+                    var   rowRect    = new Rect(mixedInnerX, mixedInnerY + i * mixedRowHeight, mixedInnerWidth, mixedRowHeight);
+
+                    if (Event.current.type == EventType.Repaint && i % 2 == 1)
+                        EditorGUI.DrawRect(rowRect, Styles.RowAltColor);
+                    float btnWidth   = 48f;
+                    float gap        = 8f;
+                    float nameWidth  = Styles.SmallLabelCenter.CalcSize(new GUIContent(layer.name)).x;
                     float groupWidth = btnWidth + gap + nameWidth + gap + btnWidth;
-                    float groupX    = rowRect.x + (rowRect.width - groupWidth) / 2f;
+                    float groupX     = rowRect.x + (rowRect.width - groupWidth) / 2f;
 
                     if (CursorBtn(new Rect(groupX, rowRect.y, btnWidth, rowRect.height), "← On", Styles.IconBtn))
                         SetLayerWD(layer, true);
@@ -180,13 +213,48 @@ namespace YGDR.Editor.Animation
                     if (CursorBtn(new Rect(groupX + btnWidth + gap + nameWidth + gap, rowRect.y, btnWidth, rowRect.height), "→ Off", Styles.IconBtn))
                         SetLayerWD(layer, false);
                 }
+            }
+        }
 
-                EditorGUILayout.EndVertical();
+        void DrawWDOnRows(Rect area, AnimatorControllerLayer[] onLayers, float rowHeight)
+        {
+            if (onLayers.Length == 0)
+            {
+                GUI.Label(new Rect(area.x, area.y, area.width, rowHeight), "—", Styles.EmptyLabel);
+                return;
+            }
+            for (int i = 0; i < onLayers.Length; i++)
+            {
+                float rowY = area.y + i * rowHeight;
+                if (Event.current.type == EventType.Repaint && i % 2 == 1)
+                    EditorGUI.DrawRect(new Rect(area.x, rowY, area.width, rowHeight), Styles.RowAltColor);
+                GUI.Label(new Rect(area.x, rowY, area.width - 24f, rowHeight), onLayers[i].name, Styles.SmallLabelCenter);
+                if (CursorBtn(new Rect(area.xMax - 24f, rowY, 24f, rowHeight), "→", Styles.IconBtn))
+                    SetLayerWD(onLayers[i], false);
+            }
+        }
+
+        void DrawWDOffRows(Rect area, AnimatorControllerLayer[] offLayers, float rowHeight)
+        {
+            if (offLayers.Length == 0)
+            {
+                GUI.Label(new Rect(area.x, area.y, area.width, rowHeight), "—", Styles.EmptyLabel);
+                return;
+            }
+            for (int i = 0; i < offLayers.Length; i++)
+            {
+                float rowY = area.y + i * rowHeight;
+                if (Event.current.type == EventType.Repaint && i % 2 == 1)
+                    EditorGUI.DrawRect(new Rect(area.x, rowY, area.width, rowHeight), Styles.RowAltColor);
+                if (CursorBtn(new Rect(area.x, rowY, 24f, rowHeight), "←", Styles.IconBtn))
+                    SetLayerWD(offLayers[i], true);
+                GUI.Label(new Rect(area.x + 24f, rowY, area.width - 24f, rowHeight), offLayers[i].name, Styles.SmallLabelCenter);
             }
         }
 
         // ── Network Sync ──────────────────────────────────────────────────────
 
+#if VRC_SDK_VRCSDK3
         bool   _networkUseBool;
         string _networkParamName        = "network";
         string _networkStatesPrefix     = "{N} ";
@@ -197,12 +265,14 @@ namespace YGDR.Editor.Animation
         bool   _networkPackIntoSubSM;
         bool   _networkPreserveTransitionProperties;
         int    _networkLayerIndex;
+#endif
 
         void DrawNetworkSyncSection()
         {
+#if VRC_SDK_VRCSDK3
             if (_activeStateMachine == null)
             {
-                EditorGUILayout.LabelField("No animator window open", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("controller.network.no_window"), Styles.EmptyLabel);
                 return;
             }
 
@@ -215,7 +285,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Target Layer", Styles.SmallLabel, GUILayout.Width(160));
+                GUILayout.Label(L10n.Get("controller.network.target_layer"), Styles.SmallLabel, GUILayout.Width(160));
                 if (layers.Length > 0)
                 {
                     var layerNames = layers.Select(layer => layer.name).ToArray();
@@ -234,12 +304,12 @@ namespace YGDR.Editor.Animation
                 ? _activeStateMachine
                 : activeController.layers[_networkLayerIndex].stateMachine;
 
-            DrawNetworkToggleRow("Sync Param Type", ref _networkUseBool,            "Int",        "Bool");
-            DrawNetworkToggleRow("Transitions",     ref _networkAnyStateTransitions, "All-to-All", "Any State");
+            DrawNetworkToggleRow(L10n.Get("controller.network.sync_param_type"), ref _networkUseBool,            "Int",        "Bool");
+            DrawNetworkToggleRow(L10n.Get("controller.network.transitions"),     ref _networkAnyStateTransitions, "All-to-All", "Any State");
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Preserve Transition Props", Styles.SmallLabel, GUILayout.Width(164));
+                GUILayout.Label(L10n.Get("controller.network.preserve_props"), Styles.SmallLabel, GUILayout.Width(164));
                 _networkPreserveTransitionProperties = EditorGUILayout.Toggle(_networkPreserveTransitionProperties, GUILayout.Width(16));
                 EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
             }
@@ -255,7 +325,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Sync Param Name", Styles.SmallLabel, GUILayout.Width(164));
+                GUILayout.Label(L10n.Get("controller.network.sync_param_name"), Styles.SmallLabel, GUILayout.Width(164));
                 _networkParamName = EditorGUILayout.TextField(_networkParamName);
                 if (isDuplicateName && Event.current.type == EventType.Repaint)
                 {
@@ -268,29 +338,29 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Network States Prefix", Styles.SmallLabel, GUILayout.Width(164));
+                GUILayout.Label(L10n.Get("controller.network.states_prefix"), Styles.SmallLabel, GUILayout.Width(164));
                 _networkStatesPrefix = EditorGUILayout.TextField(_networkStatesPrefix);
             }
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Remove Network Behaviours", Styles.SmallLabel, GUILayout.Width(164));
-                GUILayout.Label("Params", Styles.SmallLabel, GUILayout.Width(50));
+                GUILayout.Label(L10n.Get("controller.network.remove_behaviours"), Styles.SmallLabel, GUILayout.Width(164));
+                GUILayout.Label(L10n.Get("controller.network.params"), Styles.SmallLabel, GUILayout.Width(50));
                 _networkRemoveParamDrivers = EditorGUILayout.Toggle(_networkRemoveParamDrivers, GUILayout.Width(16));
                 EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
                 GUILayout.Space(6);
-                GUILayout.Label("Audio", Styles.SmallLabel, GUILayout.Width(36));
+                GUILayout.Label(L10n.Get("controller.network.audio"), Styles.SmallLabel, GUILayout.Width(36));
                 _networkRemoveAudioPlay = EditorGUILayout.Toggle(_networkRemoveAudioPlay, GUILayout.Width(16));
                 EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
                 GUILayout.Space(6);
-                GUILayout.Label("Tracking", Styles.SmallLabel, GUILayout.Width(52));
+                GUILayout.Label(L10n.Get("controller.network.tracking"), Styles.SmallLabel, GUILayout.Width(52));
                 _networkRemoveTracking = EditorGUILayout.Toggle(_networkRemoveTracking, GUILayout.Width(16));
                 EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
             }
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Pack into SubSM", Styles.SmallLabel, GUILayout.Width(164));
+                GUILayout.Label(L10n.Get("controller.network.pack_subsm"), Styles.SmallLabel, GUILayout.Width(164));
                 _networkPackIntoSubSM = EditorGUILayout.Toggle(_networkPackIntoSubSM, GUILayout.Width(16));
             }
 
@@ -300,7 +370,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUI.DisabledScope(!canRun))
             {
-                if (CursorBtn("Run Network Sync", Styles.IconBtn, GUILayout.Height(28)))
+                if (CursorBtn(L10n.Get("controller.network.run"), Styles.IconBtn, GUILayout.Height(28)))
                 {
                     AnimatorNetworkSync.NetworkSync(targetSM, new NetworkSyncConfig
                     {
@@ -316,6 +386,9 @@ namespace YGDR.Editor.Animation
                     });
                 }
             }
+#else
+            EditorGUILayout.LabelField(L10n.Get("controller.network.no_vrcsdk"), Styles.EmptyLabel);
+#endif
         }
 
         /* Draws a two-button exclusive toggle row with a left-aligned label and cursor-rect on both buttons. */
@@ -372,7 +445,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("Avatar Root", Styles.SmallLabel, GUILayout.Width(100));
+                GUILayout.Label(L10n.Get("controller.repath.avatar_root"), Styles.SmallLabel, GUILayout.Width(100));
                 EditorGUI.BeginChangeCheck();
                 var newRoot = (GameObject)EditorGUILayout.ObjectField(_clipRemapAvatarRoot, typeof(GameObject), true);
                 if (EditorGUI.EndChangeCheck())
@@ -393,7 +466,7 @@ namespace YGDR.Editor.Animation
                 bool slotInvalid = _clipRemapAvatarRoot != null && _slotController == null;
                 using (new EditorGUI.DisabledScope(_clipRemapAvatarRoot == null || slotInvalid))
                 {
-                    if (CursorBtn("Scan", Styles.IconBtn, GUILayout.Width(48)))
+                    if (CursorBtn(L10n.Get("controller.repath.scan"), Styles.IconBtn, GUILayout.Width(48)))
                     {
                         _clipScanResult = AnimatorClipRemapper.ScanBrokenPaths(ClipController, _clipRemapAvatarRoot);
                         _clipScanned = true;
@@ -420,16 +493,16 @@ namespace YGDR.Editor.Animation
                 Color prevBg = GUI.backgroundColor;
                 // Sky-blue when enabled — deliberately different hue from row selection green to avoid palette conflicts.
                 if (_autoRepathEnabled) GUI.backgroundColor = new Color(0.3f, 0.75f, 1f);
-                if (CursorBtn(_autoRepathEnabled ? "Auto-Repath: On" : "Auto-Repath: Off", Styles.IconBtn, GUILayout.Height(24)))
+                if (CursorBtn(_autoRepathEnabled ? L10n.Get("controller.repath.auto_on") : L10n.Get("controller.repath.auto_off"), Styles.IconBtn, GUILayout.Height(24)))
                 {
                     if (_autoRepathEnabled)
                     {
                         SetAutoRepathEnabled(false);
                     }
                     else if (EditorUtility.DisplayDialog(
-                        "Enable Auto-Repath",
-                        "Auto-Repath silently rewrites animation clip binding paths whenever a bone or GameObject is renamed or moved in the hierarchy.\n\nChanges are applied immediately and are not reliably undoable. Ensure your project is backed up before enabling.\n\nEnable Auto-Repath?",
-                        "Enable", "Cancel"))
+                        L10n.Get("controller.repath.confirm_title"),
+                        L10n.Get("controller.repath.confirm_body"),
+                        L10n.Get("controller.repath.confirm_ok"), L10n.Get("controller.repath.confirm_cancel")))
                     {
                         SetAutoRepathEnabled(true);
                     }
@@ -442,7 +515,7 @@ namespace YGDR.Editor.Animation
         {
             if (!_clipScanned) return;
             bool hasNone = _clipScanResult.brokenSegments == null || _clipScanResult.brokenSegments.Length == 0;
-            EditorGUILayout.LabelField(hasNone ? "No broken bindings found" : $"{_clipScanResult.totalBrokenCount} broken bindings", Styles.EmptyLabel);
+            EditorGUILayout.LabelField(hasNone ? L10n.Get("controller.repath.no_broken") : $"{_clipScanResult.totalBrokenCount} {L10n.Get("controller.repath.broken_bindings")}", Styles.EmptyLabel);
             if (hasNone) return;
             int displayCount = Mathf.Min(_clipScanResult.brokenSegments.Length, 5);
             for (int i = 0; i < displayCount; i++)
@@ -459,12 +532,12 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("From Path", Styles.SmallLabel, GUILayout.Width(100));
+                GUILayout.Label(L10n.Get("controller.repath.from_path"), Styles.SmallLabel, GUILayout.Width(100));
                 _clipRemapFromPath = EditorGUILayout.TextField(_clipRemapFromPath);
             }
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label("To Path", Styles.SmallLabel, GUILayout.Width(100));
+                GUILayout.Label(L10n.Get("controller.repath.to_path"), Styles.SmallLabel, GUILayout.Width(100));
                 _clipRemapToPath = EditorGUILayout.TextField(_clipRemapToPath);
             }
         }
@@ -478,7 +551,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUI.DisabledScope(!canRemap))
             {
-                string remapLabel = hasSelection ? $"Remap Selected ({_selectedClipIds.Count})" : "Remap Clips";
+                string remapLabel = hasSelection ? $"{L10n.Get("controller.repath.remap_selected")} ({_selectedClipIds.Count})" : L10n.Get("controller.repath.remap_clips");
                 if (CursorBtn(remapLabel, Styles.IconBtn, GUILayout.Height(28)))
                 {
                     if (hasSelection)
@@ -493,17 +566,28 @@ namespace YGDR.Editor.Animation
 
         // ── Sub-Assets ────────────────────────────────────────────────────────
 
-        static GUIContent[] _subAssetFilterContents;
-        static GUIContent[] SubAssetFilterContents => _subAssetFilterContents ??= new[]
+        static Texture2D[] _subAssetFilterIcons;
+        static Texture2D[] SubAssetFilterIcons => _subAssetFilterIcons ??= new[]
         {
-            new GUIContent("State Machines", EditorGUIUtility.IconContent("d_AnimatorController Icon").image),
-            new GUIContent("States",         EditorGUIUtility.IconContent("AnimatorState Icon").image),
-            new GUIContent("Blend Trees",    EditorGUIUtility.IconContent("d_BlendTree Icon").image),
-            new GUIContent("Clips",          EditorGUIUtility.IconContent("AnimationClip Icon").image),
+            EditorGUIUtility.IconContent("d_AnimatorController Icon").image as Texture2D,
+            EditorGUIUtility.IconContent("AnimatorState Icon").image as Texture2D,
+            EditorGUIUtility.IconContent("d_BlendTree Icon").image as Texture2D,
+            EditorGUIUtility.IconContent("AnimationClip Icon").image as Texture2D,
+        };
+        static GUIContent[] SubAssetFilterContents => new[]
+        {
+            new GUIContent(L10n.Get("controller.subassets.state_machines"), SubAssetFilterIcons[0]),
+            new GUIContent(L10n.Get("controller.subassets.states"),         SubAssetFilterIcons[1]),
+            new GUIContent(L10n.Get("controller.subassets.blend_trees"),    SubAssetFilterIcons[2]),
+            new GUIContent(L10n.Get("controller.subassets.clips"),          SubAssetFilterIcons[3]),
         };
 
         Vector2 _subAssetScrollPos;
         bool    _subAssetScrollEnabled;
+
+        Vector2 _wdOnScrollPos;
+        Vector2 _wdOffScrollPos;
+        bool    _wdScrollEnabled;
 
 
         static Type       _animatorControllerToolType;
@@ -522,6 +606,7 @@ namespace YGDR.Editor.Animation
         UnityEngine.Object[][] _subAssetsByType;
         UnityEngine.Object[]   _orphanedAssets;
         HashSet<int>           _statesWithInvalidTransitions;
+        HashSet<int>           _statesWithNoMotion;
         HashSet<int>           _emptySMIds;
         HashSet<int>           _blendTreesWithEmptyMotion;
         HashSet<int>           _rootSMIds;
@@ -585,6 +670,11 @@ namespace YGDR.Editor.Animation
                 if (!relevant) continue;
                 _subAssetsByType = null;
                 InvalidateConditionCache();
+                if (_suppressExternalRepaint)
+                {
+                    EditorApplication.delayCall += () => _suppressExternalRepaint = false;
+                    return;
+                }
                 Repaint();
                 return;
             }
@@ -594,7 +684,7 @@ namespace YGDR.Editor.Animation
         {
             if (_controller == null)
             {
-                EditorGUILayout.LabelField("No controller selected", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("controller.no_controller"), Styles.EmptyLabel);
                 return;
             }
 
@@ -656,7 +746,7 @@ namespace YGDR.Editor.Animation
             if (string.IsNullOrEmpty(_subAssetSearch) && Event.current.type == EventType.Repaint)
             {
                 var searchRect = GUILayoutUtility.GetLastRect();
-                GUI.Label(new Rect(searchRect.x + 18, searchRect.y, searchRect.width - 18, searchRect.height), "Search", Styles.SubAssetSearchHint);
+                GUI.Label(new Rect(searchRect.x + 18, searchRect.y, searchRect.width - 18, searchRect.height), L10n.Get("controller.subassets.search"), Styles.SubAssetSearchHint);
             }
             EditorGUILayout.Space(2);
 
@@ -664,7 +754,7 @@ namespace YGDR.Editor.Animation
             var assets = _subAssetsByType[_subAssetTypeFilter];
             if (assets == null || assets.Length == 0)
             {
-                EditorGUILayout.LabelField("None", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("controller.subassets.none"), Styles.EmptyLabel);
                 return;
             }
 
@@ -679,7 +769,7 @@ namespace YGDR.Editor.Animation
 
             if (filtered.Count == 0)
             {
-                GUI.Label(EditorGUILayout.GetControlRect(false, 20f), "No matches", Styles.EmptyLabel);
+                GUI.Label(EditorGUILayout.GetControlRect(false, 20f), L10n.Get("controller.subassets.no_matches"), Styles.EmptyLabel);
                 return;
             }
 
@@ -740,7 +830,7 @@ namespace YGDR.Editor.Animation
                 }
                 if (_clipsWithBrokenIds != null && _clipsWithBrokenIds.Contains(assetId))
                 {
-                    var warningIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.warnicon").image, "Contains broken bindings");
+                    var warningIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.warnicon").image, L10n.Get("controller.subassets.warn_broken_bindings"));
                     GUI.Label(new Rect(rowRect.xMax - 18, rowRect.y + 1, 16, rowRect.height - 2), warningIconContent);
                 }
                 return;
@@ -762,6 +852,10 @@ namespace YGDR.Editor.Animation
                 _statesWithInvalidTransitions != null &&
                 _statesWithInvalidTransitions.Contains(asset.GetInstanceID()))
                 showInvalidWarning = true;
+            else if (_subAssetTypeFilter == 1 &&
+                _statesWithNoMotion != null &&
+                _statesWithNoMotion.Contains(asset.GetInstanceID()))
+                showEmptyMotionWarning = true;
             else if (_subAssetTypeFilter == 2 &&
                 _blendTreesWithEmptyMotion != null &&
                 _blendTreesWithEmptyMotion.Contains(asset.GetInstanceID()))
@@ -772,9 +866,9 @@ namespace YGDR.Editor.Animation
 
             if (showEmptyWarning || showInvalidWarning || showEmptyMotionWarning)
             {
-                string warningTooltip      = showEmptyWarning ? "Layer is empty"
-                    : showEmptyMotionWarning ? "Contains empty motion field"
-                    : "Contains invalid transition";
+                string warningTooltip      = showEmptyWarning ? L10n.Get("controller.subassets.warn_empty_layer")
+                    : showEmptyMotionWarning ? L10n.Get("controller.subassets.warn_empty_motion")
+                    : L10n.Get("controller.subassets.warn_invalid_transition");
                 var warningIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.warnicon").image, warningTooltip);
                 var warningIconRect    = new Rect(rowRect.xMax - 18, rowRect.y + 1, 16, rowRect.height - 2);
                 GUI.Label(warningIconRect, warningIconContent);
@@ -830,10 +924,16 @@ namespace YGDR.Editor.Animation
 
             var paramNames = new HashSet<string>(_controller.parameters.Select(p => p.name));
             _statesWithInvalidTransitions = new HashSet<int>();
+            _statesWithNoMotion = new HashSet<int>();
             foreach (var asset in states)
             {
-                if (asset is AnimatorState state && HasInvalidTransition(state, paramNames))
-                    _statesWithInvalidTransitions.Add(asset.GetInstanceID());
+                if (asset is AnimatorState state)
+                {
+                    if (HasInvalidTransition(state, paramNames))
+                        _statesWithInvalidTransitions.Add(asset.GetInstanceID());
+                    if (state.motion == null)
+                        _statesWithNoMotion.Add(asset.GetInstanceID());
+                }
             }
 
             _emptySMIds = new HashSet<int>(
@@ -1177,10 +1277,13 @@ namespace YGDR.Editor.Animation
             else _slotController = animator.runtimeAnimatorController as AnimatorController;
         }
 
+        bool _suppressExternalRepaint;
+
         void OnHierarchyChangedRefresh()
         {
             _brokenIdsDirty = true;
             if (_clipRemapAvatarRoot != null) RefreshAvatarSlot();
+            if (_suppressExternalRepaint) return;
             Repaint();
         }
 
@@ -1298,6 +1401,62 @@ namespace YGDR.Editor.Animation
             var capturedTool = tool;
             var capturedFrameMethod = _frameSelectionMethod;
             EditorApplication.delayCall += () => capturedFrameMethod?.Invoke(capturedTool, null);
+        }
+
+        /* Switches the Animator window to the layer and sub-SM containing state, selects it, and frames it on the next editor tick. */
+        internal static void FocusState(AnimatorState state, AnimatorController controller)
+        {
+            var toolType = AnimatorEditorInit.AnimatorControllerToolType;
+            if (toolType == null || controller == null) return;
+
+            var tools = Resources.FindObjectsOfTypeAll(toolType);
+            if (tools.Length == 0) return;
+            var tool = tools[0];
+
+            int layerIndex = -1;
+            AnimatorStateMachine containingSM = null;
+
+            for (int i = 0; i < controller.layers.Length; i++)
+            {
+                var found = FindSMContainingState(controller.layers[i].stateMachine, state);
+                if (found == null) continue;
+                layerIndex = i;
+                containingSM = found;
+                break;
+            }
+            if (layerIndex < 0) return;
+
+            _setCurrentLayerMethod ??= toolType.GetMethod("SetCurrentLayer",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            _addBreadCrumbMethod   ??= toolType.GetMethod("AddBreadCrumb",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            _frameSelectionMethod  ??= toolType.GetMethod("FrameSelection",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+            _setCurrentLayerMethod?.Invoke(tool, new object[] { layerIndex });
+            PushSMBreadcrumbs(tool, controller.layers[layerIndex].stateMachine, containingSM);
+
+            Selection.activeObject = state;
+            var capturedTool = tool;
+            var capturedState = state;
+            var capturedFrameMethod = _frameSelectionMethod;
+            EditorApplication.delayCall += () =>
+            {
+                Selection.activeObject = capturedState;
+                EditorApplication.delayCall += () => capturedFrameMethod?.Invoke(capturedTool, null);
+            };
+        }
+
+        static AnimatorStateMachine FindSMContainingState(AnimatorStateMachine sm, AnimatorState state)
+        {
+            foreach (var childState in sm.states)
+                if (childState.state == state) return sm;
+            foreach (var childStateMachine in sm.stateMachines)
+            {
+                var found = FindSMContainingState(childStateMachine.stateMachine, state);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         /* Returns the SM that directly owns transition via states or anyStateTransitions, searching recursively. Returns null if not found. */

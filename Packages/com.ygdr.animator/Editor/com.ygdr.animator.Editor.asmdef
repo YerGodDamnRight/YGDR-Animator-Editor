@@ -2,7 +2,8 @@
     "name": "com.ygdr.animator.Editor",
     "rootNamespace": "ygdr",
     "references": [
-        "com.ygdr.animator"
+        "com.ygdr.animator",
+        "com.ygdr.mdv"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -11,6 +12,17 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "",
+            "define": "VRC_SDK_VRCSDK3"
+        },
+        {
+            "name": "com.ygdr.mdv",
+            "expression": "",
+            "define": "YGDR_MDV"
+        }
+    ],
     "noEngineReferences": false
 }

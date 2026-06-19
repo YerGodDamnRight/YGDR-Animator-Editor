@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -17,7 +36,7 @@ namespace YGDR.Editor.Animation
                 EditorGUI.DrawRect(panelRect, Styles.PrimaryColor);
 
             if (_selectedStates.Length == 0)
-                EditorGUILayout.LabelField("Select a state to edit", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("states.empty"), Styles.EmptyLabel);
             else
                 DrawStateRows();
 
@@ -26,7 +45,8 @@ namespace YGDR.Editor.Animation
             EditorGUILayout.Space(8);
             DrawStateProperties();
             EditorGUILayout.Space(EditorGUIUtility.singleLineHeight);
-            EditorGUILayout.LabelField("Shared Behaviors", Styles.FooterVersion);
+#if VRC_SDK_VRCSDK3
+            EditorGUILayout.LabelField(L10n.Get("states.shared_behaviors"), Styles.FooterText);
             DrawVRCDriversSection();
             if (_selectedStates.Any(state => GetDriverForState(state) != null)) EditorGUILayout.Space(8);
             DrawVRCPlayAudioSection();
@@ -40,6 +60,7 @@ namespace YGDR.Editor.Animation
             DrawVRCPlayableLayerSection();
             if (_selectedStates.Any(state => GetPlayableLayerForState(state) != null)) EditorGUILayout.Space(8);
             DrawVRCPoseSpaceSection();
+#endif
 
             EditorGUILayout.EndVertical();
         }
@@ -70,8 +91,8 @@ void DrawStateRows()
 
             if (_stateRowScrollEnabled && totalH > maxVisibleH)
             {
-                var contentRect = new Rect(0, 0, viewRect.width - 13f, totalH + gap);
-                _stateRowScrollPos = GUI.BeginScrollView(viewRect, _stateRowScrollPos, contentRect, false, true);
+                var contentRect = new Rect(0, 0, viewRect.width, totalH + gap);
+                _stateRowScrollPos = GUI.BeginScrollView(viewRect, _stateRowScrollPos, contentRect, false, true, GUIStyle.none, GUI.skin.verticalScrollbar);
                 DrawStateRowsInto(contentRect, rowHeight, gap, nameWidth, btnWidth);
                 GUI.EndScrollView();
             }
@@ -89,7 +110,7 @@ void DrawStateRows()
 
             foreach (var state in _selectedStates)
             {
-                if (CursorBtn(new Rect(groupX, currentY, btnWidth, rowHeight), "In", Styles.IconBtn))
+                if (CursorBtn(new Rect(groupX, currentY, btnWidth, rowHeight), L10n.Get("states.in"), Styles.IconBtn))
                     SelectIncomingTransitions(_controller, new[] { state });
 
                 var nameRect = new Rect(groupX + btnWidth, currentY, nameWidth, rowHeight);
@@ -97,7 +118,7 @@ void DrawStateRows()
                     EditorGUI.DrawRect(nameRect, Styles.SecondaryColor);
                 GUI.Label(nameRect, TruncateToFit(state.name, Styles.StateRowName, nameWidth), Styles.StateRowName);
 
-                if (CursorBtn(new Rect(groupX + btnWidth + nameWidth, currentY, btnWidth, rowHeight), "Out", Styles.IconBtn))
+                if (CursorBtn(new Rect(groupX + btnWidth + nameWidth, currentY, btnWidth, rowHeight), L10n.Get("states.out"), Styles.IconBtn))
                     SelectOutgoingTransitions(new[] { state });
 
                 currentY += rowHeight + gap;
@@ -121,14 +142,14 @@ void DrawStateRows()
             using (new EditorGUI.DisabledScope(_selectedStates.Length < 2))
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (CursorBtn("Align Vertical",   Styles.IconBtn)) AlignStates(vertical: true);
-                if (CursorBtn("Align Horizontal", Styles.IconBtn)) AlignStates(vertical: false);
+                if (CursorBtn(L10n.Get("states.align_vertical"),   Styles.IconBtn)) AlignStates(vertical: true);
+                if (CursorBtn(L10n.Get("states.align_horizontal"), Styles.IconBtn)) AlignStates(vertical: false);
             }
             using (new EditorGUI.DisabledScope(_selectedStates.Length < 3))
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (CursorBtn("Distribute Vertical",   Styles.IconBtn)) DistributeStates(vertical: true);
-                if (CursorBtn("Distribute Horizontal", Styles.IconBtn)) DistributeStates(vertical: false);
+                if (CursorBtn(L10n.Get("states.distribute_vertical"),   Styles.IconBtn)) DistributeStates(vertical: true);
+                if (CursorBtn(L10n.Get("states.distribute_horizontal"), Styles.IconBtn)) DistributeStates(vertical: false);
             }
         }
 
@@ -170,7 +191,7 @@ void DrawStateRows()
                 {
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        EditorGUILayout.LabelField("Name", GUILayout.Width(80));
+                        EditorGUILayout.LabelField(L10n.Get("states.name"), GUILayout.Width(80));
                         EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.name != first.name);
                         EditorGUI.BeginChangeCheck();
                         string newName = EditorGUILayout.TextField(empty ? "" : first.name);
@@ -201,7 +222,7 @@ void DrawStateRows()
 
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        EditorGUILayout.LabelField("Tag", GUILayout.Width(80));
+                        EditorGUILayout.LabelField(L10n.Get("states.tag"), GUILayout.Width(80));
                         EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.tag != first.tag);
                         EditorGUI.BeginChangeCheck();
                         string newTag = EditorGUILayout.TextField(empty ? "" : first.tag);
@@ -216,7 +237,7 @@ void DrawStateRows()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Motion", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.motion"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.motion != first.motion);
                 EditorGUI.BeginChangeCheck();
                 var newMotion = (Motion)EditorGUILayout.ObjectField(empty ? null : first.motion, typeof(Motion), false);
@@ -229,7 +250,7 @@ void DrawStateRows()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Speed", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.speed"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.speed, first.speed));
                 EditorGUI.BeginChangeCheck();
                 float newSpeed = EditorGUILayout.FloatField(empty ? 1f : first.speed);
@@ -245,7 +266,7 @@ void DrawStateRows()
             {
                 using (new EditorGUI.DisabledScope(!speedParamActive))
                 {
-                    EditorGUILayout.LabelField("Multiplier", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.multiplier"), GUILayout.Width(110));
                     EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.speedParameter != first.speedParameter);
                     EditorGUI.BeginChangeCheck();
                     string newSpeedParameter = DrawFloatParamDropdown(empty ? "" : first.speedParameter);
@@ -255,7 +276,7 @@ void DrawStateRows()
                 }
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.speedParameterActive != first.speedParameterActive);
                 EditorGUI.BeginChangeCheck();
-                bool newSpeedActive = EditorGUILayout.ToggleLeft("Parameter", empty ? false : first.speedParameterActive, GUILayout.Width(90));
+                bool newSpeedActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.speedParameterActive, GUILayout.Width(90));
                 if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.speedParameterActive = newSpeedActive);
                 EditorGUI.showMixedValue = false;
             }
@@ -265,7 +286,7 @@ void DrawStateRows()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Motion Time", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.motion_time"), GUILayout.Width(110));
                 if (!empty && first.timeParameterActive)
                 {
                     EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.timeParameter != first.timeParameter);
@@ -277,7 +298,7 @@ void DrawStateRows()
                 GUILayout.FlexibleSpace();
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.timeParameterActive != first.timeParameterActive);
                 EditorGUI.BeginChangeCheck();
-                bool newTimeActive = EditorGUILayout.ToggleLeft("Parameter", empty ? false : first.timeParameterActive, GUILayout.Width(90));
+                bool newTimeActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.timeParameterActive, GUILayout.Width(90));
                 if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.timeParameterActive = newTimeActive);
                 EditorGUI.showMixedValue = false;
             }
@@ -288,7 +309,7 @@ void DrawStateRows()
             bool mirrorParamActive = !empty && first.mirrorParameterActive;
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Mirror", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.mirror"), GUILayout.Width(110));
                 if (mirrorParamActive)
                 {
                     EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.mirrorParameter != first.mirrorParameter);
@@ -308,7 +329,7 @@ void DrawStateRows()
                 }
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.mirrorParameterActive != first.mirrorParameterActive);
                 EditorGUI.BeginChangeCheck();
-                bool newMirrorActive = EditorGUILayout.ToggleLeft("Parameter", empty ? false : first.mirrorParameterActive, GUILayout.Width(90));
+                bool newMirrorActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.mirrorParameterActive, GUILayout.Width(90));
                 if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.mirrorParameterActive = newMirrorActive);
                 EditorGUI.showMixedValue = false;
             }
@@ -318,7 +339,7 @@ void DrawStateRows()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Cycle Offset", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.cycle_offset"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.cycleOffset, first.cycleOffset));
                 EditorGUI.BeginChangeCheck();
                 float newCycleOffset = EditorGUILayout.FloatField(empty ? 0f : first.cycleOffset);
@@ -327,7 +348,7 @@ void DrawStateRows()
                 GUILayout.FlexibleSpace();
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.cycleOffsetParameterActive != first.cycleOffsetParameterActive);
                 EditorGUI.BeginChangeCheck();
-                bool newOffsetParameterActive = EditorGUILayout.ToggleLeft("Parameter", empty ? false : first.cycleOffsetParameterActive, GUILayout.Width(90));
+                bool newOffsetParameterActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.cycleOffsetParameterActive, GUILayout.Width(90));
                 if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffsetParameterActive = newOffsetParameterActive);
                 EditorGUI.showMixedValue = false;
             }
@@ -337,7 +358,7 @@ void DrawStateRows()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Foot IK", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.foot_ik"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.iKOnFeet != first.iKOnFeet);
                 EditorGUI.BeginChangeCheck();
                 bool newFootIK = EditorGUILayout.Toggle(empty ? false : first.iKOnFeet, GUILayout.Width(16));
@@ -350,7 +371,7 @@ void DrawStateRows()
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Write Defaults", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("states.write_defaults"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.writeDefaultValues != first.writeDefaultValues);
                 EditorGUI.BeginChangeCheck();
                 bool newWriteDefaults = EditorGUILayout.Toggle(empty ? true : first.writeDefaultValues, GUILayout.Width(16));
@@ -361,66 +382,72 @@ void DrawStateRows()
 
         // ── Helpers ───────────────────────────────────────────────────────────
 
+        AnimatorController _paramCachedController;
+        string[] _cachedIntParams   = Array.Empty<string>();
+        string[] _cachedFloatParams = Array.Empty<string>();
+        string[] _cachedBoolParams  = Array.Empty<string>();
+
+        void RebuildParamNameCaches()
+        {
+            _paramCachedController = _controller;
+            if (_controller == null)
+            {
+                _cachedIntParams   = Array.Empty<string>();
+                _cachedFloatParams = Array.Empty<string>();
+                _cachedBoolParams  = Array.Empty<string>();
+                return;
+            }
+            var parameters     = _controller.parameters;
+            _cachedIntParams   = parameters.Where(x => x.type == AnimatorControllerParameterType.Int).Select(x => x.name).ToArray();
+            _cachedFloatParams = parameters.Where(x => x.type == AnimatorControllerParameterType.Float).Select(x => x.name).ToArray();
+            _cachedBoolParams  = parameters.Where(x => x.type == AnimatorControllerParameterType.Bool).Select(x => x.name).ToArray();
+        }
+
         /* Draws an EditorGUILayout.Popup listing all Int parameters in the active controller and returns the selected parameter name. */
         string DrawIntParamDropdown(string current)
         {
-            string[] intParameterNames = _controller != null
-                ? _controller.parameters
-                    .Where(x => x.type == AnimatorControllerParameterType.Int)
-                    .Select(x => x.name)
-                    .ToArray()
-                : Array.Empty<string>();
+            if (_paramCachedController != _controller) RebuildParamNameCaches();
 
-            if (intParameterNames.Length == 0)
+            if (_cachedIntParams.Length == 0)
             {
-                GUILayout.Label("No Int parameters in Controller", EditorStyles.miniLabel);
+                GUILayout.Label(L10n.Get("states.no_int_float_params"), EditorStyles.miniLabel);
                 return current;
             }
 
-            int currentIndex = Mathf.Max(0, Array.IndexOf(intParameterNames, current));
-            int selectedIndex = EditorGUILayout.Popup(currentIndex, intParameterNames);
-            return intParameterNames[selectedIndex];
+            int currentIndex = Mathf.Max(0, Array.IndexOf(_cachedIntParams, current));
+            int selectedIndex = EditorGUILayout.Popup(currentIndex, _cachedIntParams);
+            return _cachedIntParams[selectedIndex];
         }
 
         /* Draws an EditorGUILayout.Popup listing all Float parameters in the active controller and returns the selected parameter name. */
         string DrawFloatParamDropdown(string current, params GUILayoutOption[] options)
         {
-            string[] floatParameterNames = _controller != null
-                ? _controller.parameters
-                    .Where(x => x.type == AnimatorControllerParameterType.Float)
-                    .Select(x => x.name)
-                    .ToArray()
-                : Array.Empty<string>();
+            if (_paramCachedController != _controller) RebuildParamNameCaches();
 
-            if (floatParameterNames.Length == 0)
+            if (_cachedFloatParams.Length == 0)
             {
                 GUILayout.Label(string.IsNullOrEmpty(current) ? "—" : current, EditorStyles.miniLabel, options);
                 return current;
             }
 
-            int currentIndex = Mathf.Max(0, Array.IndexOf(floatParameterNames, current));
-            int selectedIndex = EditorGUILayout.Popup(currentIndex, floatParameterNames, options);
-            return floatParameterNames[selectedIndex];
+            int currentIndex = Mathf.Max(0, Array.IndexOf(_cachedFloatParams, current));
+            int selectedIndex = EditorGUILayout.Popup(currentIndex, _cachedFloatParams, options);
+            return _cachedFloatParams[selectedIndex];
         }
 
         string DrawBoolParamDropdown(string current, params GUILayoutOption[] options)
         {
-            string[] boolParameterNames = _controller != null
-                ? _controller.parameters
-                    .Where(x => x.type == AnimatorControllerParameterType.Bool)
-                    .Select(x => x.name)
-                    .ToArray()
-                : Array.Empty<string>();
+            if (_paramCachedController != _controller) RebuildParamNameCaches();
 
-            if (boolParameterNames.Length == 0)
+            if (_cachedBoolParams.Length == 0)
             {
                 GUILayout.Label(string.IsNullOrEmpty(current) ? "—" : current, EditorStyles.miniLabel, options);
                 return current;
             }
 
-            int currentIndex = Mathf.Max(0, Array.IndexOf(boolParameterNames, current));
-            int selectedIndex = EditorGUILayout.Popup(currentIndex, boolParameterNames, options);
-            return boolParameterNames[selectedIndex];
+            int currentIndex = Mathf.Max(0, Array.IndexOf(_cachedBoolParams, current));
+            int selectedIndex = EditorGUILayout.Popup(currentIndex, _cachedBoolParams, options);
+            return _cachedBoolParams[selectedIndex];
         }
 
         /* Sets Selection.objects to all outgoing transitions from every state in states. */
@@ -430,25 +457,23 @@ void DrawStateRows()
                 .SelectMany(state => state.transitions));
         }
 
-        /* Sets Selection.objects to all transitions across all layers of controller that point to any state in states. */
+        /* Sets Selection.objects to all transitions in the active layer that point to any state in states. */
         internal static void SelectIncomingTransitions(AnimatorController controller, AnimatorState[] states)
         {
             if (controller == null) return;
             var targets = new HashSet<AnimatorState>(states);
             var incoming = new List<AnimatorStateTransition>();
-            foreach (var layer in controller.layers)
-                CollectIncoming(layer.stateMachine, targets, incoming);
+            CollectIncoming(GetActiveLayerStateMachine(controller), targets, incoming);
             SelectTransitionsAndFocusAnimator(incoming);
         }
 
-        /* Sets Selection.objects to all incoming and outgoing transitions for every state in states. */
+        /* Sets Selection.objects to all incoming and outgoing transitions for every state in states (active layer only). */
         internal static void SelectBothTransitions(AnimatorController controller, AnimatorState[] states)
         {
             if (controller == null) return;
             var targets = new HashSet<AnimatorState>(states);
             var incoming = new List<AnimatorStateTransition>();
-            foreach (var layer in controller.layers)
-                CollectIncoming(layer.stateMachine, targets, incoming);
+            CollectIncoming(GetActiveLayerStateMachine(controller), targets, incoming);
             SelectTransitionsAndFocusAnimator(incoming.Union(states.SelectMany(state => state.transitions)));
         }
 
@@ -478,8 +503,7 @@ void DrawStateRows()
         {
             if (controller == null) return;
             var result = new List<AnimatorStateTransition>();
-            foreach (var layer in controller.layers)
-                CollectAnyStateTransitions(layer.stateMachine, result);
+            CollectAnyStateTransitions(GetActiveLayerStateMachine(controller), result);
             SelectTransitionsAndFocusAnimator(result);
         }
 
@@ -487,9 +511,17 @@ void DrawStateRows()
         {
             if (controller == null) return;
             var result = new List<AnimatorStateTransition>();
-            foreach (var layer in controller.layers)
-                CollectExitTransitions(layer.stateMachine, result);
+            CollectExitTransitions(GetActiveLayerStateMachine(controller), result);
             SelectTransitionsAndFocusAnimator(result);
+        }
+
+        static AnimatorStateMachine GetActiveLayerStateMachine(AnimatorController controller)
+        {
+            var tool = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType).FirstOrDefault();
+            if (tool == null) return controller.layers[0].stateMachine;
+            var idx = (int)WindowPatchReflection.SelectedLayerIndexProperty.GetValue(tool);
+            if ((uint)idx >= (uint)controller.layers.Length) return controller.layers[0].stateMachine;
+            return controller.layers[idx].stateMachine;
         }
 
         static void CollectAnyStateTransitions(AnimatorStateMachine sm, List<AnimatorStateTransition> result)

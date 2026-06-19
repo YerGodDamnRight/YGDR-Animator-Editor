@@ -1,11 +1,84 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
 namespace YGDR.Editor.Animation
 {
+    [Serializable]
+    internal struct KeyBinding
+    {
+        [SerializeField] internal KeyCode key;
+        [SerializeField] internal bool ctrl;
+        [SerializeField] internal bool shift;
+        [SerializeField] internal bool alt;
+
+        internal KeyBinding(KeyCode key, bool ctrl = false, bool shift = false, bool alt = false)
+        {
+            this.key   = key;
+            this.ctrl  = ctrl;
+            this.shift = shift;
+            this.alt   = alt;
+        }
+
+        internal bool Matches(Event e) =>
+            key != KeyCode.None &&
+            e.type == EventType.KeyDown &&
+            e.keyCode == key &&
+            e.control == ctrl &&
+            e.shift   == shift &&
+            e.alt     == alt;
+
+        internal bool IsHeld(Event e)
+        {
+            if (e == null || key != KeyCode.None) return false;
+            if (ctrl  && !e.control) return false;
+            if (shift && !e.shift)   return false;
+            if (alt   && !e.alt)     return false;
+            return ctrl || shift || alt;
+        }
+
+        internal string Label()
+        {
+            if (key == KeyCode.None && !ctrl && !shift && !alt) return "—";
+            var sb = new System.Text.StringBuilder();
+            if (ctrl)  sb.Append("Ctrl+");
+            if (shift) sb.Append("Shift+");
+            if (alt)   sb.Append("Alt+");
+            if (key != KeyCode.None) sb.Append(key.ToString());
+            else if (sb.Length > 0) sb.Length--;
+            return sb.ToString();
+        }
+    }
+
+    [Serializable]
+    internal class AnimatorColorTag
+    {
+        public string tagName = "New Tag";
+        public Color  color   = Color.white;
+    }
+
     [Serializable]
     internal class AnimatorDefaultSettings
     {
@@ -38,14 +111,25 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool overlayEnabled    = true;
         [SerializeField] internal bool overlayShowWD     = true;
         [SerializeField] internal bool overlayShowB      = true;
-        [SerializeField] internal bool overlayShowLoop   = true;
-        [SerializeField] internal bool overlayShowEmpty      = true;
+        [SerializeField] internal bool overlayShowLoopEmpty = true;
+        [SerializeField] internal bool overlayShowClipTime   = true;
         [SerializeField] internal bool overlayShowSpeed      = true;
         [SerializeField] internal bool overlayShowMotion     = true;
         [SerializeField] internal bool overlayShowMotionName = true;
         [SerializeField] internal bool overlayShowCoords    = false;
         [SerializeField] internal Color overlayActiveColor = Color.white;
         [SerializeField] internal Color overlayInactiveColor = new Color(0.45f, 0.45f, 0.45f, 1f);
+
+        // Color tags
+        [SerializeField] internal List<AnimatorColorTag> colorTags = new List<AnimatorColorTag>();
+
+        internal static Color? GetTagColor(string tagName, AnimatorDefaultSettings settings)
+        {
+            if (string.IsNullOrEmpty(tagName) || settings.colorTags.Count == 0) return null;
+            foreach (var colorTag in settings.colorTags)
+                if (colorTag.tagName == tagName) return colorTag.color;
+            return null;
+        }
 
         // Transition overlay
         [SerializeField] internal bool  transitionOverlayEnabled          = false;
@@ -126,9 +210,15 @@ namespace YGDR.Editor.Animation
 
         internal void ResetPalette()
         {
-            paletteColorPrimary   = DefaultPrimary;
-            paletteColorSecondary = DefaultSecondary;
-            paletteColorAccent    = DefaultAccent;
+            paletteColorPrimary    = DefaultPrimary;
+            paletteColorSecondary  = DefaultSecondary;
+            paletteColorAccent     = DefaultAccent;
+            paramColorFloat        = new Color(0.35f, 0.75f, 0.35f, 1f);
+            paramColorInt          = new Color(0.35f, 0.60f, 1.00f, 1f);
+            paramColorBool         = new Color(1.00f, 0.55f, 0.20f, 1f);
+            paramColorTrigger      = new Color(0.85f, 0.30f, 0.85f, 1f);
+            paramColorVrcLabel     = Color.cyan;
+            analysisHighlightColor = Color.red;
         }
 
         // Transition defaults
@@ -152,6 +242,38 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool clipMenuNestingEnabled  = true;
         [SerializeField] internal bool layerTemplateButtonEnabled = true;
         [SerializeField] internal bool parameterAddMenuEnabled   = true;
+
+        // Keybindings
+        [SerializeField] internal KeyBinding kbSelectIncoming       = new(KeyCode.I);
+        [SerializeField] internal KeyBinding kbSelectOutgoing       = new(KeyCode.O);
+        [SerializeField] internal KeyBinding kbSelectBoth           = new(KeyCode.P);
+        [SerializeField] internal KeyBinding kbSelectAll            = new(KeyCode.A, ctrl: true);
+        [SerializeField] internal KeyBinding kbSelectAllTransitions = new(KeyCode.A, ctrl: true, shift: true);
+        [SerializeField] internal KeyBinding kbCopy                 = new(KeyCode.C, ctrl: true);
+        [SerializeField] internal KeyBinding kbPaste                = new(KeyCode.V, ctrl: true);
+        [SerializeField] internal KeyBinding kbChainMode            = new(KeyCode.None);
+        [SerializeField] internal KeyBinding kbFanMode              = new(KeyCode.None);
+        [SerializeField] internal KeyBinding kbMultiTransition      = new(KeyCode.None);
+        [SerializeField] internal KeyBinding kbReverseTransitions   = new(KeyCode.None);
+        [SerializeField] internal KeyBinding kbReplicate            = new(KeyCode.None);
+        [SerializeField] internal KeyBinding kbRedirect             = new(KeyCode.None);
+
+        internal void ResetKeybinds()
+        {
+            kbSelectIncoming       = new(KeyCode.I);
+            kbSelectOutgoing       = new(KeyCode.O);
+            kbSelectBoth           = new(KeyCode.P);
+            kbSelectAll            = new(KeyCode.A, ctrl: true);
+            kbSelectAllTransitions = new(KeyCode.A, ctrl: true, shift: true);
+            kbCopy                 = new(KeyCode.C, ctrl: true);
+            kbPaste                = new(KeyCode.V, ctrl: true);
+            kbChainMode            = new(KeyCode.None);
+            kbFanMode              = new(KeyCode.None);
+            kbMultiTransition      = new(KeyCode.None);
+            kbReverseTransitions   = new(KeyCode.None);
+            kbReplicate            = new(KeyCode.None);
+            kbRedirect             = new(KeyCode.None);
+        }
 
         // State defaults
         [SerializeField] internal bool applyToStates = true;
@@ -189,6 +311,7 @@ namespace YGDR.Editor.Animation
             graphGridBackgroundImagePath = graphGridBackgroundImage != null
                 ? AssetDatabase.GetAssetPath(graphGridBackgroundImage) : "";
             EditorPrefs.SetString(PrefsKey, JsonUtility.ToJson(this));
+            PatchNodeStyles.Invalidate();
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
         }
 

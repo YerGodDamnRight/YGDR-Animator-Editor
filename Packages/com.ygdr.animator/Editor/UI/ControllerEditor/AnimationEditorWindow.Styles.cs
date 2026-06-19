@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
@@ -12,7 +31,8 @@ namespace YGDR.Editor.Animation
             internal static Color PrimaryColor    = new(0.25f, 0.25f, 0.25f, 1f);
             internal static Color SecondaryColor  = new(0.30f, 0.30f, 0.30f, 1f);
             internal static Color AccentColor     = new(0.20f, 0.20f, 0.20f, 1f);
-            internal static Color SectionHeaderBg => new Color(AccentColor.r * 0.8f, AccentColor.g *0.8f, AccentColor.b * 0.8f, 1f);
+            internal static Color SectionHeaderBg => new Color(AccentColor.r * 0.8f, AccentColor.g * 0.8f, AccentColor.b * 0.8f, 1f);
+            internal static Color FooterBg        => new Color(AccentColor.r * 0.55f, AccentColor.g * 0.55f, AccentColor.b * 0.55f, 1f);
             internal static Color RowAltColor => new Color(SecondaryColor.r * 0.80f, SecondaryColor.g * 0.80f, SecondaryColor.b * 0.80f, 1f);
 
             internal static void ApplyPalette(Color primaryColor, Color secondaryColor, Color accentColor)
@@ -36,6 +56,7 @@ namespace YGDR.Editor.Animation
                 s_scrollToggleBtn          = null;
                 s_controllerSubTabBtn      = null;
                 s_controllerSubTabBtnActive = null;
+                s_footerLinksBtn           = null;
                 AnimatorTemplateParameterWindow.InvalidateStyles();
             }
 
@@ -117,7 +138,8 @@ namespace YGDR.Editor.Animation
                     s_behaviorSectionHeader = new GUIStyle(GUIStyle.none)
                     {
                         fixedHeight = 24,
-                        normal = { background = bgTex }
+                        padding     = new RectOffset(8, 0, 0, 0),
+                        normal      = { background = bgTex }
                     };
                     return s_behaviorSectionHeader;
                 }
@@ -323,23 +345,48 @@ namespace YGDR.Editor.Animation
                 padding   = new RectOffset(0, 8, 0, 0),
                 normal    = { textColor = new Color(0.5f, 0.5f, 0.5f) }
             };
-            internal static readonly GUIStyle FooterLabel = new(EditorStyles.miniLabel)
+            static GUIStyle s_footerLinksBtn;
+            internal static GUIStyle FooterLinksBtn
             {
-                alignment = TextAnchor.MiddleRight,
-                padding   = new RectOffset(0, 6, 0, 0),
-                normal    = { textColor = new Color(0.5f, 0.5f, 0.5f) }
-            };
-            internal static readonly GUIStyle FooterVersion = new(EditorStyles.miniLabel)
+                get
+                {
+                    if (s_footerLinksBtn != null) return s_footerLinksBtn;
+                    s_footerLinksBtn = new GUIStyle(GUIStyle.none)
+                    {
+                        alignment = TextAnchor.MiddleCenter,
+                        fontSize  = 10,
+                        fontStyle = FontStyle.Bold,
+                        normal    = { background = AccentTex,      textColor = new Color(0.75f, 0.75f, 0.75f) },
+                        hover     = { background = AccentHoverTex, textColor = Color.white },
+                        active    = { background = AccentHoverTex, textColor = Color.white }
+                    };
+                    return s_footerLinksBtn;
+                }
+            }
+
+            internal static readonly GUIStyle FooterText = new(EditorStyles.miniLabel)
             {
                 alignment = TextAnchor.MiddleLeft,
                 padding   = new RectOffset(6, 0, 0, 0),
-                normal    = { textColor = new Color(0.5f, 0.5f, 0.5f) }
+                normal    = { textColor = new Color(0.75f, 0.75f, 0.75f) }
+            };
+            internal static readonly GUIStyle FooterDocsBtn = new(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
+                normal    = { textColor = new Color(0.75f, 0.75f, 0.75f) },
+                hover     = { textColor = Color.white }
             };
             internal static readonly GUIStyle CondDuplicateLabel = new(EditorStyles.miniLabel)
             {
                 alignment = TextAnchor.MiddleRight,
                 padding   = new RectOffset(0, 20, 0, 0),
                 normal    = { textColor = new Color(0.86f, 0.15f, 0.15f) }
+            };
+            internal static readonly GUIStyle MiniLabelRight = new(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleRight,
+                padding   = new RectOffset(0, 16, 0, 0)
             };
             internal static readonly GUIStyle SmallLabelCenter = new(EditorStyles.label)
             {
@@ -368,10 +415,12 @@ namespace YGDR.Editor.Animation
                 {
                     if (s_scrollToggleBtn != null) return s_scrollToggleBtn;
                     int capH = Mathf.CeilToInt(k_pillW / 2f);
-                    var offTex    = MakePillTex(new Color(0.18f, 0.18f, 0.18f));
-                    var offHovTex = MakePillTex(new Color(0.22f, 0.22f, 0.22f));
-                    var onTex     = MakePillTex(new Color(0.28f, 0.28f, 0.28f));
-                    var onHovTex  = MakePillTex(new Color(0.35f, 0.35f, 0.35f));
+                    var hoverColor  = new Color(AccentColor.r + 0.08f, AccentColor.g + 0.08f, AccentColor.b + 0.08f);
+                    var activeColor = new Color(AccentColor.r + 0.16f, AccentColor.g + 0.16f, AccentColor.b + 0.16f);
+                    var offTex    = MakePillTex(AccentColor);
+                    var offHovTex = MakePillTex(hoverColor);
+                    var onTex     = MakePillTex(AccentColor);
+                    var onHovTex  = MakePillTex(hoverColor);
                     s_scrollToggleBtn = new GUIStyle(GUIStyle.none)
                     {
                         alignment = TextAnchor.MiddleCenter,
@@ -379,10 +428,10 @@ namespace YGDR.Editor.Animation
                         border    = new RectOffset(0, 0, capH, capH),
                         normal    = { background = offTex,    textColor = new Color(0.5f, 0.5f, 0.5f) },
                         hover     = { background = offHovTex, textColor = new Color(0.7f, 0.7f, 0.7f) },
-                        active    = { background = offTex,    textColor = Color.white },
+                        active    = { background = MakePillTex(activeColor), textColor = Color.white },
                         onNormal  = { background = onTex,     textColor = Color.white },
                         onHover   = { background = onHovTex,  textColor = Color.white },
-                        onActive  = { background = onTex,     textColor = Color.white },
+                        onActive  = { background = MakePillTex(activeColor), textColor = Color.white },
                     };
                     return s_scrollToggleBtn;
                 }

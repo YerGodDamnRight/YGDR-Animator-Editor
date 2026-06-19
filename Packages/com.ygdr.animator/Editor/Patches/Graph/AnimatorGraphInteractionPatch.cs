@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections;
@@ -14,16 +33,17 @@ namespace YGDR.Editor.Animation
     /* Double-click empty graph space → create state at cursor; assigns _buffer.anim as motion if found in package.
        Also tracks hovered node for chain-mode snap. */
     [HarmonyPatch]
-    internal static class PatchGraphDoubleClickCreate
+    internal static class PatchGraphInputHandler
     {
         static FieldInfo _mGraphField;
         static EditorWindow _animWindow;
 
-        static Vector2 _lastMousePosition;
+        internal static Vector2 _lastMousePosition;
         static HashSet<AnimatorState> _prepasteStateSet;
         static HashSet<AnimatorStateMachine> _prepasteSubSMSet;
         static AnimatorStateMachine _pasteSM;
         static AnimationClip _bufferClip;
+        static bool _pasteCommandFromKeybind;
 
         /* Lazily resolves and caches the m_Graph FieldInfo from the GraphGUI instance type. */
         static FieldInfo MGraphField(object instance) =>
@@ -59,11 +79,17 @@ namespace YGDR.Editor.Animation
                     {
                         PatchLayerF2Rename._panelClicked = false;
                         PatchParameterF2Rename._panelClicked = false;
+                        PatchLayerListFocusHighlight._layerPanelActive = false;
                     }
                 }
 
                 if (currentEvent.type == EventType.ExecuteCommand && currentEvent.commandName == "Paste")
                 {
+                    var kbP = AnimatorDefaultSettings.Load();
+                    bool isDefaultPaste = kbP.kbPaste.key == KeyCode.V && kbP.kbPaste.ctrl && !kbP.kbPaste.shift && !kbP.kbPaste.alt;
+                    if (!isDefaultPaste && !_pasteCommandFromKeybind) { currentEvent.Use(); return; }
+                    _pasteCommandFromKeybind = false;
+
                     if (PatchStateChainTransition.FanActive || PatchStateChainTransition.ChainActive || PatchStateNodeMenu._multiTransitionSources != null)
                     {
                         currentEvent.Use();
@@ -87,7 +113,11 @@ namespace YGDR.Editor.Animation
                     {
                         MotionRenameState.Cancel();
                         SubSMRenameState.Cancel();
-                        StateRenameState.Begin(selectedState);
+                        var additionalStates = Selection.objects.OfType<AnimatorState>()
+                            .Where(state => state != selectedState).ToArray();
+                        var renameActiveSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod
+                            ?.Invoke(__instance, null) as AnimatorStateMachine;
+                        StateRenameState.Begin(selectedState, additionalStates.Length > 0 ? additionalStates : null, renameActiveSM);
                         currentEvent.Use();
                         return;
                     }
@@ -142,9 +172,9 @@ namespace YGDR.Editor.Animation
                         if (destinationStates.Length > 0)
                         {
                             if (fromAnyState)
-                                AnimatorLayerOps.MultiTransitionFromAnyState(multiSM, destinationStates);
+                                AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, destinationStates);
                             else
-                                AnimatorLayerOps.MultiTransition(multiSM, multiSources, destinationStates);
+                                AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, destinationStates);
                         }
                         currentEvent.Use();
                         return;
@@ -152,28 +182,32 @@ namespace YGDR.Editor.Animation
                     if (PatchStateNodeMenu._redirectTransitions != null)
                     {
                         var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                        bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
                         var redirectTransitions = PatchStateNodeMenu._redirectTransitions;
                         var redirectSM = PatchStateNodeMenu._redirectSM;
                         PatchStateNodeMenu._redirectTransitions = null;
                         PatchStateNodeMenu._redirectSM = null;
-                        if (destinationStates.Length > 0) AnimatorLayerOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
+                        if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
+                        else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
                         currentEvent.Use();
                         return;
                     }
                     if (PatchStateNodeMenu._replicateTransitions != null)
                     {
                         var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                        bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
                         var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
                         var replicateSM = PatchStateNodeMenu._replicateSM;
                         PatchStateNodeMenu._replicateTransitions = null;
                         PatchStateNodeMenu._replicateSM = null;
-                        if (newSourceStates.Length > 0) AnimatorLayerOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
+                        if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                        else if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
                         currentEvent.Use();
                         return;
                     }
                 }
 
-                if (currentEvent.type == EventType.KeyDown && currentEvent.control && !currentEvent.shift && currentEvent.keyCode == KeyCode.A)
+                if (AnimatorDefaultSettings.Load().kbSelectAll.Matches(currentEvent))
                 {
                     var activeStateMachineA = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                     if (activeStateMachineA != null)
@@ -186,7 +220,7 @@ namespace YGDR.Editor.Animation
                     return;
                 }
 
-                if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.shift && currentEvent.keyCode == KeyCode.A)
+                if (AnimatorDefaultSettings.Load().kbSelectAllTransitions.Matches(currentEvent))
                 {
                     var activeStateMachineA = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                     if (activeStateMachineA != null)
@@ -202,14 +236,156 @@ namespace YGDR.Editor.Animation
                     return;
                 }
 
-                if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.keyCode == KeyCode.C)
+                if (currentEvent.type == EventType.KeyDown)
+                {
+                    var selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                    var kb = AnimatorDefaultSettings.Load();
+
+                    if (selectedStates.Length > 0)
+                    {
+                        var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(selectedStates[0]));
+                        if (kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingTransitions(controller, selectedStates); currentEvent.Use(); return; }
+                        if (kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingTransitions(selectedStates); currentEvent.Use(); return; }
+                        if (kb.kbSelectBoth.Matches(currentEvent))     { AnimationEditorWindow.SelectBothTransitions(controller, selectedStates); currentEvent.Use(); return; }
+                    }
+
+                    bool isAnyStateKb = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                    bool isExitKb     = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                    if (isAnyStateKb || isExitKb)
+                    {
+                        var activeSMKb = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                        if (activeSMKb != null)
+                        {
+                            var controllerKb = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(activeSMKb));
+                            if (isAnyStateKb && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromAnyState(controllerKb); currentEvent.Use(); return; }
+                            if (isExitKb     && kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingToExit(controllerKb);        currentEvent.Use(); return; }
+                        }
+                    }
+
+                    if (kb.kbMultiTransition.Matches(currentEvent))
+                    {
+                        if (PatchStateNodeMenu._multiTransitionSources == null)
+                        {
+                            var activeSMmt = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                            if (activeSMmt != null)
+                            {
+                                if (selectedStates.Length > 0)
+                                {
+                                    PatchStateNodeMenu.CancelPending();
+                                    PatchStateNodeMenu._multiTransitionSources      = selectedStates;
+                                    PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                                    PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                                }
+                                else if (isAnyStateKb)
+                                {
+                                    PatchStateNodeMenu.CancelPending();
+                                    PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
+                                    PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                                    PatchStateNodeMenu._multiTransitionFromAnyState = true;
+                                }
+                            }
+                        }
+                        else if (!(PatchStateNodeMenu._multiTransitionFromAnyState && isExitKb))
+                        {
+                            var multiSources = PatchStateNodeMenu._multiTransitionSources;
+                            var multiSM      = PatchStateNodeMenu._multiTransitionSM;
+                            var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
+                            PatchStateNodeMenu._multiTransitionSources      = null;
+                            PatchStateNodeMenu._multiTransitionSM           = null;
+                            PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                            if (isExitKb && !fromAnyState)
+                                AnimatorBulkTransitionOps.MultiTransitionToExit(multiSM, multiSources);
+                            else if (fromAnyState && selectedStates.Length > 0)
+                                AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, selectedStates);
+                            else if (selectedStates.Length > 0)
+                                AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, selectedStates);
+                        }
+                        currentEvent.Use();
+                        return;
+                    }
+
+                    var selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
+                    if (selectedTransitions.Length > 0 && kb.kbReverseTransitions.Matches(currentEvent))
+                    {
+                        var activeSMrt = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                        if (activeSMrt != null) AnimatorBulkTransitionOps.ReverseNegateTransitions(activeSMrt, selectedTransitions);
+                        currentEvent.Use();
+                        return;
+                    }
+
+                    if (kb.kbReplicate.Matches(currentEvent))
+                    {
+                        if (PatchStateNodeMenu._replicateTransitions != null)
+                        {
+                            var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                            bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                            var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
+                            var replicateSM = PatchStateNodeMenu._replicateSM;
+                            PatchStateNodeMenu._replicateTransitions = null;
+                            PatchStateNodeMenu._replicateSM = null;
+                            if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                            else if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
+                        }
+                        else if (selectedTransitions.Length > 0)
+                        {
+                            var activeSMrep = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                            if (activeSMrep != null)
+                            {
+                                PatchStateNodeMenu.CancelPending();
+                                PatchStateNodeMenu._replicateTransitions = selectedTransitions;
+                                PatchStateNodeMenu._replicateSM = activeSMrep;
+                            }
+                        }
+                        currentEvent.Use();
+                        return;
+                    }
+
+                    if (kb.kbRedirect.Matches(currentEvent))
+                    {
+                        if (PatchStateNodeMenu._redirectTransitions != null)
+                        {
+                            var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                            bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                            var redirectTransitions = PatchStateNodeMenu._redirectTransitions;
+                            var redirectSM = PatchStateNodeMenu._redirectSM;
+                            PatchStateNodeMenu._redirectTransitions = null;
+                            PatchStateNodeMenu._redirectSM = null;
+                            if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
+                            else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
+                        }
+                        else if (selectedTransitions.Length > 0)
+                        {
+                            var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                            if (activeSMred != null)
+                            {
+                                PatchStateNodeMenu.CancelPending();
+                                PatchStateNodeMenu._redirectTransitions = selectedTransitions;
+                                PatchStateNodeMenu._redirectSM = activeSMred;
+                            }
+                        }
+                        currentEvent.Use();
+                        return;
+                    }
+                }
+
+                if (AnimatorDefaultSettings.Load().kbCopy.Matches(currentEvent))
                 {
                     var selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
                     var selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
                     if (selectedTransitions.Length > 0 && selectedStates.Length == 0) { PatchTransitionCopyPaste.SetClipboard(selectedTransitions); PatchCopySelectionToPasteboard.ClearCopy(); currentEvent.Use(); return; }
+                    GraphPatchReflection.CopySelectionToPasteboardMethod?.Invoke(__instance, null);
+                    currentEvent.Use();
+                    return;
+                }
+                // Swallow native ExecuteCommand("Copy") when binding is not Ctrl+C (we handled it via KeyDown above)
+                if (currentEvent.type == EventType.ExecuteCommand && currentEvent.commandName == "Copy")
+                {
+                    var kbC = AnimatorDefaultSettings.Load();
+                    if (!(kbC.kbCopy.key == KeyCode.C && kbC.kbCopy.ctrl && !kbC.kbCopy.shift && !kbC.kbCopy.alt))
+                    { currentEvent.Use(); return; }
                 }
 
-                if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.keyCode == KeyCode.V
+                if (AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent)
                     && PatchTransitionCopyPaste.HasClipboard)
                 {
                     if (PatchStateChainTransition.FanActive)
@@ -259,17 +435,76 @@ namespace YGDR.Editor.Animation
                             var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
                             if (nodeState != pasteSource) continue;
                             var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
-                            PatchTransitionCopyPaste.BeginPaste(pasteSource, sourceRect);
+                            var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+                            var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
+                            PatchTransitionCopyPaste.BeginPaste(pasteSource, sourceRect, activeSMForPaste);
                             if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
                             currentEvent.Use();
                             break;
                         }
                     }
+                    else
+                    {
+                        bool isAnyStatePaste = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                        if (isAnyStatePaste)
+                        {
+                            var pasteGraph = MGraphField(__instance)?.GetValue(__instance);
+                            foreach (var node in GetNodes(pasteGraph) ?? System.Array.Empty<object>())
+                            {
+                                if (node.GetType() != AnimatorEditorInit.AnyStateNodeType) continue;
+                                var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
+                                var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+                                var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
+                                if (activeSMForPaste == null) break;
+                                PatchTransitionCopyPaste.BeginAnyStatePaste(activeSMForPaste, sourceRect);
+                                if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
+                                currentEvent.Use();
+                                break;
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                if (AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent) && !PatchTransitionCopyPaste.HasClipboard
+                    && !PatchStateChainTransition.FanActive && !PatchStateChainTransition.ChainActive
+                    && PatchStateNodeMenu._multiTransitionSources == null)
+                {
+                    var getActiveSMK = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+                    var activeSMK = getActiveSMK?.Invoke(__instance, null) as AnimatorStateMachine;
+                    if (activeSMK != null)
+                    {
+                        _pasteSM = activeSMK;
+                        _prepasteStateSet = new HashSet<AnimatorState>(activeSMK.states.Select(cs => cs.state));
+                        _prepasteSubSMSet = new HashSet<AnimatorStateMachine>(activeSMK.stateMachines.Select(csm => csm.stateMachine));
+                    }
+                    _pasteCommandFromKeybind = true;
+                    AnimWindow?.SendEvent(EditorGUIUtility.CommandEvent("Paste"));
+                    currentEvent.Use();
                     return;
                 }
 
                 if ((PatchStateChainTransition.ChainActive || PatchStateChainTransition.FanActive || PatchTransitionCopyPaste.PasteActive) && currentEvent.type == EventType.MouseMove)
                     UpdateSnapTarget(__instance, currentEvent.mousePosition);
+
+                if (PatchTransitionCopyPaste.PasteActive && !PatchTransitionCopyPaste.PasteFromAnyState
+                    && currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && currentEvent.clickCount == 1)
+                {
+                    var exitGraph = MGraphField(__instance)?.GetValue(__instance);
+                    foreach (var node in GetNodes(exitGraph) ?? System.Array.Empty<object>())
+                    {
+                        if (node.GetType() != AnimatorEditorInit.ExitNodeType) continue;
+                        var pos = Traverse.Create(node).Field("position").GetValue();
+                        if (!(pos is Rect exitRect) || !exitRect.Contains(currentEvent.mousePosition)) continue;
+                        var sm = PatchTransitionCopyPaste.PasteSM;
+                        var source = PatchTransitionCopyPaste.PasteSource;
+                        if (sm == null || source == null) break;
+                        AnimatorTransitionOps.PasteExitTransitions(sm, new[] { source }, PatchTransitionCopyPaste.GetClipboard());
+                        PatchTransitionCopyPaste.ClearPaste();
+                        currentEvent.Use();
+                        return;
+                    }
+                }
 
                 if (currentEvent.type != EventType.MouseDown || currentEvent.clickCount != 2 || currentEvent.button != 0 || currentEvent.control || currentEvent.shift)
                     return;
@@ -347,6 +582,7 @@ namespace YGDR.Editor.Animation
         [HarmonyPostfix]
         static void Postfix(object __instance)
         {
+            PatchDrawEdge.FlushExpandedBox();
             if (_pasteSM == null) return;
             try
             {
@@ -420,15 +656,19 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        /* Updates PatchStateChainTransition.SnapTarget to the center of whichever state node the mouse is over, or null. */
+        /* Updates PatchStateChainTransition.SnapTarget to the center of whichever state/Exit node the mouse is over, or null. */
         static void UpdateSnapTarget(object graphGUI, Vector2 mousePos)
         {
             var graph = MGraphField(graphGUI)?.GetValue(graphGUI);
             if (graph == null) { PatchStateChainTransition.SnapTarget = null; return; }
 
+            bool canSnapToExit = PatchTransitionCopyPaste.PasteActive && !PatchTransitionCopyPaste.PasteFromAnyState;
             foreach (var node in GetNodes(graph) ?? Array.Empty<object>())
             {
-                if (node.GetType() != AnimatorEditorInit.StateNodeType) continue;
+                var nodeType = node.GetType();
+                bool isStateNode = nodeType == AnimatorEditorInit.StateNodeType;
+                bool isExitNode  = canSnapToExit && nodeType == AnimatorEditorInit.ExitNodeType;
+                if (!isStateNode && !isExitNode) continue;
                 var pos = Traverse.Create(node).Field("position").GetValue();
                 if (pos is Rect rect && rect.Contains(mousePos))
                 {
@@ -442,11 +682,11 @@ namespace YGDR.Editor.Animation
         static AnimationClip FindBufferClip()
         {
             if (_bufferClip != null) return _bufferClip;
-            var guids = AssetDatabase.FindAssets("_buffer t:AnimationClip", new[] { "Packages/com.ygdr.animator/Templates" });
+            var guids = AssetDatabase.FindAssets("BufferClip t:AnimationClip", new[] { "Packages/com.ygdr.animator/Templates" });
             foreach (var guid in guids)
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
-                if (System.IO.Path.GetFileNameWithoutExtension(path) == "_buffer")
+                if (System.IO.Path.GetFileNameWithoutExtension(path) == "BufferClip")
                 {
                     _bufferClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(path);
                     return _bufferClip;
@@ -462,6 +702,7 @@ namespace YGDR.Editor.Animation
             return traverse.Property("nodes").GetValue() as IEnumerable
                 ?? traverse.Field("nodes").GetValue() as IEnumerable;
         }
+
     }
 
     // Draws chain/fan-mode transition preview line on the same layer as real edges (under nodes)
@@ -481,7 +722,7 @@ namespace YGDR.Editor.Animation
             if (!isActive) return;
             try
             {
-                PatchGraphDoubleClickCreate.AnimWindow?.Repaint();
+                PatchGraphInputHandler.AnimWindow?.Repaint();
 
                 if (Event.current.type != EventType.Repaint) return;
 
@@ -574,6 +815,28 @@ namespace YGDR.Editor.Animation
             SnapTarget = null;
         }
 
+        internal static void BeginChain(AnimatorState source, Rect sourceRect)
+        {
+            ClearFan();
+            ChainActive = true;
+            _chainSource = source;
+            ChainSourceRect = sourceRect;
+            SnapTarget = null;
+            if (PatchGraphInputHandler.AnimWindow != null)
+                PatchGraphInputHandler.AnimWindow.wantsMouseMove = true;
+        }
+
+        internal static void BeginFan(AnimatorState source, Rect sourceRect)
+        {
+            Clear();
+            FanActive = true;
+            _fanSource = source;
+            FanSourceRect = sourceRect;
+            SnapTarget = null;
+            if (PatchGraphInputHandler.AnimWindow != null)
+                PatchGraphInputHandler.AnimWindow.wantsMouseMove = true;
+        }
+
         internal static void ToggleSeededFan()
         {
             SeededFanActive = !SeededFanActive;
@@ -590,53 +853,48 @@ namespace YGDR.Editor.Animation
             try
             {
                 var currentEvent = Event.current;
-                if (currentEvent.type != EventType.MouseDown || currentEvent.button != 0) return;
+                bool isClick = currentEvent.type == EventType.MouseDown && currentEvent.button == 0;
+                bool isKey   = currentEvent.type == EventType.KeyDown;
+                if (!isClick && !isKey) return;
 
                 var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(__instance) as AnimatorState;
                 if (nodeState == null) return;
 
-                if (currentEvent.control && currentEvent.clickCount == 2)
+                var nodeRect = Traverse.Create(__instance).Field("position").GetValue<Rect>();
+                var kb = AnimatorDefaultSettings.Load();
+
+                if ((isClick && currentEvent.control && currentEvent.clickCount == 2)
+                    || (isKey && !ChainActive && !FanActive && kb.kbChainMode.Matches(currentEvent) && nodeRect.Contains(PatchGraphInputHandler._lastMousePosition)))
                 {
-                    ClearFan();
-                    ChainActive = true;
-                    _chainSource = nodeState;
-                    ChainSourceRect = Traverse.Create(__instance).Field("position").GetValue<Rect>();
-                    SnapTarget = null;
-                    // Enable MouseMove delivery once when chain starts
-                    if (PatchGraphDoubleClickCreate.AnimWindow != null)
-                        PatchGraphDoubleClickCreate.AnimWindow.wantsMouseMove = true;
+                    BeginChain(nodeState, nodeRect);
                     currentEvent.Use();
                     return;
                 }
 
-                if (ChainActive && currentEvent.clickCount == 1 && !currentEvent.control && !currentEvent.shift)
+                if (isClick && ChainActive && currentEvent.clickCount == 1 && !currentEvent.control && !currentEvent.shift)
                 {
-                    AnimatorStateOps.AddChainTransition(_chainSource, nodeState);
+                    AnimatorBulkTransitionOps.AddChainTransition(_chainSource, nodeState);
                     _chainSource = nodeState;
-                    ChainSourceRect = Traverse.Create(__instance).Field("position").GetValue<Rect>();
+                    ChainSourceRect = nodeRect;
                     SnapTarget = null;
                     currentEvent.Use();
                     return;
                 }
 
-                if (currentEvent.shift && currentEvent.clickCount == 2)
+                if ((isClick && currentEvent.shift && currentEvent.clickCount == 2)
+                    || (isKey && !ChainActive && !FanActive && kb.kbFanMode.Matches(currentEvent) && nodeRect.Contains(PatchGraphInputHandler._lastMousePosition)))
                 {
-                    Clear();
-                    FanActive = true;
-                    _fanSource = nodeState;
-                    FanSourceRect = Traverse.Create(__instance).Field("position").GetValue<Rect>();
-                    if (PatchGraphDoubleClickCreate.AnimWindow != null)
-                        PatchGraphDoubleClickCreate.AnimWindow.wantsMouseMove = true;
+                    BeginFan(nodeState, nodeRect);
                     currentEvent.Use();
                     return;
                 }
 
-                if (FanActive && currentEvent.clickCount == 1 && !currentEvent.control && !currentEvent.shift)
+                if (isClick && FanActive && currentEvent.clickCount == 1 && !currentEvent.control && !currentEvent.shift)
                 {
                     if (SeededFanActive)
                         AnimatorTransitionOps.PasteTransitions(_fanSource, nodeState, PatchTransitionCopyPaste.GetClipboard());
                     else
-                        AnimatorStateOps.AddChainTransition(_fanSource, nodeState);
+                        AnimatorBulkTransitionOps.AddChainTransition(_fanSource, nodeState);
                     SnapTarget = null;
                     currentEvent.Use();
                 }
@@ -647,28 +905,46 @@ namespace YGDR.Editor.Animation
             }
         }
     }
-    // Ctrl+C to copy selected transitions, Ctrl+V on source state, click destination to paste
+    // Ctrl+C to copy selected transitions, Ctrl+V on source state/AnyState, click destination/Exit to paste
     [HarmonyPatch]
     internal static class PatchTransitionCopyPaste
     {
         static AnimatorTransitionOps.TransitionData[] _clipboard;
         static AnimatorState _pasteSource;
+        static AnimatorStateMachine _pasteSM;
+        static bool _pasteFromAnyState;
 
         internal static bool PasteActive { get; private set; }
         internal static Rect PasteSourceRect { get; private set; }
         internal static bool HasClipboard => _clipboard != null && _clipboard.Length > 0;
         internal static int ClipboardCount => _clipboard?.Length ?? 0;
+        internal static bool PasteFromAnyState => _pasteFromAnyState;
+        internal static AnimatorState PasteSource => _pasteSource;
+        internal static AnimatorStateMachine PasteSM => _pasteSM;
         internal static AnimatorTransitionOps.TransitionData[] GetClipboard() => _clipboard;
 
         /* Snapshots transition data at copy time so clipboard survives deletion of the originals. */
         internal static void SetClipboard(AnimatorStateTransition[] transitions) =>
             _clipboard = transitions?.Select(AnimatorTransitionOps.TransitionData.From).ToArray();
 
-        /* Activates paste mode, recording the source state and its node rect for preview line drawing. */
-        internal static void BeginPaste(AnimatorState source, Rect sourceRect)
+        /* Activates paste mode from a state source, recording the source state and its node rect for preview line drawing. */
+        internal static void BeginPaste(AnimatorState source, Rect sourceRect, AnimatorStateMachine sm)
         {
             PasteActive = true;
+            _pasteFromAnyState = false;
             _pasteSource = source;
+            _pasteSM = sm;
+            PasteSourceRect = sourceRect;
+            PatchStateChainTransition.SnapTarget = null;
+        }
+
+        /* Activates paste mode from AnyState, recording the active SM and its node rect for preview line drawing. */
+        internal static void BeginAnyStatePaste(AnimatorStateMachine sm, Rect sourceRect)
+        {
+            PasteActive = true;
+            _pasteFromAnyState = true;
+            _pasteSource = null;
+            _pasteSM = sm;
             PasteSourceRect = sourceRect;
             PatchStateChainTransition.SnapTarget = null;
         }
@@ -676,7 +952,9 @@ namespace YGDR.Editor.Animation
         internal static void ClearPaste()
         {
             PasteActive = false;
+            _pasteFromAnyState = false;
             _pasteSource = null;
+            _pasteSM = null;
             PasteSourceRect = Rect.zero;
             PatchStateChainTransition.SnapTarget = null;
         }
@@ -698,7 +976,10 @@ namespace YGDR.Editor.Animation
                 var destinationState = GraphPatchReflection.StateNodeStateField?.GetValue(__instance) as AnimatorState;
                 if (destinationState == null) return;
 
-                AnimatorTransitionOps.PasteTransitions(_pasteSource, destinationState, _clipboard);
+                if (_pasteFromAnyState)
+                    AnimatorTransitionOps.PasteAnyStateTransitions(_pasteSM, destinationState, _clipboard);
+                else
+                    AnimatorTransitionOps.PasteTransitions(_pasteSource, destinationState, _clipboard);
                 ClearPaste();
                 currentEvent.Use();
             }
@@ -709,6 +990,7 @@ namespace YGDR.Editor.Animation
         }
 
     }
+
 
     // Captures source sub-SM on copy; uses ObjectChangeEvents to detect paste at any time
     [HarmonyPatch]
@@ -928,6 +1210,96 @@ namespace YGDR.Editor.Animation
             }
             catch (Exception e) { Debug.LogError($"[YGDR] AddState drop error: {e}"); }
             return true;
+        }
+    }
+
+    // ─── Ctrl+D duplicate with smart naming ──────────────────────────────────────────────────────────────────────────
+
+    // Prefix snapshots SM state IDs; Postfix diffs and renames new states.
+    // Unity unconditionally appends " 0" to duplicated names — we strip it and assign " N" (N >= 1) instead.
+    [HarmonyPatch]
+    internal static class PatchDuplicateSmartNaming
+    {
+        static HashSet<int> _snapshotIDs;
+
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() =>
+            AccessTools.Method(GraphPatchReflection.GraphGUIType, "HandleEvents");
+
+        [HarmonyPrefix]
+        static void Prefix(object __instance)
+        {
+            var currentEvent = Event.current;
+            if (currentEvent.type != EventType.ExecuteCommand || currentEvent.commandName != "Duplicate")
+            {
+                if (_snapshotIDs != null) _snapshotIDs = null;
+                return;
+            }
+            try
+            {
+                var activeStateMachine = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod
+                    ?.Invoke(__instance, null) as AnimatorStateMachine;
+                _snapshotIDs = activeStateMachine == null
+                    ? null
+                    : new HashSet<int>(activeStateMachine.states.Select(childState => childState.state.GetInstanceID()));
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[YGDR] Duplicate snapshot error: {e}");
+                _snapshotIDs = null;
+            }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(object __instance)
+        {
+            if (_snapshotIDs == null) return;
+            var snapshot = _snapshotIDs;
+            _snapshotIDs = null;
+
+            try
+            {
+                var activeStateMachine = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod
+                    ?.Invoke(__instance, null) as AnimatorStateMachine;
+                if (activeStateMachine == null) return;
+
+                var newStates = activeStateMachine.states
+                    .Where(childState => !snapshot.Contains(childState.state.GetInstanceID()))
+                    .Select(childState => childState.state)
+                    .ToList();
+                if (newStates.Count == 0) return;
+
+                var allCurrentNames = new HashSet<string>(
+                    activeStateMachine.states.Select(childState => childState.state.name)
+                );
+
+                foreach (var newState in newStates)
+                {
+                    string baseName = StripTrailingNumber(StripUnityDuplicateSuffix(newState.name));
+                    allCurrentNames.Remove(newState.name);
+                    int n = 1;
+                    string candidate;
+                    do { candidate = baseName + " " + n++; } while (allCurrentNames.Contains(candidate));
+                    Undo.RegisterCompleteObjectUndo(newState, "Rename Duplicated States");
+                    newState.name = candidate;
+                    allCurrentNames.Add(candidate);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[YGDR] Duplicate rename error: {e}");
+            }
+        }
+
+        static string StripUnityDuplicateSuffix(string name) =>
+            name.EndsWith(" 0") ? name.Substring(0, name.Length - 2) : name;
+
+        static string StripTrailingNumber(string name)
+        {
+            int lastSpace = name.LastIndexOf(' ');
+            if (lastSpace >= 0 && int.TryParse(name.Substring(lastSpace + 1), out _))
+                return name.Substring(0, lastSpace);
+            return name;
         }
     }
 }

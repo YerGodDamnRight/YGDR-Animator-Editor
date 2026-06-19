@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Linq;
@@ -5,12 +24,16 @@ using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+#if YGDR_MDV
+using YGDR.MDV;
+#endif
 
 namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow : EditorWindow
     {
-        static readonly string[] _tabs = { "Transitions", "States", "Controller", "Settings" };
+        static readonly string[] _tabs    = { "Transitions", "States", "Controller", "Settings" };
+        static readonly string[] _tabKeys = { "tabs.transitions", "tabs.states", "tabs.controller", "tabs.settings" };
         bool[] _tabOpen = { true, false, false, false };
         Vector2 _scrollPosition;
 
@@ -36,7 +59,7 @@ namespace YGDR.Editor.Animation
         Action _helpSettings;
         static Action _helpDocs;
 
-        [MenuItem("YGDR/YGDR Animator Editor")]
+        [MenuItem("YGDR/Animator Editor/Open")]
         static void Open()
         {
             var window = GetWindow<AnimationEditorWindow>("YGDR Animator Editor");
@@ -47,10 +70,11 @@ namespace YGDR.Editor.Animation
         void OnEnable()
         {
             _cachedVersion    = null;
-            _helpTransitions  = MdvHelpAction("Transitions", 60, 80);
-            _helpStates       = MdvHelpAction("States", 83, 128);
-            _helpController   = MdvHelpAction("Controller", 131, 166);
-            _helpSettings     = MdvHelpAction("Settings", 169, 241);
+            _paletteApplied   = false;
+            _helpTransitions  = MdvHelpAction("Transitions", 62, 79);
+            _helpStates       = MdvHelpAction("States", 85, 131);
+            _helpController   = MdvHelpAction("Controller", 133, 168);
+            _helpSettings     = MdvHelpAction("Settings", 171, 259);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;
@@ -258,24 +282,26 @@ namespace YGDR.Editor.Animation
             EditorGUILayout.BeginHorizontal();
             GUILayout.Space(8);
             EditorGUILayout.BeginVertical();
-            if (_tabOpen[0]) { DrawSectionHeader("Transitions", _selectedTransitions.Length > 0 ? $"{_selectedTransitions.Length} selected" : null, _helpTransitions); DrawTransitionsTab(); EditorGUILayout.Space(10); }
-            if (_tabOpen[1]) { DrawSectionHeader("States", _selectedStates.Length > 0 ? $"{_selectedStates.Length} selected" : null, _helpStates); DrawStatesTab(); EditorGUILayout.Space(10); }
-            if (_tabOpen[2]) { DrawSectionHeader("Controller", ControllerSectionCountLabel, _helpController); DrawControllerTab(); EditorGUILayout.Space(10); }
-            if (_tabOpen[3]) { DrawSectionHeader("Settings", null, _helpSettings); DrawSettingsTab(); EditorGUILayout.Space(10); }
+            if (_tabOpen[0]) { DrawSectionHeader(L10n.Get("tabs.transitions"), _selectedTransitions.Length > 0 ? L10n.Get("header.n_selected").Replace("{n}", _selectedTransitions.Length.ToString()) : null, _helpTransitions); DrawTransitionsTab(); EditorGUILayout.Space(10); }
+            if (_tabOpen[1]) { DrawSectionHeader(L10n.Get("tabs.states"), _selectedStates.Length > 0 ? L10n.Get("header.n_selected").Replace("{n}", _selectedStates.Length.ToString()) : null, _helpStates); DrawStatesTab(); EditorGUILayout.Space(10); }
+            if (_tabOpen[2]) { DrawSectionHeader(L10n.Get("tabs.controller"), ControllerSectionCountLabel, _helpController); DrawControllerTab(); EditorGUILayout.Space(10); }
+            if (_tabOpen[3]) { DrawSectionHeader(L10n.Get("tabs.settings"), null, _helpSettings); DrawSettingsTab(); EditorGUILayout.Space(10); }
             EditorGUILayout.EndVertical();
             GUILayout.Space(8);
             EditorGUILayout.EndHorizontal();
-            DrawFooter();
             EditorGUILayout.EndScrollView();
+            DrawFooter();
         }
 
         void DrawTabs()
         {
+            float baseTabW = Mathf.Floor(EditorGUIUtility.currentViewWidth / _tabs.Length);
             using var _ = new EditorGUILayout.HorizontalScope(GUIStyle.none, GUILayout.Height(24), GUILayout.ExpandWidth(true));
             for (int i = 0; i < _tabs.Length; i++)
             {
+                float tabW = i < _tabs.Length - 1 ? baseTabW : EditorGUIUtility.currentViewWidth - baseTabW * (_tabs.Length - 1);
                 var style = _tabOpen[i] ? Styles.TabActive : Styles.TabInactive;
-                _tabOpen[i] = GUILayout.Toggle(_tabOpen[i], _tabs[i], style, GUILayout.ExpandWidth(true), GUILayout.Height(24));
+                _tabOpen[i] = GUILayout.Toggle(_tabOpen[i], L10n.Get(_tabKeys[i]), style, GUILayout.Width(tabW), GUILayout.Height(24));
                 EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
             }
         }
@@ -313,8 +339,30 @@ namespace YGDR.Editor.Animation
         static GUIContent s_helpIconContent;
         static GUIContent HelpIconContent => s_helpIconContent ??= EditorGUIUtility.IconContent("d__Help@2x");
 
-        static GUIContent s_footerMenuIconContent;
-        static GUIContent FooterMenuIconContent => s_footerMenuIconContent ??= EditorGUIUtility.IconContent("d_UnityEditor.ConsoleWindow@2x");
+        static Texture2D _discordIcon;
+        static Texture2D _twitterIcon;
+        static Texture2D _gumroadIcon;
+        static Texture2D _jinxxyIcon;
+        static Texture2D _boothIcon;
+        static Texture2D DiscordIcon  => _discordIcon  ??= Resources.Load<Texture2D>("Discord-Icon");
+        static Texture2D TwitterIcon  => _twitterIcon  ??= Resources.Load<Texture2D>("Twitter-Icon");
+        static Texture2D GumroadIcon  => _gumroadIcon  ??= Resources.Load<Texture2D>("Gumroad-Icon");
+        static Texture2D JinxxyIcon   => _jinxxyIcon   ??= Resources.Load<Texture2D>("Jinxxy-icon");
+        static Texture2D BoothIcon   => _boothIcon   ??= Resources.Load<Texture2D>("Booth-icon");
+
+        static readonly GUIContent _iconBtnContent = new GUIContent();
+
+        static void DrawFooterIcon(Rect rect, Texture2D icon, string tooltip, string url)
+        {
+            if (icon == null) return;
+            _iconBtnContent.image   = icon;
+            _iconBtnContent.tooltip = tooltip;
+            var prevColor = GUI.color;
+            GUI.color = EditorGUIUtility.isProSkin ? Color.white : Color.black;
+            if (CursorBtn(rect, _iconBtnContent, GUIStyle.none))
+                Application.OpenURL(url);
+            GUI.color = prevColor;
+        }
 
         static void DrawBreadcrumbSegment(ref float x, Rect barRect, string text, bool isLeaf)
         {
@@ -360,12 +408,14 @@ namespace YGDR.Editor.Animation
 
         static Action MdvHelpAction(string title, int lineMin, int lineMax)
         {
-            if (WindowPatchReflection.MdvOpenMethod == null)
-                return () => EditorApplication.delayCall += () => EditorUtility.DisplayDialog(
-                    "YGDR Markdown Viewer not installed",
-                    "Install YGDR Markdown Viewer (com.ygdr.mdv) via Package Manager/VCC to view help documentation.",
-                    "OK");
-            return () => WindowPatchReflection.MdvOpenMethod.Invoke(null, new object[] { MdvDocGuid, null, title, lineMin, lineMax, false });
+#if YGDR_MDV
+            return () => YGDR.MDV.MDViewer.Open(MdvDocGuid, null, title, lineMin, lineMax, false);
+#else
+            return () => EditorApplication.delayCall += () => EditorUtility.DisplayDialog(
+                "YGDR Markdown Viewer not installed",
+                "Install YGDR Markdown Viewer (com.ygdr.mdv) via Package Manager/VCC to view help documentation.",
+                "OK");
+#endif
         }
 
         /* Draws a full-width dark header bar containing label, spanning edge-to-edge regardless of scroll indent.
@@ -401,22 +451,41 @@ namespace YGDR.Editor.Animation
 
         static void DrawFooter()
         {
-            var rect = EditorGUILayout.GetControlRect(false, 18f, GUILayout.ExpandWidth(true));
-            EditorGUI.DrawRect(rect, Styles.SectionHeaderBg);
-            GUI.Label(rect, "Created by YerGodDamnRight", Styles.FooterLabel);
+            var separatorRect = EditorGUILayout.GetControlRect(false, 1f, GUILayout.ExpandWidth(true));
+            EditorGUI.DrawRect(new Rect(0, separatorRect.y, EditorGUIUtility.currentViewWidth, 1f), new Color(0f, 0f, 0f, 0.6f));
 
-            float versionWidth = Styles.FooterVersion.CalcSize(new GUIContent(GetVersion())).x;
-            GUI.Label(rect, GetVersion(), Styles.FooterVersion);
-            var menuButtonRect = new Rect(rect.x + versionWidth + 2, rect.y + 1, 16, 16);
+            var rect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
+            EditorGUI.DrawRect(new Rect(0, rect.y, EditorGUIUtility.currentViewWidth, rect.height), Styles.FooterBg);
 
-            if (CursorBtn(menuButtonRect, FooterMenuIconContent, GUIStyle.none))
-            {
-                var menu = new GenericMenu();
-                menu.AddItem(new GUIContent("Docs"),    false, () => _helpDocs?.Invoke());
-                menu.AddItem(new GUIContent("Discord"), false, static () => Application.OpenURL("https://discord.gg/s8gTEk8xFb"));
-                menu.AddItem(new GUIContent("Gumroad"), false, static () => Application.OpenURL("https://yergoddamnright.gumroad.com"));
-                menu.DropDown(menuButtonRect);
-            }
+            GUI.Label(rect, "Created by YerGodDamnRight", Styles.FooterText);
+
+            const float iconSize = 16f;
+            const float iconGap  = 8f;
+            const float rightPad = 6f;
+            float iconY = rect.y + (rect.height - iconSize) * 0.5f;
+
+            string version = GetVersion();
+            float versionWidth = Styles.FooterText.CalcSize(new GUIContent(version)).x;
+            float x = rect.xMax - rightPad - versionWidth;
+            GUI.Label(new Rect(x, rect.y, versionWidth, rect.height), version, Styles.FooterText);
+
+            x -= iconGap + iconSize;
+            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), BoothIcon,  "Booth",    "https://yergoddamnright.booth.pm/");
+            x -= iconGap + iconSize;
+            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), JinxxyIcon,  "Jinxxy",    "https://jinxxy.com/YerGodDamnRight");
+            x -= iconGap + iconSize;
+            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), GumroadIcon, "Gumroad",   "https://yergoddamnright.gumroad.com");
+            x -= iconGap + iconSize;
+            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), TwitterIcon, "Twitter / X", "https://x.com/YerGodDamnRight");
+            x -= iconGap + iconSize;
+            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), DiscordIcon, "Discord",   "https://discord.gg/s8gTEk8xFb");
+
+            x -= iconGap;
+            string docsLabel = L10n.Get("footer.docs");
+            float docsWidth = Styles.FooterDocsBtn.CalcSize(new GUIContent(docsLabel)).x;
+            x -= docsWidth;
+            if (CursorBtn(new Rect(x, rect.y, docsWidth, rect.height), docsLabel, Styles.FooterDocsBtn))
+                _helpDocs?.Invoke();
         }
 
         static void DrawSeparator()

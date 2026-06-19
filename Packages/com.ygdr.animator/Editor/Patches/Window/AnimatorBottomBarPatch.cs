@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Linq;
@@ -51,7 +70,7 @@ namespace YGDR.Editor.Animation
                 {
                     int nodeCount = Selection.objects.OfType<AnimatorState>().Count();
                     int transitionCount = Selection.objects.OfType<AnimatorStateTransition>().Count();
-                    _tempContent.text = $"  {nodeCount} Nodes / {transitionCount} Transitions Selected";
+                    _tempContent.text = "  " + string.Format(L10n.Get("bottom_bar.selection"), nodeCount, transitionCount);
                     float selectionWidth = AnimatorStyles.BottomBarLabelStyle.CalcSize(_tempContent).x;
                     DrawBarLabel(new Rect(nameRect.x, nameRect.y, selectionWidth, nameRect.height), _tempContent);
                 }
@@ -81,15 +100,21 @@ namespace YGDR.Editor.Animation
 
         static string GetModeText()
         {
-            if (PatchStateChainTransition.FanActive && PatchStateChainTransition.SeededFanActive) return "Fan Mode : Seeded";
-            if (PatchStateChainTransition.FanActive && PatchTransitionCopyPaste.HasClipboard)    return "Fan Mode  [Ctrl+V to seed]";
-            if (PatchStateChainTransition.FanActive)                                             return "Fan Mode";
-            if (PatchStateChainTransition.ChainActive)              return "Chain Mode";
-            if (PatchTransitionCopyPaste.PasteActive)               return $"Paste {PatchTransitionCopyPaste.ClipboardCount} Transition{(PatchTransitionCopyPaste.ClipboardCount == 1 ? "" : "s")}";
-            if (PatchStateNodeMenu._multiTransitionSources != null && PatchTransitionCopyPaste.HasClipboard) return "Multi Transition — click destination  [Ctrl+V to seed]";
-            if (PatchStateNodeMenu._multiTransitionSources != null) return "Multi Transition — click destination";
-            if (PatchStateNodeMenu._redirectTransitions != null)    return "Redirect Transitions — click destination";
-            if (PatchStateNodeMenu._replicateTransitions != null)   return "Replicate Transitions — click sources";
+            var pasteKey = AnimatorDefaultSettings.Load().kbPaste.Label();
+            if (PatchStateChainTransition.FanActive && PatchStateChainTransition.SeededFanActive) return L10n.Get("bottom_bar.fan_seeded");
+            if (PatchStateChainTransition.FanActive && PatchTransitionCopyPaste.HasClipboard)    return string.Format(L10n.Get("bottom_bar.fan_with_paste"), pasteKey);
+            if (PatchStateChainTransition.FanActive)                                             return L10n.Get("bottom_bar.fan");
+            if (PatchStateChainTransition.ChainActive)              return L10n.Get("bottom_bar.chain");
+            if (PatchTransitionCopyPaste.PasteActive)
+            {
+                int count = PatchTransitionCopyPaste.ClipboardCount;
+                string key = count == 1 ? "bottom_bar.paste_transition" : "bottom_bar.paste_transitions";
+                return string.Format(L10n.Get(key), count);
+            }
+            if (PatchStateNodeMenu._multiTransitionSources != null && PatchTransitionCopyPaste.HasClipboard) return string.Format(L10n.Get("bottom_bar.multi_with_paste"), pasteKey);
+            if (PatchStateNodeMenu._multiTransitionSources != null) return L10n.Get("bottom_bar.multi");
+            if (PatchStateNodeMenu._redirectTransitions != null)    return L10n.Get("bottom_bar.redirect");
+            if (PatchStateNodeMenu._replicateTransitions != null)   return L10n.Get("bottom_bar.replicate");
             return null;
         }
     }

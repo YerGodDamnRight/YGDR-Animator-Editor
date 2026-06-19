@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -11,7 +30,6 @@ namespace YGDR.Editor.Animation
 {
     internal static class FeatureHarmony
     {
-        internal const string CoreId          = "com.ygdr.animatortools.core";
         internal const string ContextMenuId   = "com.ygdr.animatortools.contextmenu";
         internal const string NodeOverlayId   = "com.ygdr.animatortools.nodeoverlay";
         internal const string NodeColorId     = "com.ygdr.animatortools.nodecolor";
@@ -23,7 +41,6 @@ namespace YGDR.Editor.Animation
         internal const string BlendTreeId     = "com.ygdr.animatortools.blendtree";
         internal const string BottomBarId     = "com.ygdr.animatortools.bottombar";
 
-        // All toggleable feature IDs — CoreId excluded (always on, no toggle)
         internal static readonly string[] AllFeatureIds =
         {
             ContextMenuId, NodeOverlayId, NodeColorId, TransitionId,
@@ -32,30 +49,13 @@ namespace YGDR.Editor.Animation
 
         static readonly Dictionary<string, Type[]> _featureClasses = new()
         {
-            [CoreId] = new[]
-            {
-                // Creation patches — no conflict risk
-                typeof(AnimatorStateCreationPatch),
-                typeof(AnimatorTransitionCreationPatch),
-                // Animation window sync — no conflict risk
-                typeof(PatchStateNodeClipSync),
-                typeof(PatchEditAnimationClipGOContext),
-                typeof(PatchClipMenuNesting),
-                typeof(PatchClipMenuDoubleClickGuard),
-                // Frame groups — our own, no third-party conflicts
-                typeof(FrameDrawPatch),
-                typeof(FrameInteractionPatch),
-                // Native bug fixes — our own
-                typeof(PatchLayerReorderSelection),
-                typeof(PatchParameterRenameUndo),
-                typeof(PatchLayerF2Rename),
-                typeof(PatchParameterF2Rename),
-            },
             [ContextMenuId] = new[]
             {
                 typeof(PatchStateNodeMenu),
                 typeof(PatchStateMachineNodeMenu),
                 typeof(PatchTransitionContextMenu),
+                typeof(PatchClipMenuNesting),
+                typeof(PatchClipMenuDoubleClickGuard),
             },
             [NodeOverlayId] = new[]
             {
@@ -77,12 +77,19 @@ namespace YGDR.Editor.Animation
             },
             [GraphInteractId] = new[]
             {
+                typeof(FrameDrawPatch),
+                typeof(FrameInteractionPatch),
+                typeof(AnimatorStateCreationPatch),
+                typeof(AnimatorTransitionCreationPatch),
+                typeof(PatchStateNodeClipSync),
+                typeof(PatchEditAnimationClipGOContext),
                 typeof(PatchAddStateDrop),
-                typeof(PatchGraphDoubleClickCreate),
+                typeof(PatchGraphInputHandler),
                 typeof(PatchEdgeGUIDoEdges),
                 typeof(PatchStateChainTransition),
                 typeof(PatchTransitionCopyPaste),
                 typeof(PatchCopySelectionToPasteboard),
+                typeof(PatchDuplicateSmartNaming),
             },
             [GridBgId] = new[]
             {
@@ -90,6 +97,10 @@ namespace YGDR.Editor.Animation
             },
             [LayerViewId] = new[]
             {
+                // Native bug fixes — layer view
+                typeof(PatchLayerReorderSelection),
+                typeof(PatchLayerF2Rename),
+                typeof(PatchLayerListFocusHighlight),
                 typeof(PatchLayerScrollReset),
                 typeof(PatchLayerScrollRefocus),
                 typeof(PatchLayerWeightDefault),
@@ -103,6 +114,8 @@ namespace YGDR.Editor.Animation
             },
             [ParamViewId] = new[]
             {
+                typeof(PatchParameterRenameUndo),
+                typeof(PatchParameterF2Rename),
                 typeof(PatchNewParameterScroll),
                 typeof(PatchParameterRow),
                 typeof(PatchParameterAddMenu),
@@ -126,15 +139,6 @@ namespace YGDR.Editor.Animation
 
         static readonly Dictionary<string, Harmony> _instances = new();
 
-        // Core is always on — no EditorPrefs toggle, no PendingEnable flag
-        internal static void PatchCore()
-        {
-            var harmony = new Harmony(CoreId);
-            _instances[CoreId] = harmony;
-            foreach (var type in _featureClasses[CoreId])
-                harmony.CreateClassProcessor(type).Patch();
-        }
-
         // Whether a feature is currently patched (use this for UI display — reflects actual patch state)
         internal static bool IsEnabled(string featureId) => _instances.ContainsKey(featureId);
 
@@ -145,10 +149,6 @@ namespace YGDR.Editor.Animation
 
             if (enabled)
             {
-                // Core may have been cleared by EmergencyUnpatch — restore it before any feature
-                if (!_instances.ContainsKey(CoreId))
-                    PatchCore();
-
                 if (_instances.ContainsKey(featureId)) return;
                 // Layer 1: write crash guard flag; cleared next frame if no lockup
                 EditorPrefs.SetBool($"AnimatorTools.PendingEnable.{featureId}", true);

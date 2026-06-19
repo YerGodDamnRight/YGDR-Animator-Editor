@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -5,9 +24,11 @@ using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.Animations;
+#if VRC_SDK_VRCSDK3
 using VRC.Dynamics;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Dynamics.Constraint.Components;
+#endif
 
 namespace YGDR.Editor.Animation
 {
@@ -40,9 +61,11 @@ namespace YGDR.Editor.Animation
 
             Type sourceType = sourceConstraint.GetType();
 
+#if VRC_SDK_VRCSDK3
             if (sourceConstraint is VRCConstraintBase vrcSource)
                 ConvertVRC(vrcSource, targetType, gameObject);
             else
+#endif
                 ConvertUnity(sourceConstraint, targetType, gameObject);
 
             RemapClips(animator, sourceType, targetType, targetPath);
@@ -51,6 +74,7 @@ namespace YGDR.Editor.Animation
 
         // ── VRC ───────────────────────────────────────────────────────────────
 
+#if VRC_SDK_VRCSDK3
         static void ConvertVRC(VRCConstraintBase source, Type targetType, GameObject gameObject)
         {
             bool isActive = source.IsActive;
@@ -144,6 +168,7 @@ namespace YGDR.Editor.Animation
         }
 
         // ── Unity ─────────────────────────────────────────────────────────────
+#endif
 
         static void ConvertUnity(Component source, Type targetType, GameObject gameObject)
         {
@@ -249,6 +274,7 @@ namespace YGDR.Editor.Animation
             if (animator.runtimeAnimatorController != null)
                 controllers.Add(animator.runtimeAnimatorController);
 
+#if VRC_SDK_VRCSDK3
             var descriptor = animator.GetComponent<VRCAvatarDescriptor>();
             if (descriptor != null)
             {
@@ -259,6 +285,7 @@ namespace YGDR.Editor.Animation
                     if (!layer.isDefault && layer.animatorController != null)
                         controllers.Add(layer.animatorController);
             }
+#endif
 
             if (controllers.Count == 0)
             {
@@ -353,6 +380,7 @@ namespace YGDR.Editor.Animation
         // VRC: bare C# field names. Unity: m_-prefixed C++ serialized names (verify if wrong).
         static (HashSet<string> prefixes, HashSet<string> substrings) GetDiscardSets(Type sourceType, Type targetType)
         {
+#if VRC_SDK_VRCSDK3
             // VRC family
             if (sourceType == typeof(VRCPositionConstraint) && targetType == typeof(VRCRotationConstraint))
                 return (new HashSet<string> { "PositionOffset", "PositionAtRest", "AffectsPositionX", "AffectsPositionY", "AffectsPositionZ" }, Empty);
@@ -373,6 +401,7 @@ namespace YGDR.Editor.Animation
             if (sourceType == typeof(VRCParentConstraint) && targetType == typeof(VRCRotationConstraint))
                 return (new HashSet<string> { "PositionAtRest", "AffectsPositionX", "AffectsPositionY", "AffectsPositionZ" },
                         new HashSet<string> { "ParentPositionOffset", "ParentRotationOffset" });
+#endif
 
             // Unity family
             if (sourceType == typeof(PositionConstraint) && targetType == typeof(RotationConstraint))

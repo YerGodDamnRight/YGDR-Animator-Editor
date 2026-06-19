@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System.Reflection;
 using HarmonyLib;
@@ -18,6 +37,8 @@ namespace YGDR.Editor.Animation
                 Debug.LogWarning("[AnimatorTools] AnimationBlendTree.Node.motion not found — Unity version mismatch?");
             if (NodePositionField == null)
                 Debug.LogWarning("[AnimatorTools] AnimationBlendTree.Node.position not found — Unity version mismatch?");
+            if (BlendTreeParameterGUIMethod == null)
+                Debug.LogWarning("[AnimatorTools] BlendTreeInspector.ParameterGUI not found — Unity version mismatch?");
         }
 
         // ── Blend tree types ─────────────────────────────────────────────────
@@ -84,6 +105,12 @@ namespace YGDR.Editor.Animation
             internal object Parent => NodeParentGetter?.Invoke(_instance, null);
             internal int ChildIndex => NodeChildIndexGetter != null ? (int)(NodeChildIndexGetter.Invoke(_instance, null) ?? 0) : 0;
         }
+
+        // ── BlendTreeInspector ───────────────────────────────────────────────
+        internal static readonly System.Type BlendTreeInspectorType =
+            AccessTools.TypeByName("UnityEditor.BlendTreeInspector");
+        internal static readonly MethodInfo BlendTreeParameterGUIMethod =
+            AccessTools.Method(BlendTreeInspectorType, "ParameterGUI");
 
         // ── Styles fields ─────────────────────────────────────────────────────
         internal static readonly System.Type StylesType =
