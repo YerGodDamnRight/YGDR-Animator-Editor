@@ -1,9 +1,26 @@
-﻿#if UNITY_EDITOR
+﻿/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
-using System.Reflection.Emit;
 using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -52,6 +69,21 @@ namespace YGDR.Editor.Animation
                     EditorGUI.DrawRect(stateRect, highlightColor);
                 }
                 var settings = AnimatorDefaultSettings.Load();
+                if (!string.IsNullOrEmpty(state.tag))
+                {
+                    var nodeTagColor = AnimatorDefaultSettings.GetTagColor(state.tag, settings);
+                    if (nodeTagColor.HasValue)
+                    {
+                        var drawColor = nodeTagColor.Value;
+                        drawColor.a = 0.85f;
+                        var stripRect = new Rect(
+                            stateRect.x + stateRect.width * 0.25f,
+                            stateRect.y - 29f,
+                            stateRect.width * 0.5f,
+                            4f);
+                        EditorGUI.DrawRect(stripRect, drawColor);
+                    }
+                }
                 if (!isRenaming)
                     DrawNodeNameLabel(state, stateRect, settings);
                 var graphPosition = Vector2.zero;
@@ -87,6 +119,10 @@ namespace YGDR.Editor.Animation
                     DrawRenameField(state, stateRect);
                 if (isRenamingMotion)
                     DrawMotionRenameField(state, stateRect);
+                if (Event.current?.alt == true)
+                    PatchDrawEdge.DrawExpandedBox();
+                else
+                    PatchDrawEdge.ClearExpandedBox();
             }
             catch (Exception e) { Debug.LogError($"[YGDR] State node overlay error: {e}"); }
         }
@@ -98,25 +134,39 @@ namespace YGDR.Editor.Animation
             // Left-anchored  Rect(nodeRect.x + offsetX, nodeRect.y + offsetY, width, height)
             bool hasMotion = state.motion != null;
 
-            if (settings.overlayShowLoop && hasMotion)
+            if (settings.overlayShowLoopEmpty)
             {
                 var loopRect = new Rect(nodeRect.x + 2f, nodeRect.y + -26f, 16f, 15f);
-                if (state.motion is BlendTree)
+                if (hasMotion)
                 {
-                    GUI.contentColor = settings.overlayActiveColor;
-                    GUI.Label(loopRect, BlendTreeIcon, AnimatorStyles.LoopStyle);
+                    if (state.motion is BlendTree)
+                    {
+                        GUI.contentColor = settings.overlayActiveColor;
+                        GUI.Label(loopRect, BlendTreeIcon, AnimatorStyles.LoopStyle);
+                    }
+                    else
+                    {
+                        GUI.contentColor = IsLooping(state.motion) ? settings.overlayActiveColor : settings.overlayInactiveColor;
+                        GUI.Label(loopRect, LoopIcon, AnimatorStyles.LoopStyle);
+                    }
                 }
                 else
                 {
-                    GUI.contentColor = IsLooping(state.motion) ? settings.overlayActiveColor : settings.overlayInactiveColor;
-                    GUI.Label(loopRect, LoopIcon, AnimatorStyles.LoopStyle);
+                    GUI.contentColor = settings.overlayActiveColor;
+                    GUI.Label(new Rect(nodeRect.x + 2f, nodeRect.y + -28f, 14f, 15f), "!", AnimatorStyles.IndicatorStyle);
                 }
             }
 
-            if (settings.overlayShowEmpty && !hasMotion)
+            if (settings.overlayShowClipTime && hasMotion && state.motion is AnimationClip clipForTime)
             {
+                var hasBindings = AnimationUtility.GetCurveBindings(clipForTime).Length > 0 || AnimationUtility.GetObjectReferenceCurveBindings(clipForTime).Length > 0;
+                var totalSeconds = hasBindings ? clipForTime.length : 0f;
+                var minutes = (int)(totalSeconds / 60f);
+                var remainingSeconds = totalSeconds - minutes * 60f;
+                var tenths = Mathf.RoundToInt(remainingSeconds * 10f);
+                var clipTimeText = tenths % 10 == 0 ? $"{minutes}m{tenths / 10}s" : $"{minutes}m{tenths / 10}.{tenths % 10}s";
                 GUI.contentColor = settings.overlayActiveColor;
-                GUI.Label(new Rect(nodeRect.x + 2f, nodeRect.y + -28f, 14f, 15f), "!", AnimatorStyles.IndicatorStyle);
+                GUI.Label(new Rect(nodeRect.x + 20f, nodeRect.y + -27f, 50f, 15f), clipTimeText, AnimatorStyles.ClipTimeStyle);
             }
 
             // Right-anchored  Rect(nodeRect.x + nodeRect.width + offsetX, nodeRect.y + offsetY, width, height)  (offsetX is negative)
@@ -161,16 +211,7 @@ namespace YGDR.Editor.Animation
             GUI.contentColor = previousContentColor;
         }
 
-        static bool IsLooping(Motion motion)
-        {
-            if (motion is AnimationClip clip) return clip.isLooping;
-            if (motion is BlendTree blendTree)
-            {
-                var children = blendTree.children;
-                return children.Length > 0 && children.All(x => x.motion != null && IsLooping(x.motion));
-            }
-            return false;
-        }
+        static bool IsLooping(Motion motion) => motion is AnimationClip clip && clip.isLooping;
 
         static FastInvokeHandler   _nodeGraphInvoker;
         static FastInvokeHandler   _activeStateMachineInvoker;
@@ -202,6 +243,16 @@ namespace YGDR.Editor.Animation
             var fieldRect    = new Rect(nodeRect.x + 2f, nodeRect.y - 24f, nodeRect.width - 4f, 17f);
             var currentEvent = Event.current;
 
+            if (StateRenameState.JustStarted)
+            {
+                GUI.SetNextControlName(controlName);
+                EditorGUI.TextField(fieldRect, StateRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
+                EditorGUI.FocusTextInControl(controlName);
+                StateRenameState.JustStarted = false;
+                _renameFieldHadFocus = false;
+                return;
+            }
+
             // Check Enter/Escape before TextField so Unity's internal handling can't consume them
             if (currentEvent.type == EventType.KeyDown)
             {
@@ -222,24 +273,24 @@ namespace YGDR.Editor.Animation
             GUI.SetNextControlName(controlName);
             StateRenameState.RenameText = EditorGUI.TextField(fieldRect, StateRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
 
-            if (StateRenameState.JustStarted)
-            {
-                EditorGUI.FocusTextInControl(controlName);
-                StateRenameState.JustStarted = false;
-                _renameFieldHadFocus = false;
-                return;
-            }
-
             bool hasFocus = GUI.GetNameOfFocusedControl() == controlName;
             if (!_renameFieldHadFocus && hasFocus)
             {
                 var textEditor = (TextEditor)GUIUtility.GetStateObject(typeof(TextEditor), GUIUtility.keyboardControl);
-                textEditor?.SelectAll();
-                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                if (textEditor != null)
+                {
+                    textEditor.SelectAll();
+                    UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                    _renameFieldHadFocus = true;
+                }
+                // else: keep false, retry next frame when keyboardControl is set
             }
-            if (_renameFieldHadFocus && !hasFocus)
-                StateRenameState.Apply();
-            _renameFieldHadFocus = hasFocus;
+            else
+            {
+                if (_renameFieldHadFocus && !hasFocus)
+                    StateRenameState.Apply();
+                _renameFieldHadFocus = hasFocus;
+            }
         }
 
         static bool _motionRenameFieldHadFocus;
@@ -249,6 +300,16 @@ namespace YGDR.Editor.Animation
             const string controlName = "MotionRenameField";
             var fieldRect    = new Rect(nodeRect.x + 2f, nodeRect.y - 6f, nodeRect.width - 4f, 17f);
             var currentEvent = Event.current;
+
+            if (MotionRenameState.JustStarted)
+            {
+                GUI.SetNextControlName(controlName);
+                EditorGUI.TextField(fieldRect, MotionRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
+                EditorGUI.FocusTextInControl(controlName);
+                MotionRenameState.JustStarted = false;
+                _motionRenameFieldHadFocus = false;
+                return;
+            }
 
             if (currentEvent.type == EventType.KeyDown)
             {
@@ -268,14 +329,6 @@ namespace YGDR.Editor.Animation
 
             GUI.SetNextControlName(controlName);
             MotionRenameState.RenameText = EditorGUI.TextField(fieldRect, MotionRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
-
-            if (MotionRenameState.JustStarted)
-            {
-                EditorGUI.FocusTextInControl(controlName);
-                MotionRenameState.JustStarted = false;
-                _motionRenameFieldHadFocus = false;
-                return;
-            }
 
             bool hasFocusMotion = GUI.GetNameOfFocusedControl() == controlName;
             if (_motionRenameFieldHadFocus && !hasFocusMotion)
@@ -316,11 +369,6 @@ namespace YGDR.Editor.Animation
         static MethodBase TargetMethod() =>
             AccessTools.Method(AnimatorEditorInit.EntryNodeType, "NodeUI");
 
-        [HarmonyTranspiler]
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-            => NodeOverlayUtils.InjectColorDraw(instructions,
-                AccessTools.Method(typeof(AnimatorEntryNodeOverlayPatch), nameof(Draw)));
-
         [HarmonyPostfix]
         static void Postfix()
         {
@@ -328,8 +376,6 @@ namespace YGDR.Editor.Animation
             if (Event.current.type == EventType.Repaint)
                 SpecialNodeRects.EntryScreen = GUIUtility.GUIToScreenPoint(new Vector2(100f, 20f));
         }
-
-        internal static void Draw(object node) { }
     }
 
     [HarmonyPatch]
@@ -339,11 +385,6 @@ namespace YGDR.Editor.Animation
         static MethodBase TargetMethod() =>
             AccessTools.Method(AnimatorEditorInit.ExitNodeType, "NodeUI");
 
-        [HarmonyTranspiler]
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-            => NodeOverlayUtils.InjectColorDraw(instructions,
-                AccessTools.Method(typeof(AnimatorExitNodeOverlayPatch), nameof(Draw)));
-
         [HarmonyPostfix]
         static void Postfix()
         {
@@ -351,8 +392,6 @@ namespace YGDR.Editor.Animation
             if (Event.current.type == EventType.Repaint)
                 SpecialNodeRects.ExitScreen = GUIUtility.GUIToScreenPoint(new Vector2(100f, 20f));
         }
-
-        internal static void Draw(object node) { }
     }
 
     [HarmonyPatch]
@@ -362,11 +401,6 @@ namespace YGDR.Editor.Animation
         static MethodBase TargetMethod() =>
             AccessTools.Method(AnimatorEditorInit.AnyStateNodeType, "NodeUI");
 
-        [HarmonyTranspiler]
-        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-            => NodeOverlayUtils.InjectColorDraw(instructions,
-                AccessTools.Method(typeof(AnimatorAnyStateNodeOverlayPatch), nameof(Draw)));
-
         [HarmonyPostfix]
         static void Postfix()
         {
@@ -374,8 +408,6 @@ namespace YGDR.Editor.Animation
             if (Event.current.type == EventType.Repaint)
                 SpecialNodeRects.AnyStateScreen = GUIUtility.GUIToScreenPoint(new Vector2(100f, 20f));
         }
-
-        internal static void Draw(object node) { }
     }
 
     // ─── Sub state machine nodes ────────────────────────────────────────────────────────────────────
@@ -389,11 +421,10 @@ namespace YGDR.Editor.Animation
 
         static bool _renameFieldHadFocus;
 
-        // Tune these to match the sub-SM node's visual content area
-        static float _highlightWidth   = 170f;  // narrower than 200 to fit within pointed sides
-        static float _highlightHeight  = 10f;   // content band height
-        static float _highlightOffsetX = 15f;   // x inset from node left edge
-        static float _highlightOffsetY = 30f;   // y offset from node top (pushes into lower content area)
+        const float HighlightWidth   = 170f;
+        const float HighlightHeight  = 10f;
+        const float HighlightOffsetX = 15f;
+        const float HighlightOffsetY = 30f;
 
         static AnimatorStateMachine GetStateMachine(object node) =>
             GraphPatchReflection.StateMachineNodeStateMachineField?.GetValue(node) as AnimatorStateMachine;
@@ -406,7 +437,7 @@ namespace YGDR.Editor.Animation
                 var sm = GetStateMachine(__instance);
                 if (sm == null) return;
 
-                var nodeLocalRect = new Rect(_highlightOffsetX, _highlightOffsetY, _highlightWidth, _highlightHeight);
+                var nodeLocalRect = new Rect(HighlightOffsetX, HighlightOffsetY, HighlightWidth, HighlightHeight);
                 SpecialNodeRects.SubSMs[sm] = GUILayoutUtility.GetLastRect();
                 if (Event.current.type == EventType.Repaint)
                 {
@@ -433,6 +464,16 @@ namespace YGDR.Editor.Animation
             var fieldRect = new Rect(2f, 10f, 196f, 17f);
             var currentEvent = Event.current;
 
+            if (SubSMRenameState.JustStarted)
+            {
+                GUI.SetNextControlName(controlName);
+                EditorGUI.TextField(fieldRect, SubSMRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
+                EditorGUI.FocusTextInControl(controlName);
+                SubSMRenameState.JustStarted = false;
+                _renameFieldHadFocus = false;
+                return;
+            }
+
             if (currentEvent.type == EventType.KeyDown)
             {
                 if (currentEvent.keyCode == KeyCode.Return || currentEvent.keyCode == KeyCode.KeypadEnter)
@@ -452,14 +493,6 @@ namespace YGDR.Editor.Animation
             GUI.SetNextControlName(controlName);
             SubSMRenameState.RenameText = EditorGUI.TextField(fieldRect, SubSMRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
 
-            if (SubSMRenameState.JustStarted)
-            {
-                EditorGUI.FocusTextInControl(controlName);
-                SubSMRenameState.JustStarted = false;
-                _renameFieldHadFocus = false;
-                return;
-            }
-
             bool hasFocus = GUI.GetNameOfFocusedControl() == controlName;
             if (_renameFieldHadFocus && !hasFocus)
                 SubSMRenameState.Apply();
@@ -475,28 +508,62 @@ namespace YGDR.Editor.Animation
         internal static AnimatorState RenameTarget;
         internal static string RenameText;
         internal static bool JustStarted;
+        static AnimatorState[] _additionalTargets;
+        static AnimatorStateMachine _activeSM;
 
-        /* Starts an inline rename session for state, seeding the text field with the current name. */
-        internal static void Begin(AnimatorState state)
+        internal static void Begin(AnimatorState state, AnimatorState[] additionalTargets = null, AnimatorStateMachine activeSM = null)
         {
-            RenameTarget = state;
-            RenameText   = state.name;
-            JustStarted  = true;
+            RenameTarget        = state;
+            RenameText          = state.name;
+            JustStarted         = true;
+            _additionalTargets  = additionalTargets;
+            _activeSM           = activeSM;
         }
 
         internal static void Apply()
         {
             if (RenameTarget == null) return;
-            AnimatorStateOps.RenameState(RenameTarget, RenameText);
-            RenameTarget = null;
-            RenameText   = null;
+            string baseName = RenameText?.Trim() ?? "";
+
+            if (_additionalTargets == null || _additionalTargets.Length == 0)
+            {
+                AnimatorStateOps.RenameState(RenameTarget, baseName);
+            }
+            else
+            {
+                var allSelected = new HashSet<AnimatorState>(_additionalTargets) { RenameTarget };
+                var existingNames = new HashSet<string>();
+                if (_activeSM != null)
+                    foreach (var childState in _activeSM.states)
+                        if (!allSelected.Contains(childState.state))
+                            existingNames.Add(childState.state.name);
+
+                existingNames.Add(baseName);
+                AnimatorStateOps.RenameState(RenameTarget, baseName);
+
+                int n = 1;
+                foreach (var additionalState in _additionalTargets)
+                {
+                    string candidate;
+                    do { candidate = baseName + " " + n++; } while (existingNames.Contains(candidate));
+                    existingNames.Add(candidate);
+                    AnimatorStateOps.RenameState(additionalState, candidate);
+                }
+            }
+
+            RenameTarget       = null;
+            RenameText         = null;
+            _additionalTargets = null;
+            _activeSM          = null;
         }
 
         internal static void Cancel()
         {
             GUIUtility.keyboardControl = 0;
-            RenameTarget = null;
-            RenameText   = null;
+            RenameTarget       = null;
+            RenameText         = null;
+            _additionalTargets = null;
+            _activeSM          = null;
         }
     }
 
@@ -509,9 +576,9 @@ namespace YGDR.Editor.Animation
         /* Starts an inline rename session for stateMachine, seeding the text field with the current name. */
         internal static void Begin(AnimatorStateMachine stateMachine)
         {
-            RenameTarget = stateMachine;
-            RenameText   = stateMachine.name;
-            JustStarted  = true;
+            RenameTarget   = stateMachine;
+            RenameText     = stateMachine.name;
+            JustStarted    = true;
         }
 
         internal static void Apply()
@@ -525,8 +592,8 @@ namespace YGDR.Editor.Animation
         internal static void Cancel()
         {
             GUIUtility.keyboardControl = 0;
-            RenameTarget = null;
-            RenameText   = null;
+            RenameTarget   = null;
+            RenameText     = null;
         }
     }
 
@@ -577,35 +644,5 @@ namespace YGDR.Editor.Animation
         static void Postfix(ref string __result) => __result = "";
     }
 
-    // ─── Shared utilities ────────────────────────────────────────────────────────────────────
-
-    internal static class NodeOverlayUtils
-    {
-        static readonly Dictionary<Type, MethodInfo> _positionGetters = new();
-
-        /* Returns the width and height of node's position Rect via reflection, falling back to (160, 40) if unavailable. */
-        internal static Vector2 GetNodeSize(object node)
-        {
-            var type = node.GetType();
-            if (!_positionGetters.TryGetValue(type, out var getter))
-                _positionGetters[type] = getter = AccessTools.Method(type, "get_position");
-            if (getter?.Invoke(node, null) is Rect nodeRect) return new Vector2(nodeRect.width, nodeRect.height);
-            return new Vector2(160f, 40f);
-        }
-
-        /* Inserts Ldarg_0 + Call method before every Ret instruction in the IL stream, so method receives the node instance on each exit path. */
-        internal static IEnumerable<CodeInstruction> InjectColorDraw(
-            IEnumerable<CodeInstruction> instructions, MethodInfo method)
-        {
-            var list = instructions.ToList();
-            for (int i = list.Count - 1; i >= 0; i--)
-            {
-                if (list[i].opcode != OpCodes.Ret) continue;
-                list.Insert(i, new CodeInstruction(OpCodes.Call, method));
-                list.Insert(i, new CodeInstruction(OpCodes.Ldarg_0));
-            }
-            return list;
-        }
-    }
 }
 #endif

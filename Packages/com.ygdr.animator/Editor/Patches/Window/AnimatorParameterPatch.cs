@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -8,11 +27,13 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
+#if VRC_SDK_VRCSDK3
 using VRC.Dynamics;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using VRC.SDK3.Dynamics.PhysBone.Components;
 using VRC.SDKBase;
+#endif
 
 namespace YGDR.Editor.Animation
 {
@@ -73,8 +94,10 @@ namespace YGDR.Editor.Animation
         static GUIContent _vrcComponentIcon;
         static GUIContent VrcComponentIcon => _vrcComponentIcon ??= EditorGUIUtility.IconContent("templatecontainer@2x");
 
+#if VRC_SDK_VRCSDK3
         static bool _vrcComponentNeedsRebuild = true;
         static HashSet<string> _vrcComponentUsedParams;
+#endif
 
         static readonly HashSet<string> VrcBuiltinNames =
             new HashSet<string>(PatchParameterContextMenu.VrcParameters.Select(tuple => tuple.name));
@@ -82,16 +105,25 @@ namespace YGDR.Editor.Animation
         static int _clipCacheControllerId = -1;
         static HashSet<string> _clipUsedParams;
 
-        static int _conditionCacheControllerId = -1;
+        internal static int _conditionCacheControllerId = -1;
         static HashSet<string> _conditionUsedParams;
+        static AnimatorController _subscribedConditionController;
 
         internal static AnimatorController ViewFrameController;
         internal static HashSet<string> ViewFrameClipUsedParams;
+        internal static AnimatorDefaultSettings ViewFrameSettings;
+
+        static readonly Dictionary<string, float> _typeWidthCache = new();
 
         static PatchParameterRow()
         {
             Undo.undoRedoPerformed += () => { _clipCacheControllerId = -1; _conditionCacheControllerId = -1; };
-            ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream stream) => { _clipCacheControllerId = -1; _conditionCacheControllerId = -1; };
+            ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream stream) =>
+            {
+                _clipCacheControllerId = -1;
+                InvalidateConditionCache();
+            };
+#if VRC_SDK_VRCSDK3
             EditorApplication.hierarchyChanged += () => _vrcComponentNeedsRebuild = true;
             ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream stream) =>
             {
@@ -108,8 +140,10 @@ namespace YGDR.Editor.Animation
                     }
                 }
             };
+#endif
         }
 
+#if VRC_SDK_VRCSDK3
         internal static HashSet<string> GetVrcComponentUsedParams()
         {
             if (!_vrcComponentNeedsRebuild && _vrcComponentUsedParams != null) return _vrcComponentUsedParams;
@@ -117,6 +151,7 @@ namespace YGDR.Editor.Animation
             _vrcComponentNeedsRebuild = false;
             return _vrcComponentUsedParams;
         }
+#endif
 
         internal static HashSet<string> GetClipUsedParams(AnimatorController controller)
         {
@@ -153,13 +188,37 @@ namespace YGDR.Editor.Animation
 
         internal static HashSet<string> GetConditionUsedParams(AnimatorController controller)
         {
+            if (_subscribedConditionController != controller)
+            {
+                var dirtyField = WindowPatchReflection.AnimatorControllerDirtyField;
+                if (_subscribedConditionController != null && dirtyField != null)
+                {
+                    var existing = (Action)dirtyField.GetValue(_subscribedConditionController);
+                    dirtyField.SetValue(_subscribedConditionController, (Action)Delegate.Remove(existing, (Action)InvalidateConditionCache));
+                }
+                _subscribedConditionController = controller;
+                if (dirtyField != null)
+                {
+                    var existing = (Action)dirtyField.GetValue(controller);
+                    dirtyField.SetValue(controller, (Action)Delegate.Combine(existing, (Action)InvalidateConditionCache));
+                }
+            }
+
             int controllerId = controller.GetInstanceID();
             if (_conditionCacheControllerId == controllerId && _conditionUsedParams != null) return _conditionUsedParams;
             _conditionCacheControllerId = controllerId;
             _conditionUsedParams = new HashSet<string>();
             foreach (var layer in controller.layers)
                 CollectConditionParams(layer.stateMachine, _conditionUsedParams);
+#if VRC_SDK_VRCSDK3
+            AnimatorParameterOps.CollectParameterDriverNames(controller, _conditionUsedParams);
+#endif
             return _conditionUsedParams;
+        }
+
+        internal static void InvalidateConditionCache()
+        {
+            _conditionCacheControllerId = -1;
         }
 
         static void CollectConditionParams(AnimatorStateMachine stateMachine, HashSet<string> result)
@@ -198,11 +257,16 @@ namespace YGDR.Editor.Animation
                     result.Add(blendTree.blendParameter);
                 if (!string.IsNullOrEmpty(blendTree.blendParameterY))
                     result.Add(blendTree.blendParameterY);
-                foreach (var child in blendTree.children)
-                    CollectBlendTreeConditionParams(child.motion, result);
+                foreach (var childMotion in blendTree.children)
+                {
+                    if (!string.IsNullOrEmpty(childMotion.directBlendParameter))
+                        result.Add(childMotion.directBlendParameter);
+                    CollectBlendTreeConditionParams(childMotion.motion, result);
+                }
             }
         }
 
+#if VRC_SDK_VRCSDK3
         static bool VrcTypesMatch(AnimatorControllerParameterType animType, VRCExpressionParameters.ValueType vrcType) =>
             animType switch
             {
@@ -212,6 +276,7 @@ namespace YGDR.Editor.Animation
                 AnimatorControllerParameterType.Trigger => vrcType == VRCExpressionParameters.ValueType.Bool,
                 _ => true
             };
+#endif
 
         static readonly Dictionary<int, string> _elementParamNameCache = new();
         static readonly GUIContent _tempContent = new GUIContent();
@@ -240,34 +305,42 @@ namespace YGDR.Editor.Animation
                 {
                     var controller = ViewFrameController;
                     if (controller != null)
-                        foreach (var layer in controller.layers)
-                            AnimatorParameterOps.RemapDriverParametersInStateMachine(layer.stateMachine, oldName, parameter.name);
+                        AnimatorParameterOps.RemapParameterReferences(controller, oldName, parameter.name);
                     _elementParamNameCache[__instance.GetHashCode()] = parameter.name;
                     EditorApplication.delayCall += () => ActiveEditorTracker.sharedTracker.ForceRebuild();
                 }
 
-                var settings = AnimatorDefaultSettings.Load();
+                var settings = ViewFrameSettings ?? AnimatorDefaultSettings.Load();
                 bool showType = settings.showParamTypeIcons;
                 bool showVrc  = settings.showParamVrcIcons;
                 bool showAap  = settings.showParamAapIcons;
                 bool showVrcComponent = settings.showParamVrcComponentIcons;
                 bool showUnused = settings.showParamUnusedIcon;
 
+#if VRC_SDK_VRCSDK3
                 bool hasSyncData = VRCSyncCache.TryGetSync(parameter.name, out bool isSynced);
+#else
+                const bool hasSyncData = false;
+#endif
                 if (!hasSyncData && !showType && !showVrc && !showAap && !showVrcComponent && !showUnused) return;
 
+#if VRC_SDK_VRCSDK3
                 VRCExpressionParameters.ValueType vrcValueType = default;
                 bool hasMismatch = showType
                     && VRCSyncCache.TryGetVrcValueType(parameter.name, out vrcValueType)
                     && !VrcTypesMatch(parameter.type, vrcValueType);
+#else
+                const bool hasMismatch = false;
+#endif
 
-                const float iconSize = 14f;
                 const float iconPadding = 2f;
                 const float clipIconSize = 20f;
                 const float vrcLabelWidth = 23f;
 
                 float cursorX = rect.xMax - 72f;
 
+#if VRC_SDK_VRCSDK3
+                const float iconSize = 14f;
                 if (hasSyncData && showVrcComponent)
                 {
                     cursorX -= iconSize + iconPadding;
@@ -275,6 +348,7 @@ namespace YGDR.Editor.Animation
                               isSynced ? SyncedIcon : UnsyncedIcon);
                     cursorX -= iconPadding;
                 }
+#endif
 
                 if (showType)
                 {
@@ -288,9 +362,14 @@ namespace YGDR.Editor.Animation
                     };
 
                     string typeText = parameter.type.ToString();
-                    _tempContent.text = typeText;
-                    float typeTextWidth = TypeStyle.CalcSize(_tempContent).x;
+                    if (!_typeWidthCache.TryGetValue(typeText, out float typeTextWidth))
+                    {
+                        _tempContent.text = typeText;
+                        typeTextWidth = TypeStyle.CalcSize(_tempContent).x;
+                        _typeWidthCache[typeText] = typeTextWidth;
+                    }
 
+#if VRC_SDK_VRCSDK3
                     if (hasMismatch)
                     {
                         var vrcColor = vrcValueType switch
@@ -301,22 +380,35 @@ namespace YGDR.Editor.Animation
                         };
 
                         string vrcTypeText = vrcValueType.ToString();
-                        _tempContent.text = vrcTypeText;
-                        float vrcTypeWidth = TypeStyle.CalcSize(_tempContent).x;
-                        TypeStyle.normal.textColor = vrcColor;
+                        if (!_typeWidthCache.TryGetValue(vrcTypeText, out float vrcTypeWidth))
+                        {
+                            _tempContent.text = vrcTypeText;
+                            vrcTypeWidth = TypeStyle.CalcSize(_tempContent).x;
+                            _typeWidthCache[vrcTypeText] = vrcTypeWidth;
+                        }
+                        var prevColor = GUI.color;
+                        GUI.color = vrcColor;
                         cursorX -= vrcTypeWidth;
                         GUI.Label(new Rect(cursorX, rect.y, vrcTypeWidth, rect.height), vrcTypeText, TypeStyle);
 
-                        _tempContent.text = "/";
-                        float sepWidth = TypeStyle.CalcSize(_tempContent).x;
+                        if (!_typeWidthCache.TryGetValue("/", out float sepWidth))
+                        {
+                            _tempContent.text = "/";
+                            sepWidth = TypeStyle.CalcSize(_tempContent).x;
+                            _typeWidthCache["/"] = sepWidth;
+                        }
                         cursorX -= sepWidth;
-                        TypeStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f);
+                        GUI.color = new Color(0.5f, 0.5f, 0.5f);
                         GUI.Label(new Rect(cursorX, rect.y, sepWidth, rect.height), "/", TypeStyle);
+                        GUI.color = prevColor;
                     }
+#endif
 
-                    TypeStyle.normal.textColor = typeColor;
+                    var savedColor = GUI.color;
+                    GUI.color = typeColor;
                     cursorX -= typeTextWidth;
                     GUI.Label(new Rect(cursorX, rect.y, typeTextWidth, rect.height), typeText, TypeStyle);
+                    GUI.color = savedColor;
 
                     cursorX -= iconPadding;
                 }
@@ -324,11 +416,14 @@ namespace YGDR.Editor.Animation
                 if (showVrc && VrcBuiltinNames.Contains(parameter.name))
                 {
                     cursorX -= vrcLabelWidth;
-                    VrcBuiltinStyle.normal.textColor = settings.paramColorVrcLabel;
+                    var prevVrcColor = GUI.color;
+                    GUI.color = settings.paramColorVrcLabel;
                     GUI.Label(new Rect(cursorX, rect.y, vrcLabelWidth, rect.height), "VRC", VrcBuiltinStyle);
+                    GUI.color = prevVrcColor;
                     cursorX -= iconPadding;
                 }
 
+#if VRC_SDK_VRCSDK3
                 if (showVrcComponent && GetVrcComponentUsedParams().Contains(parameter.name))
                 {
                     cursorX -= clipIconSize;
@@ -337,10 +432,11 @@ namespace YGDR.Editor.Animation
                     if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && vrcComponentIconRect.Contains(Event.current.mousePosition))
                     {
                         Event.current.Use();
-                        AnimatorFindUsageWindow.OpenEffectingObjects(parameter, ViewFrameController);
+                        AnimatorFindUsageWindow.Open(parameter, ViewFrameController);
                     }
                     cursorX -= iconPadding;
                 }
+#endif
 
                 if (showAap && ViewFrameClipUsedParams != null && ViewFrameClipUsedParams.Contains(parameter.name))
                 {
@@ -350,14 +446,15 @@ namespace YGDR.Editor.Animation
                     if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && aapIconRect.Contains(Event.current.mousePosition))
                     {
                         Event.current.Use();
-                        AnimatorFindUsageWindow.OpenAap(parameter, ViewFrameController);
+                        AnimatorFindUsageWindow.Open(parameter, ViewFrameController);
                     }
                 }
 
                 if (showUnused && ViewFrameController != null)
                 {
                     var conditionUsedParams = GetConditionUsedParams(ViewFrameController);
-                    if (!conditionUsedParams.Contains(parameter.name))
+                    bool usedAsAap = ViewFrameClipUsedParams != null && ViewFrameClipUsedParams.Contains(parameter.name);
+                    if (!conditionUsedParams.Contains(parameter.name) && !usedAsAap)
                     {
                         cursorX -= clipIconSize;
                         GUI.Label(new Rect(cursorX, rect.y + (rect.height - clipIconSize) * 0.5f, clipIconSize, clipIconSize), UnusedParamIcon);
@@ -410,6 +507,7 @@ namespace YGDR.Editor.Animation
                         InsertWithUniqueName(capturedInstance, controller, insertIndex, capturedType));
                 }
 
+#if VRC_SDK_VRCSDK3
                 var existingParamNames = new HashSet<string>(controller.parameters.Select(parameter => parameter.name));
                 menu.AddSeparator("");
                 foreach (var (category, vrcParamName, vrcParamType) in PatchParameterContextMenu.VrcParameters)
@@ -427,6 +525,7 @@ namespace YGDR.Editor.Animation
                             AnimatorParameterOps.InsertParameterAtIndex(controller, insertIndex, capturedName, capturedType));
                     }
                 }
+#endif
 
                 menu.DropDown(buttonRect);
                 return false;
@@ -519,13 +618,13 @@ namespace YGDR.Editor.Animation
                     for (int j = 0; j < newNames.Length; j++)
                     {
                         if (newNames[j] == oldNames[j]) continue;
-                        foreach (var layer in controller.layers)
-                            AnimatorParameterOps.RemapDriverParametersInStateMachine(layer.stateMachine, oldNames[j], newNames[j]);
+                        AnimatorParameterOps.RemapParameterReferences(controller, oldNames[j], newNames[j]);
+#if VRC_SDK_VRCSDK3
                         if (PatchParameterRow.GetVrcComponentUsedParams().Contains(oldNames[j]))
                             AnimatorFindUsageWindow.RemapVrcComponentParameters(oldNames[j], newNames[j]);
-                        AnimatorParameterOps.RenameVrcParameters(oldNames[j], newNames[j]);
                         if (!_isProcessingSiblingRenames)
                             TryRenameSiblingVariants(controller, newNames, oldNames[j], newNames[j]);
+#endif
                         EditorUtility.SetDirty(controller);
                     }
                     _paramNameCache[controller.GetInstanceID()] = newNames;
@@ -550,6 +649,7 @@ namespace YGDR.Editor.Animation
             PatchParameterRow.ViewFrameClipUsedParams = viewController != null
                 ? PatchParameterRow.GetClipUsedParams(viewController)
                 : null;
+            PatchParameterRow.ViewFrameSettings = AnimatorDefaultSettings.Load();
 
             if (viewController != null && !_paramNameCache.ContainsKey(viewController.GetInstanceID()))
                 _paramNameCache[viewController.GetInstanceID()] = viewController.parameters.Select(parameter => parameter.name).ToArray();
@@ -585,21 +685,54 @@ namespace YGDR.Editor.Animation
                      Enum.GetValues(typeof(AnimatorControllerParameterType)))
             {
                 var capturedAddType = type;
-                menu.AddItem(new GUIContent($"Add Parameter below/{type}"), false, () =>
+                menu.AddItem(new GUIContent($"{L10n.Get("params_menu.add_below")}/{type}"), false, () =>
                     PatchParameterAddMenu.InsertWithUniqueName(capturedInstance, controller, capturedIndex + 1, capturedAddType));
             }
             menu.AddSeparator("");
-            foreach (AnimatorControllerParameterType type in
-                     Enum.GetValues(typeof(AnimatorControllerParameterType)))
+#if VRC_SDK_VRCSDK3
+            var expressionParameters = VRCSyncCache.GetExpressionParameters();
+            bool hasVrcParams = expressionParameters?.parameters != null;
+#else
+            bool hasVrcParams = false;
+#endif
+            if (hasVrcParams)
             {
-                if (type == parameter.type) continue;
-                var capturedType = type;
-                menu.AddItem(new GUIContent($"Convert to {type}"), false, () =>
-                    AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
+#if VRC_SDK_VRCSDK3
+                bool existsInVrc = VRCSyncCache.TryGetVrcValueType(parameter.name, out var currentVrcType);
+                var capturedConvertExpParams = expressionParameters;
+                var capturedConvertParamName = parameter.name;
+                foreach (AnimatorControllerParameterType type in
+                         Enum.GetValues(typeof(AnimatorControllerParameterType)))
+                {
+                    var capturedType = type;
+                    string convertToLabel = $"{L10n.Get("params_menu.convert_to")} {type}";
+                    menu.AddItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_controller")}"), false, () =>
+                        AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
+                    bool vrcAlreadyMatches = existsInVrc && (
+                        type == AnimatorControllerParameterType.Float ? currentVrcType == VRCExpressionParameters.ValueType.Float :
+                        type == AnimatorControllerParameterType.Int   ? currentVrcType == VRCExpressionParameters.ValueType.Int   :
+                        currentVrcType == VRCExpressionParameters.ValueType.Bool);
+                    if (existsInVrc && !vrcAlreadyMatches)
+                        menu.AddItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_vrc_params")}"), false, () =>
+                            AnimatorParameterOps.ConvertVrcParameter(capturedConvertExpParams, capturedConvertParamName, capturedType));
+                    else
+                        menu.AddDisabledItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_vrc_params")}"));
+                }
+#endif
+            }
+            else
+            {
+                foreach (AnimatorControllerParameterType type in
+                         Enum.GetValues(typeof(AnimatorControllerParameterType)))
+                {
+                    var capturedType = type;
+                    menu.AddItem(new GUIContent($"{L10n.Get("params_menu.convert_to")} {type}"), false, () =>
+                        AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
+                }
             }
 
-            var expressionParameters = VRCSyncCache.GetExpressionParameters();
-            if (expressionParameters?.parameters != null)
+#if VRC_SDK_VRCSDK3
+            if (hasVrcParams)
             {
                 VRCExpressionParameters.Parameter vrcParam = null;
                 foreach (var expressionParameter in expressionParameters.parameters)
@@ -613,44 +746,35 @@ namespace YGDR.Editor.Animation
                 if (vrcParam != null)
                 {
                     bool capturedSynced = vrcParam.networkSynced;
-                    menu.AddItem(new GUIContent(capturedSynced ? "Set Not Synced" : "Set Synced"), false,
+                    menu.AddItem(new GUIContent(capturedSynced ? L10n.Get("params_menu.set_not_synced") : L10n.Get("params_menu.set_synced")), false,
                         () => AnimatorParameterOps.SetVrcSynced(capturedExpressionParameters, capturedParamName, !capturedSynced));
                 }
                 else
                 {
-                    menu.AddItem(new GUIContent("Add to VRC Parameters"), false,
+                    menu.AddItem(new GUIContent(L10n.Get("params_menu.add_to_vrc")), false,
                         () => AnimatorParameterOps.AddToVrcParameters(capturedExpressionParameters, capturedParamName, capturedParamType));
                 }
 
                 var capturedController = controller;
                 menu.AddSeparator("");
-                menu.AddItem(new GUIContent("Add All to VRC Parameters"), false,
+                menu.AddItem(new GUIContent(L10n.Get("params_menu.add_all_to_vrc")), false,
                     () => AnimatorParameterOps.AddAllToVrcParameters(capturedExpressionParameters, capturedController));
             }
+#endif
 
             menu.AddSeparator("");
             var capturedFindParameter = parameter;
             var capturedFindController = controller;
-            menu.AddItem(new GUIContent("Find Parameter Uses"), false,
+            menu.AddItem(new GUIContent(L10n.Get("params_menu.find_uses")), false,
                 () => AnimatorFindUsageWindow.Open(capturedFindParameter, capturedFindController));
-
-            if (PatchParameterRow.GetVrcComponentUsedParams().Contains(parameter.name))
-                menu.AddItem(new GUIContent("Find Effecting Objects"), false,
-                    () => AnimatorFindUsageWindow.OpenEffectingObjects(capturedFindParameter, capturedFindController));
-            else
-                menu.AddDisabledItem(new GUIContent("Find Effecting Objects"));
 
             if (parameter.type == AnimatorControllerParameterType.Float)
             {
                 var  clipUsedParams   = PatchParameterRow.ViewFrameClipUsedParams;
                 bool parameterIsAAPLinked = clipUsedParams != null && clipUsedParams.Contains(parameter.name);
 
-                if (parameterIsAAPLinked)
-                    menu.AddItem(new GUIContent("Find AAP Uses"), false,
-                        () => AnimatorFindUsageWindow.OpenAap(capturedFindParameter, capturedFindController));
-
                 var capturedAAPParam = parameter;
-                menu.AddItem(new GUIContent("Create AAP"), false, static data =>
+                menu.AddItem(new GUIContent(L10n.Get("params_menu.create_aap")), false, static data =>
                 {
                     var (aapController, aapParam, screenPos) = ((AnimatorController, AnimatorControllerParameter, Vector2))data;
                     EditorApplication.delayCall += () =>
@@ -658,30 +782,30 @@ namespace YGDR.Editor.Animation
                 }, (capturedFindController, capturedAAPParam, capturedScreenPos));
 
                 if (parameterIsAAPLinked)
-                    menu.AddItem(new GUIContent("Remove AAP"), false, static data =>
+                    menu.AddItem(new GUIContent(L10n.Get("params_menu.remove_aap")), false, static data =>
                     {
                         var (aapController, aapParam, screenPos) = ((AnimatorController, AnimatorControllerParameter, Vector2))data;
                         EditorApplication.delayCall += () =>
                             ClipDropdown.ForRemove(aapController, aapParam).ShowWithCheckmarks(new Rect(screenPos, Vector2.zero));
                     }, (capturedFindController, capturedAAPParam, capturedScreenPos));
                 else
-                    menu.AddDisabledItem(new GUIContent("Remove AAP"));
+                    menu.AddDisabledItem(new GUIContent(L10n.Get("params_menu.remove_aap")));
             }
 
             menu.AddSeparator("");
-            menu.AddItem(new GUIContent("Remap to Parameter"), false, static data =>
+            menu.AddItem(new GUIContent(L10n.Get("params_menu.remap_to")), false, static data =>
             {
                 var (remapController, fromParamName, screenPos) = ((AnimatorController, string, Vector2))data;
                 EditorApplication.delayCall += () =>
                     new ParameterRemapDropdown(remapController, fromParamName).Show(new Rect(screenPos, Vector2.zero));
             }, (capturedFindController, capturedFindParameter.name, capturedScreenPos));
-            menu.AddItem(new GUIContent("Delete and Clean"), false, static data =>
+            menu.AddItem(new GUIContent(L10n.Get("params_menu.delete_and_clean")), false, static data =>
             {
                 var (deleteController, deleteParamName) = ((AnimatorController, string))data;
                 AnimatorParameterOps.DeleteParameterAndClean(deleteController, deleteParamName);
                 EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
             }, (capturedFindController, capturedFindParameter.name));
-            menu.AddItem(new GUIContent("Remove Unused Parameters"), false, static data =>
+            menu.AddItem(new GUIContent(L10n.Get("params_menu.remove_unused")), false, static data =>
             {
                 AnimatorParameterOps.RemoveUnusedParameters((AnimatorController)data);
                 EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
@@ -695,6 +819,7 @@ namespace YGDR.Editor.Animation
 
         static void TryRenameSiblingVariants(AnimatorController controller, string[] newNames, string oldName, string newName)
         {
+#if VRC_SDK_VRCSDK3
             string[] suffixes = null;
             string componentTypeName = null;
             string matchedSuffix = null;
@@ -743,11 +868,15 @@ namespace YGDR.Editor.Animation
             if (siblings.Count == 0) return;
 
             string siblingList = string.Join("\n", siblings.Select(sibling => $"{sibling.oldSiblingName}  →  {sibling.newSiblingName}"));
+            string paramWord = siblings.Count == 1
+                ? L10n.Get("params_menu.rename_sibling_param")
+                : L10n.Get("params_menu.rename_sibling_params");
             bool confirmed = EditorUtility.DisplayDialog(
-                "Rename Sibling Parameters",
-                $"Renaming '{oldBase}' → '{newBase}' affects \n{siblings.Count} other {componentTypeName} parameter{(siblings.Count == 1 ? "" : "s")}:\n\n{siblingList}\n\nRename these too?",
-                "Rename All",
-                "Skip");
+                L10n.Get("params_menu.rename_sibling_title"),
+                string.Format(L10n.Get("params_menu.rename_sibling_body"),
+                    oldBase, newBase, siblings.Count, componentTypeName, paramWord, siblingList),
+                L10n.Get("params_menu.rename_sibling_ok"),
+                L10n.Get("params_menu.rename_sibling_skip"));
             if (!confirmed) return;
 
             foreach (var (paramIndex, _, newSiblingName) in siblings)
@@ -776,9 +905,10 @@ namespace YGDR.Editor.Animation
                 foreach (var (_, oldSiblingName, newSiblingName) in siblings)
                 {
                     AnimatorParameterOps.RemapParameter(controller, oldSiblingName, newSiblingName);
+#if VRC_SDK_VRCSDK3
                     if (PatchParameterRow.GetVrcComponentUsedParams().Contains(oldSiblingName))
                         AnimatorFindUsageWindow.RemapVrcComponentParameters(oldSiblingName, newSiblingName);
-                    AnimatorParameterOps.RenameVrcParameters(oldSiblingName, newSiblingName);
+#endif
                 }
 
                 EditorUtility.SetDirty(controller);
@@ -787,6 +917,7 @@ namespace YGDR.Editor.Animation
             {
                 _isProcessingSiblingRenames = false;
             }
+#endif
         }
 
         internal static readonly HashSet<string> _vrcBuiltinNamesForBudget =
@@ -807,7 +938,7 @@ namespace YGDR.Editor.Animation
 
             protected override AdvancedDropdownItem BuildRoot()
             {
-                var root = new AdvancedDropdownItem("Remap to Parameter");
+                var root = new AdvancedDropdownItem(L10n.Get("params_menu.remap_to"));
                 foreach (var parameter in _controller.parameters)
                 {
                     if (parameter.name == _fromParam) continue;
@@ -850,7 +981,9 @@ namespace YGDR.Editor.Animation
             if (_controller == null) return;
 
             int controllerBits = 0;
+#if VRC_SDK_VRCSDK3
             int syncedBits     = 0;
+#endif
             var builtins       = PatchParameterContextMenu._vrcBuiltinNamesForBudget;
 
             foreach (var parameter in _controller.parameters)
@@ -865,6 +998,7 @@ namespace YGDR.Editor.Animation
                     _ => 0
                 };
                 controllerBits += cost;
+#if VRC_SDK_VRCSDK3
                 if (VRCSyncCache.TryGetSync(parameter.name, out bool isSynced) && isSynced)
                 {
                     int syncedCost = VRCSyncCache.TryGetVrcValueType(parameter.name, out VRCExpressionParameters.ValueType vrcType)
@@ -878,12 +1012,20 @@ namespace YGDR.Editor.Animation
                         : cost;
                     syncedBits += syncedCost;
                 }
+#endif
             }
 
             string text;
             float textWidth;
+#if VRC_SDK_VRCSDK3
             bool hasSyncData = VRCSyncCache.GetExpressionParameters() != null;
+#endif
 
+            text      = controllerBits > 256
+                ? $"<color=#ff4444>{controllerBits}/256</color>"
+                : $"{controllerBits}/256";
+            textWidth = 64f;
+#if VRC_SDK_VRCSDK3
             if (hasSyncData)
             {
                 string syncedPart = syncedBits > 256
@@ -892,19 +1034,22 @@ namespace YGDR.Editor.Animation
                 text      = $"{controllerBits} | {syncedPart}";
                 textWidth = 110f;
             }
-            else
-            {
-                text      = controllerBits > 256
-                    ? $"<color=#ff4444>{controllerBits}/256</color>"
-                    : $"{controllerBits}/256";
-                textWidth = 64f;
-            }
+#endif
 
             var plusRect = GUILayoutUtility.GetLastRect();
             GUI.Label(new Rect(plusRect.x - textWidth - 18f, plusRect.y, textWidth, plusRect.height), text, Style);
             }
             catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchParameterBudget.Postfix: {e}"); }
         }
+    }
+
+    // Invalidate condition cache when blend tree parameter dropdown changes in the inspector
+    [HarmonyPatch]
+    internal static class PatchBlendTreeParameterGUI
+    {
+        static MethodBase TargetMethod() => BlendTreePatchReflection.BlendTreeParameterGUIMethod;
+
+        static void Postfix() => PatchParameterRow.InvalidateConditionCache();
     }
 }
 #endif

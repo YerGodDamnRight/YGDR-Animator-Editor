@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections;
@@ -22,8 +41,8 @@ namespace YGDR.Editor.Animation
             DragCandidate = null;
             DraggingNode = null;
             IsDragging = false;
-            if (PatchGraphDoubleClickCreate.AnimWindow != null)
-                PatchGraphDoubleClickCreate.AnimWindow.wantsMouseMove = false;
+            if (PatchGraphInputHandler.AnimWindow != null)
+                PatchGraphInputHandler.AnimWindow.wantsMouseMove = false;
         }
     }
 
@@ -206,6 +225,16 @@ namespace YGDR.Editor.Animation
             const string controlName = "BlendTreeRenameField";
             var currentEvent = Event.current;
 
+            if (BlendTreeRenameState.JustStarted)
+            {
+                GUI.SetNextControlName(controlName);
+                EditorGUI.TextField(titleRect, BlendTreeRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
+                EditorGUI.FocusTextInControl(controlName);
+                BlendTreeRenameState.JustStarted = false;
+                _renameFieldHadFocus = false;
+                return;
+            }
+
             if (currentEvent.type == EventType.KeyDown)
             {
                 if (currentEvent.keyCode == KeyCode.Return || currentEvent.keyCode == KeyCode.KeypadEnter)
@@ -224,14 +253,6 @@ namespace YGDR.Editor.Animation
 
             GUI.SetNextControlName(controlName);
             BlendTreeRenameState.RenameText = EditorGUI.TextField(titleRect, BlendTreeRenameState.RenameText, AnimatorStyles.RenameFieldStyle);
-
-            if (BlendTreeRenameState.JustStarted)
-            {
-                EditorGUI.FocusTextInControl(controlName);
-                BlendTreeRenameState.JustStarted = false;
-                _renameFieldHadFocus = false;
-                return;
-            }
 
             bool hasFocus = GUI.GetNameOfFocusedControl() == controlName;
             if (_renameFieldHadFocus && !hasFocus)
@@ -331,7 +352,7 @@ namespace YGDR.Editor.Animation
                 var blendTreeGraph = Traverse.Create(__instance).Property("graph").GetValue();
                 if (blendTreeGraph != null)
                 {
-                    var graphNodes = PatchGraphDoubleClickCreate.GetNodes(blendTreeGraph);
+                    var graphNodes = PatchGraphInputHandler.GetNodes(blendTreeGraph);
                     if (graphNodes != null)
                     {
                         foreach (var node in graphNodes)
@@ -449,13 +470,13 @@ namespace YGDR.Editor.Animation
                     BlendTreeReparentState.DraggingNode = BlendTreeReparentState.DragCandidate;
                     BlendTreeReparentState.DragCandidate = null;
                     BlendTreeReparentState.IsDragging = true;
-                    if (PatchGraphDoubleClickCreate.AnimWindow != null)
-                        PatchGraphDoubleClickCreate.AnimWindow.wantsMouseMove = true;
+                    if (PatchGraphInputHandler.AnimWindow != null)
+                        PatchGraphInputHandler.AnimWindow.wantsMouseMove = true;
                 }
 
                 if (!BlendTreeReparentState.IsDragging) return;
 
-                PatchGraphDoubleClickCreate.AnimWindow?.Repaint();
+                PatchGraphInputHandler.AnimWindow?.Repaint();
 
                 if (currentEvent.type == EventType.Repaint)
                     DrawDragPreview(__instance, currentEvent.mousePosition);
@@ -512,7 +533,7 @@ namespace YGDR.Editor.Animation
         {
             var graph = Traverse.Create(graphGUI).Property("graph").GetValue();
             if (graph == null) return null;
-            var nodes = PatchGraphDoubleClickCreate.GetNodes(graph);
+            var nodes = PatchGraphInputHandler.GetNodes(graph);
             if (nodes == null) return null;
             foreach (var node in nodes)
             {
@@ -585,7 +606,7 @@ namespace YGDR.Editor.Animation
 
             var graph = Traverse.Create(graphGUI).Property("graph").GetValue();
             if (graph == null) return;
-            var nodes = PatchGraphDoubleClickCreate.GetNodes(graph);
+            var nodes = PatchGraphInputHandler.GetNodes(graph);
             if (nodes == null) return;
             foreach (var node in nodes)
             {
@@ -877,19 +898,72 @@ namespace YGDR.Editor.Animation
                 var capturedNode = pendingNode;
                 var capturedGraphGUI = graphGUI;
 
-                __instance.AddItem(new GUIContent("Copy"), false, () =>
+                __instance.AddItem(new GUIContent(L10n.Get("blend_tree.copy")), false, () =>
                     PatchBlendTreeOnGraphGUI.ExecuteCopyNode(capturedNode));
 
-                if (motion is BlendTree)
+                if (motion is BlendTree blendTreeMotion)
                 {
                     if (BlendTreeCopyPasteState.SourceMotion != null)
                     {
-                        __instance.AddItem(new GUIContent("Paste as Child"), false, () =>
+                        __instance.AddItem(new GUIContent(L10n.Get("blend_tree.paste_as_child")), false, () =>
                             PatchBlendTreeOnGraphGUI.ExecutePasteToNode(capturedGraphGUI, capturedNode));
                     }
                     else
                     {
-                        __instance.AddDisabledItem(new GUIContent("Paste as Child"));
+                        __instance.AddDisabledItem(new GUIContent(L10n.Get("blend_tree.paste_as_child")));
+                    }
+
+                    __instance.AddSeparator("");
+
+                    AnimatorController capturedController = null;
+                    try
+                    {
+                        var graph  = Traverse.Create(graphGUI).Property("graph").GetValue();
+                        var rootBT = BlendTreePatchReflection.GraphRootBlendTreeGetter.Invoke(graph, null) as BlendTree;
+                        if (rootBT != null)
+                            capturedController = AssetDatabase.LoadMainAssetAtPath(
+                                AssetDatabase.GetAssetPath(rootBT)) as AnimatorController;
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError($"[YGDR] BlendTree template menu: failed to get controller: {e}");
+                    }
+
+                    var capturedBT         = blendTreeMotion;
+                    var capturedCtrl       = capturedController;
+                    __instance.AddItem(new GUIContent(L10n.Get("blend_tree.save_template")), false, () =>
+                        AnimatorTemplateParameterWindow.OpenCreateBlendTree(capturedBT, capturedCtrl));
+
+                    var blendTreeTemplates = PatchLayerToolbar.LoadBlendTreeTemplateAssets();
+                    if (blendTreeTemplates.Count == 0)
+                    {
+                        __instance.AddDisabledItem(new GUIContent($"{L10n.Get("layer_template.import_template")}/{L10n.Get("blend_tree.no_templates")}"));
+                    }
+                    else
+                    {
+                        foreach (var (templateName, templateBlendTree) in blendTreeTemplates)
+                        {
+                            var capturedTemplate = templateBlendTree;
+                            var capturedTargetBT = blendTreeMotion;
+                            var capturedTargetCtrl = capturedController;
+                            __instance.AddItem(new GUIContent($"{L10n.Get("layer_template.import_template")}/{templateName.Replace('.', '/')}"), false, () =>
+                                AnimatorTemplateParameterWindow.OpenImportBlendTree(capturedTemplate, capturedTargetBT, capturedTargetCtrl));
+                        }
+
+                        foreach (var (templateName, templateBlendTree) in blendTreeTemplates)
+                        {
+                            string capturedDir  = System.IO.Path.GetDirectoryName(
+                                AssetDatabase.GetAssetPath(templateBlendTree)).Replace('\\', '/');
+                            string capturedName = templateName;
+                            __instance.AddItem(new GUIContent($"{L10n.Get("layer_template.delete_template")}/{capturedName.Replace('.', '/')}"), false, () =>
+                            {
+                                if (EditorUtility.DisplayDialog(L10n.Get("blend_tree.delete_template_title"),
+                                    string.Format(L10n.Get("layer_template.delete_confirm_body"), capturedName),
+                                    L10n.Get("layer_template.delete_confirm_ok"),
+                                    L10n.Get("layer_template.delete_confirm_cancel")))
+                                    AssetDatabase.DeleteAsset(capturedDir);
+                            });
+                        }
                     }
                 }
             }

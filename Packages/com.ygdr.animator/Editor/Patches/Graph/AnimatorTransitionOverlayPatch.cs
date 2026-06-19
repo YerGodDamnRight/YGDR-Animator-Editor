@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -37,6 +56,19 @@ namespace YGDR.Editor.Animation
         static FieldInfo         _labelTransitionContextField;
         static EditorWindow      _cachedAnimatorWindow;
         static Func<Rect>        _getVisibleRect;
+        static bool              _showExpandedBox;
+        static (object info, Vector2 midPoint, Vector2 direction)? _pendingExpandedBox;
+
+        internal static void DrawExpandedBox()  => _showExpandedBox = true;
+        internal static void ClearExpandedBox() => _showExpandedBox = false;
+
+        internal static void FlushExpandedBox()
+        {
+            if (_pendingExpandedBox == null) return;
+            var (info, midPoint, direction) = _pendingExpandedBox.Value;
+            _pendingExpandedBox = null;
+            DrawExpandedConditionsBox(info, midPoint, direction);
+        }
 
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() => GraphPatchReflection.DrawEdgeMethod;
@@ -61,7 +93,7 @@ namespace YGDR.Editor.Animation
                 if (!selected)
                 {
                     var inOutColor = ResolveInOutColor(edge, settings);
-                    color = inOutColor ?? settings.transitionOverlayColor;
+                    color = inOutColor ?? GetTagColorFromInfo(info, settings) ?? settings.transitionOverlayColor;
                 }
             }
             catch (Exception e) { Debug.LogError($"[YGDR] DrawEdge prefix error: {e}"); }
@@ -128,6 +160,9 @@ namespace YGDR.Editor.Animation
                 var stateMachine = AnimatorEditorInit.SMNodeStateMachineField?.GetValue(node) as AnimatorStateMachine;
                 return stateMachine != null && System.Array.IndexOf(selectedObjects, stateMachine) >= 0;
             }
+            // AnyState/Exit/Entry nodes have no underlying asset — Unity puts the node ScriptableObject itself in Selection.objects
+            if (node is UnityEngine.Object nodeObject)
+                return System.Array.IndexOf(selectedObjects, nodeObject) >= 0;
             return false;
         }
 
@@ -139,8 +174,7 @@ namespace YGDR.Editor.Animation
             {
                 var settings = AnimatorDefaultSettings.Load();
                 bool animate = settings.transitionAnimateSelected && (__state == 1 || IsNodeSelected(edge));
-
-                if (!settings.transitionShowLabel && !animate) return;
+                if (!settings.transitionShowLabel && !animate && !_showExpandedBox) return;
 
                 var args = new object[] { edge, Vector3.zero };
                 var points = GraphPatchReflection.GetEdgePointsMethod?.Invoke(__instance, args) as Vector3[];
@@ -152,7 +186,9 @@ namespace YGDR.Editor.Animation
                 var midPoint         = Vector3.Lerp(sourcePoint, destinationPoint, 0.5f);
                 var direction        = (destinationPoint - sourcePoint).normalized;
 
-                if (settings.transitionShowLabel)
+                if (__state == 1 && _showExpandedBox)
+                    _pendingExpandedBox = (info, (Vector2)midPoint, (Vector2)direction);
+                else if (settings.transitionShowLabel)
                 {
                     var label = BuildLabel(info);
                     if (label != null) DrawLabel((Vector2)midPoint, (Vector2)direction, label);
@@ -202,13 +238,13 @@ namespace YGDR.Editor.Animation
             if (stateTransitions.Count == 0) return null;
 
             if (stateTransitions.Any(x => !x.hasExitTime && (x.conditions == null || x.conditions.Length == 0)))
-                return "Invalid";
+                return L10n.Get("transition_overlay.invalid");
 
             if (stateTransitions.Count == 1 && stateTransitions[0].conditions?.Length == 1)
                 return FormatCondition(stateTransitions[0].conditions[0]);
 
             int total = stateTransitions.Sum(x => x.conditions?.Length ?? 0);
-            return $"{total} Conditions";
+            return L10n.Get("transition_overlay.n_conditions").Replace("{n}", total.ToString());
         }
 
         static readonly string[] GestureNames =
@@ -217,9 +253,9 @@ namespace YGDR.Editor.Animation
         };
 
         /* Returns a short human-readable string for a single condition (e.g. "Param > 0.5", "Flag = True"), truncating parameter names over 16 chars. */
-        static string FormatCondition(AnimatorCondition animatorCondition)
+        static string FormatCondition(AnimatorCondition animatorCondition, bool truncate = true)
         {
-            var parameterLabel = animatorCondition.parameter.Length > 16 ? animatorCondition.parameter[..16] + "…" : animatorCondition.parameter;
+            var parameterLabel = truncate && animatorCondition.parameter.Length > 16 ? animatorCondition.parameter[..16] + "…" : animatorCondition.parameter;
             return animatorCondition.mode switch
             {
                 AnimatorConditionMode.If       => $"{parameterLabel} = True",
@@ -268,6 +304,64 @@ namespace YGDR.Editor.Animation
             GUIUtility.RotateAroundPivot(angle, localMid);
             GUI.Label(new Rect(localMid.x - 75f, localMid.y + yOffset, 150f, 14f), text, AnimatorStyles.TransitionEdgeLabelStyle);
             GUI.matrix = matrix;
+            GUI.EndClip();
+        }
+
+        static void DrawExpandedConditionsBox(object info, Vector2 midPoint, Vector2 direction)
+        {
+            if (info == null) return;
+            _labelTransitionsField ??= AccessTools.Field(info.GetType(), "transitions");
+            var transitions = _labelTransitionsField?.GetValue(info) as System.Collections.IList;
+            if (transitions == null || transitions.Count == 0) return;
+
+            var conditionLines = new List<string>();
+            foreach (var transitionContext in transitions)
+            {
+                if (transitionContext == null) continue;
+                _labelTransitionContextField ??= AccessTools.Field(transitionContext.GetType(), "transition");
+                if (_labelTransitionContextField?.GetValue(transitionContext) is not AnimatorStateTransition stateTransition) continue;
+
+                if (!stateTransition.hasExitTime && (stateTransition.conditions == null || stateTransition.conditions.Length == 0))
+                {
+                    conditionLines.Add(L10n.Get("transition_overlay.invalid"));
+                    continue;
+                }
+                if (stateTransition.conditions != null)
+                {
+                    foreach (var condition in stateTransition.conditions)
+                        conditionLines.Add(FormatCondition(condition, truncate: false));
+                }
+            }
+
+            if (conditionLines.Count == 0) return;
+
+            const float boxWidth   = 200f;
+            const float lineHeight = 16f;
+            const float padding    = 5f;
+            float boxHeight = conditionLines.Count * lineHeight + padding * 2f;
+            bool isSelfTransition = direction.sqrMagnitude < 0.001f;
+            float yOffset = isSelfTransition ? 60f : -(boxHeight + 14f);
+
+            if (_getVisibleRect == null)
+            {
+                var guiClipType = typeof(GUI).Assembly.GetType("UnityEngine.GUIClip");
+                var prop = guiClipType?.GetProperty("visibleRect",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                _getVisibleRect = prop != null
+                    ? (Func<Rect>)Delegate.CreateDelegate(typeof(Func<Rect>), prop.GetGetMethod(nonPublic: true))
+                    : static () => new Rect(0, 0, 9999, 9999);
+            }
+            var clipRect = _getVisibleRect();
+            var localMid = midPoint - clipRect.position;
+            var boxRect  = new Rect(localMid.x - boxWidth * 0.5f, localMid.y + yOffset, boxWidth, boxHeight);
+
+            GUI.BeginClip(clipRect);
+            EditorGUI.DrawRect(boxRect, new Color(0.1f, 0.1f, 0.1f, 0.85f));
+            for (int i = 0; i < conditionLines.Count; i++)
+            {
+                var lineRect = new Rect(boxRect.x + padding, boxRect.y + padding + i * lineHeight, boxWidth - padding * 2f, lineHeight);
+                GUI.Label(lineRect, conditionLines[i], AnimatorStyles.TransitionEdgeLabelStyle);
+            }
             GUI.EndClip();
         }
 
@@ -322,6 +416,22 @@ namespace YGDR.Editor.Animation
         {
             if (__exception != null)
                 Debug.LogError($"[AnimatorTools] Exception in DrawEdge — disable conflicting feature in Compatibility settings: {__exception.Message}");
+            return null;
+        }
+
+        static Color? GetTagColorFromInfo(object info, AnimatorDefaultSettings settings)
+        {
+            if (info == null || settings.colorTags.Count == 0) return null;
+            _labelTransitionsField ??= AccessTools.Field(info.GetType(), "transitions");
+            var transitions = _labelTransitionsField?.GetValue(info) as System.Collections.IList;
+            if (transitions == null || transitions.Count == 0) return null;
+            foreach (var transitionContext in transitions)
+            {
+                if (transitionContext == null) continue;
+                _labelTransitionContextField ??= AccessTools.Field(transitionContext.GetType(), "transition");
+                if (_labelTransitionContextField?.GetValue(transitionContext) is AnimatorStateTransition stateTransition)
+                    return AnimatorDefaultSettings.GetTagColor(stateTransition.name, settings);
+            }
             return null;
         }
     }
@@ -392,6 +502,7 @@ namespace YGDR.Editor.Animation
             bool anyArrowInvalid  = false;
             bool allArrowInstant = true;
             bool hasStateTransition = false;
+            string firstTagName = null;
 
             foreach (var transitionContext in transitions)
             {
@@ -402,6 +513,7 @@ namespace YGDR.Editor.Animation
                 if (transitionField?.GetValue(transitionContext) is not AnimatorStateTransition stateTransition) continue;
 
                 hasStateTransition = true;
+                firstTagName ??= stateTransition.name;
                 bool hasConditions = stateTransition.conditions != null && stateTransition.conditions.Length > 0;
                 bool isValid = stateTransition.hasExitTime || hasConditions;
                 if (!isValid) anyArrowInvalid = true;
@@ -411,7 +523,7 @@ namespace YGDR.Editor.Animation
             if (!hasStateTransition) return null;
             if (anyArrowInvalid) return settings.transitionArrowNoConditionColor;
             if (allArrowInstant) return settings.transitionArrowInstantColor;
-            return settings.transitionOverlayArrowColor;
+            return AnimatorDefaultSettings.GetTagColor(firstTagName, settings) ?? settings.transitionOverlayArrowColor;
         }
     }
 }

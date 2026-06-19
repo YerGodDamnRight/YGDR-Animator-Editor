@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -236,7 +255,7 @@ namespace YGDR.Editor.Animation
             }
 
             // Ctrl+C — copy all selected
-            if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.keyCode == KeyCode.C
+            if (AnimatorDefaultSettings.Load().kbCopy.Matches(currentEvent)
                 && FrameRenderer.SelectedFrames.Count > 0)
             {
                 _copiedFrames.Clear();
@@ -246,7 +265,7 @@ namespace YGDR.Editor.Animation
             }
 
             // Ctrl+V — paste all copied, offset so top-left corner of group lands at cursor
-            if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.keyCode == KeyCode.V
+            if (AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent)
                 && _copiedFrames.Count > 0)
             {
                 float minX = _copiedFrames.Min(frame => frame.bounds.x);
@@ -282,7 +301,7 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
-            // F2 — rename selected frame title
+            // Rename — rename selected frame title
             if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F2
                 && FrameRenderer.SingleSelected != null && !FrameRenderer.SingleSelected.locked)
             {
@@ -294,7 +313,7 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
-            // F3 — edit comments on selected frame
+            // Edit comments on selected frame
             if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F3
                 && FrameRenderer.SingleSelected != null && !FrameRenderer.SingleSelected.locked)
             {
@@ -361,6 +380,7 @@ namespace YGDR.Editor.Animation
 
             if (currentEvent.type != EventType.MouseDown) return;
 
+            PatchLayerListFocusHighlight._layerPanelActive = false;
             var mousePosition = currentEvent.mousePosition;
             bool isShift = currentEvent.shift;
 
@@ -686,6 +706,8 @@ namespace YGDR.Editor.Animation
                 newBounds.yMin = Mathf.Round(newBounds.yMin / 10f) * 10f;
                 newBounds.xMax = Mathf.Round(newBounds.xMax / 10f) * 10f;
                 newBounds.yMax = Mathf.Round(newBounds.yMax / 10f) * 10f;
+                if (newBounds.width  < 110f) newBounds.xMax = newBounds.xMin + 110f;
+                if (newBounds.height < 70f) newBounds.yMax = newBounds.yMin + 70f;
                 frame.bounds = newBounds;
             }
         }
@@ -712,18 +734,20 @@ namespace YGDR.Editor.Animation
             Vector3[] specialNodePositions = null)
         {
             var menu = new GenericMenu();
-            menu.AddItem(new GUIContent("Rename"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_rename")), false, () =>
             {
                 IsRenaming = true;
+                _renameJustStarted = true;
+                _renameFieldHadFocus = false;
                 RenameBuffer = frame.title;
             });
-            menu.AddItem(new GUIContent("Edit Comments"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_edit_comments")), false, () =>
             {
                 IsEditingComments = true;
                 CommentsTarget = frame;
                 CommentsBuffer = frame.comments ?? "";
             });
-            menu.AddItem(new GUIContent("Color"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_color")), false, () =>
             {
                 IsPickingColor = true;
                 ColorPickerTarget = frame;
@@ -734,10 +758,11 @@ namespace YGDR.Editor.Animation
                 .DefaultIfEmpty(-1)
                 .Max();
 
+            string zLayerPrefix = L10n.Get("context_menu.frame_zlayer");
             if (frame.zLayer > maxZLayerAmongOthers)
-                menu.AddDisabledItem(new GUIContent("Z-Layer/Move To Top"));
+                menu.AddDisabledItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_top")}"));
             else
-                menu.AddItem(new GUIContent("Z-Layer/Move To Top"), false, () =>
+                menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_top")}"), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer to Top");
                     frame.zLayer = maxZLayerAmongOthers + 1;
@@ -745,7 +770,7 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
 
-            menu.AddItem(new GUIContent("Z-Layer/Move Up"), false, () =>
+            menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_up")}"), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer Up");
                 frame.zLayer++;
@@ -754,7 +779,7 @@ namespace YGDR.Editor.Animation
             });
 
             if (frame.zLayer > 0)
-                menu.AddItem(new GUIContent("Z-Layer/Move Down"), false, () =>
+                menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_down")}"), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer Down");
                     frame.zLayer--;
@@ -762,10 +787,10 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
             else
-                menu.AddDisabledItem(new GUIContent("Z-Layer/Move Down"));
+                menu.AddDisabledItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_down")}"));
 
             if (frame.zLayer > 0)
-                menu.AddItem(new GUIContent("Z-Layer/Move To Bottom"), false, () =>
+                menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_bottom")}"), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer to Bottom");
                     frame.zLayer = 0;
@@ -773,7 +798,7 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
             else
-                menu.AddDisabledItem(new GUIContent("Z-Layer/Move To Bottom"));
+                menu.AddDisabledItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_bottom")}"));
 
             selectedStates ??= Array.Empty<AnimatorState>();
             selectedSubSMs ??= Array.Empty<AnimatorStateMachine>();
@@ -782,18 +807,18 @@ namespace YGDR.Editor.Animation
 
             if (hasNodeSelection)
             {
-                menu.AddItem(new GUIContent("Fit to Selected"), false, () =>
+                menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_fit_selected")), false, () =>
                     FitFrameToSelected(frame, frameData, selectedStates, selectedSubSMs, specialNodePositions));
             }
 
-            menu.AddItem(new GUIContent("Move Nodes with Frame"), frame.moveNodesWithFrame, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_move_nodes")), frame.moveNodesWithFrame, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Toggle Move Nodes with Frame");
                 frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
                 EditorUtility.SetDirty(frameData);
             });
 
-            menu.AddItem(new GUIContent(frame.locked ? "Unlock" : "Lock"), false, () =>
+            menu.AddItem(new GUIContent(frame.locked ? L10n.Get("context_menu.frame_unlock") : L10n.Get("context_menu.frame_lock")), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Toggle Frame Lock");
                 frame.locked = !frame.locked;
@@ -801,7 +826,9 @@ namespace YGDR.Editor.Animation
             });
 
             int selectedCount = FrameRenderer.SelectedFrames.Count;
-            string deleteLabel = selectedCount > 1 ? $"Delete ({selectedCount} frames)" : "Delete";
+            string deleteLabel = selectedCount > 1
+                ? string.Format(L10n.Get("context_menu.frame_delete_multi"), selectedCount)
+                : L10n.Get("context_menu.frame_delete");
             menu.AddItem(new GUIContent(deleteLabel), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Delete Frame");

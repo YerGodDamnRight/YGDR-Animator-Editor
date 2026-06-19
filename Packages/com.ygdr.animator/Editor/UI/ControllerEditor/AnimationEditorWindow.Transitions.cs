@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -21,7 +40,7 @@ namespace YGDR.Editor.Animation
                 EditorGUI.DrawRect(panelRect, Styles.PrimaryColor);
 
             if (count == 0)
-                EditorGUILayout.LabelField("Select a transition to edit", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("transitions.empty"), Styles.EmptyLabel);
             else
                 DrawTransitionTags();
 
@@ -35,20 +54,28 @@ namespace YGDR.Editor.Animation
 
         /* ── Transition Tags ─────────────────────────────────────────────── */
 
+        float _tagAreaCachedWidth;
+
         void DrawTransitionTags()
         {
             const float tagH = 20f;
             const float gap = 4f;
             float toggleW = Styles.k_pillW;
-            // SectionPadded has 12px padding on each side (24 total); subtract toggle button width for tag layout width
-            float tagDrawW = EditorGUIUtility.currentViewWidth - 24f - toggleW;
+            float tagDrawW = (_tagAreaCachedWidth > 0f ? _tagAreaCachedWidth : EditorGUIUtility.currentViewWidth - 24f) - toggleW;
             float totalH = CalcTransitionTagsHeight(tagDrawW, tagH, gap);
             float maxVisibleH = 4f * (tagH + gap);
             float displayH = _tagScrollEnabled ? Mathf.Min(totalH, maxVisibleH) : totalH;
 
             var area = EditorGUILayout.GetControlRect(false, displayH + gap);
             if (Event.current.type == EventType.Repaint)
+            {
                 EditorGUI.DrawRect(area, Styles.SecondaryColor);
+                if (!Mathf.Approximately(_tagAreaCachedWidth, area.width))
+                {
+                    _tagAreaCachedWidth = area.width;
+                    Repaint();
+                }
+            }
 
             var toggleRect = new Rect(area.xMax - toggleW, area.y, toggleW, area.height);
             _tagScrollEnabled = GUI.Toggle(toggleRect, _tagScrollEnabled, "", Styles.ScrollToggleBtn);
@@ -160,14 +187,14 @@ namespace YGDR.Editor.Animation
             /* Has Exit Time | Exit Time */
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Has Exit Time", GUILayout.Width(160));
+                EditorGUILayout.LabelField(L10n.Get("transitions.has_exit_time"), GUILayout.Width(160));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.hasExitTime != first.hasExitTime));
                 EditorGUI.BeginChangeCheck();
                 bool newHasExit = EditorGUILayout.Toggle(empty ? false : first.hasExitTime, GUILayout.Width(20));
                 if (EditorGUI.EndChangeCheck() && !empty) SetOnAll(transition => transition.hasExitTime = newHasExit);
                 EditorGUI.showMixedValue = false;
                 GUILayout.FlexibleSpace();
-                EditorGUILayout.LabelField("Exit Time", GUILayout.Width(120));
+                EditorGUILayout.LabelField(L10n.Get("transitions.exit_time"), GUILayout.Width(120));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.exitTime, first.exitTime)));
                 EditorGUI.BeginChangeCheck();
                 float newExitTime = EditorGUILayout.FloatField(empty ? 0f : first.exitTime);
@@ -178,14 +205,14 @@ namespace YGDR.Editor.Animation
             /* Has Fixed Duration | Transition Duration */
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Has Fixed Duration", GUILayout.Width(160));
+                EditorGUILayout.LabelField(L10n.Get("transitions.has_fixed_duration"), GUILayout.Width(160));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.hasFixedDuration != first.hasFixedDuration));
                 EditorGUI.BeginChangeCheck();
                 bool newFixed = EditorGUILayout.Toggle(empty ? false : first.hasFixedDuration, GUILayout.Width(20));
                 if (EditorGUI.EndChangeCheck() && !empty) SetOnAll(transition => transition.hasFixedDuration = newFixed);
                 EditorGUI.showMixedValue = false;
                 GUILayout.FlexibleSpace();
-                EditorGUILayout.LabelField("Transition Duration", GUILayout.Width(120));
+                EditorGUILayout.LabelField(L10n.Get("transitions.duration"), GUILayout.Width(120));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.duration, first.duration)));
                 EditorGUI.BeginChangeCheck();
                 float newDuration = EditorGUILayout.FloatField(empty ? 0f : first.duration);
@@ -196,7 +223,7 @@ namespace YGDR.Editor.Animation
             /* Transition Offset */
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Transition Offset", GUILayout.Width(160));
+                EditorGUILayout.LabelField(L10n.Get("transitions.offset"), GUILayout.Width(160));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.offset, first.offset)));
                 EditorGUI.BeginChangeCheck();
                 float newOffset = EditorGUILayout.FloatField(empty ? 0f : first.offset);
@@ -207,10 +234,12 @@ namespace YGDR.Editor.Animation
             /* Interruption Source */
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Interruption Source", GUILayout.Width(160));
+                EditorGUILayout.LabelField(L10n.Get("transitions.interruption_source"), GUILayout.Width(160));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.interruptionSource != first.interruptionSource));
                 EditorGUI.BeginChangeCheck();
-                var newInterruptionSource = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(empty ? default : first.interruptionSource);
+                var newInterruptionSource = (TransitionInterruptionSource)EditorGUILayout.Popup(
+                    (int)(empty ? default : first.interruptionSource),
+                    new[] { L10n.Get("transitions.interruption.none"), L10n.Get("transitions.interruption.source"), L10n.Get("transitions.interruption.destination"), L10n.Get("transitions.interruption.source_then_destination"), L10n.Get("transitions.interruption.destination_then_source") });
                 if (EditorGUI.EndChangeCheck() && !empty) SetOnAll(transition => transition.interruptionSource = newInterruptionSource);
                 EditorGUI.showMixedValue = false;
             }
@@ -218,14 +247,14 @@ namespace YGDR.Editor.Animation
             /* Ordered Interruption | Mute */
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Ordered Interruption", GUILayout.Width(160));
+                EditorGUILayout.LabelField(L10n.Get("transitions.ordered_interruption"), GUILayout.Width(160));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.orderedInterruption != first.orderedInterruption));
                 EditorGUI.BeginChangeCheck();
                 bool newOrdered = EditorGUILayout.Toggle(empty ? false : first.orderedInterruption, GUILayout.Width(20));
                 if (EditorGUI.EndChangeCheck() && !empty) SetOnAll(transition => transition.orderedInterruption = newOrdered);
                 EditorGUI.showMixedValue = false;
                 GUILayout.FlexibleSpace();
-                EditorGUILayout.LabelField("Mute", GUILayout.Width(80));
+                EditorGUILayout.LabelField(L10n.Get("transitions.mute"), GUILayout.Width(80));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.mute != first.mute));
                 EditorGUI.BeginChangeCheck();
                 bool newMute = EditorGUILayout.Toggle(empty ? false : first.mute, GUILayout.Width(20));
@@ -236,14 +265,14 @@ namespace YGDR.Editor.Animation
             /* Can Transition To Self | Solo */
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Can Transition To Self", GUILayout.Width(160));
+                EditorGUILayout.LabelField(L10n.Get("transitions.can_transition_to_self"), GUILayout.Width(160));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.canTransitionToSelf != first.canTransitionToSelf));
                 EditorGUI.BeginChangeCheck();
                 bool newSelf = EditorGUILayout.Toggle(empty ? false : first.canTransitionToSelf, GUILayout.Width(20));
                 if (EditorGUI.EndChangeCheck() && !empty) SetOnAll(transition => transition.canTransitionToSelf = newSelf);
                 EditorGUI.showMixedValue = false;
                 GUILayout.FlexibleSpace();
-                EditorGUILayout.LabelField("Solo", GUILayout.Width(80));
+                EditorGUILayout.LabelField(L10n.Get("transitions.solo"), GUILayout.Width(80));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.solo != first.solo));
                 EditorGUI.BeginChangeCheck();
                 bool newSolo = EditorGUILayout.Toggle(empty ? false : first.solo, GUILayout.Width(20));
@@ -260,6 +289,7 @@ namespace YGDR.Editor.Animation
         List<CondEntry> _cachedEntries;
         HashSet<(AnimatorStateTransition, string)> _cachedDuplicateParameters;
         string[] _cachedParameterNames;
+        HashSet<string> _cachedParamNameSet;
         Dictionary<string, string> _danglingParamResolution;
 
         /* Returns true if the cached transition array matches the current selection — used to skip condition rebuilds. */
@@ -271,7 +301,7 @@ namespace YGDR.Editor.Animation
             return true;
         }
 
-        void InvalidateConditionCache() => _conditionCacheDirty = true;
+        void InvalidateConditionCache() { _conditionCacheDirty = true; _paramCachedController = null; _cachedParamNameSet = null; }
 
         bool ParameterListChanged()
         {
@@ -314,16 +344,17 @@ namespace YGDR.Editor.Animation
             if (Event.current.type == EventType.Repaint)
                 EditorStyles.toolbar.Draw(headerRect, GUIContent.none, false, false, false, false);
 
-            string modeLabel = _showSharedConditions ? "Shared Conditions" : "All Conditions";
-            if (CursorBtn(new Rect(headerRect.x, headerRect.y, parameterColumnWidth, headerRect.height), new GUIContent("  " + modeLabel, "Toggle All / Shared conditions"), Styles.CondModeBtn))
+            string modeLabel = _showSharedConditions ? L10n.Get("transitions.shared_conditions") : L10n.Get("transitions.all_conditions");
+            if (CursorBtn(new Rect(headerRect.x, headerRect.y, parameterColumnWidth, headerRect.height), new GUIContent("  " + modeLabel, L10n.Get("transitions.tooltip.toggle_conditions")), Styles.CondModeBtn))
                 _showSharedConditions = !_showSharedConditions;
 
             float rightColumnX = headerRect.x + parameterColumnWidth;
-            if (CursorBtn(new Rect(rightColumnX,                                       headerRect.y, modeColumnWidth,  headerRect.height), new GUIContent("⇄", "Switch condition modes"), Styles.CondSwitchBtn)) ReverseAllConditions();
-            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth,                     headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("M", "Merge transitions"),        Styles.IconBtn)) MergeTransitions();
-            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth + splitColumnWidth,  headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("S", "Separate transitions"),      Styles.IconBtn)) SeparateTransitions();
+            if (CursorBtn(new Rect(rightColumnX,                                       headerRect.y, modeColumnWidth,  headerRect.height), new GUIContent("⇄", L10n.Get("transitions.tooltip.switch_modes")),  Styles.CondSwitchBtn)) ReverseAllConditions();
+            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth,                     headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("M", L10n.Get("transitions.tooltip.merge")),           Styles.IconBtn)) MergeTransitions();
+            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth + splitColumnWidth,  headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("S", L10n.Get("transitions.tooltip.separate")),        Styles.IconBtn)) SeparateTransitions();
 
             /* Padded + colored body — rows and add button only */
+            GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
             var bodyRect = EditorGUILayout.BeginVertical(Styles.CondBody, GUILayout.ExpandWidth(true));
             if (Event.current.type == EventType.Repaint && bodyRect.height > 0)
                 EditorGUI.DrawRect(bodyRect, Styles.SecondaryColor);
@@ -339,13 +370,14 @@ namespace YGDR.Editor.Animation
                 _cachedForSharedMode = _showSharedConditions;
                 _danglingParamResolution = BuildDanglingResolution();
                 _cachedParameterNames = _controller?.parameters.Select(parameter => parameter.name).ToArray() ?? Array.Empty<string>();
+                _cachedParamNameSet   = new HashSet<string>(_cachedParameterNames);
                 _conditionCacheDirty = false;
             }
             var entries = _cachedEntries;
             var duplicateParameters = _cachedDuplicateParameters;
 
             if (entries.Count == 0)
-                EditorGUILayout.LabelField("List is Empty", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("transitions.conditions_empty"), Styles.EmptyLabel);
             else
             {
                 int groupIndex = 0;
@@ -356,6 +388,7 @@ namespace YGDR.Editor.Animation
                         GUILayout.Space(6f);
                         groupIndex++;
                     }
+                    if (entries[i].owner == null) continue;
                     bool altRow = _showSharedConditions ? i % 2 == 1 : groupIndex % 2 == 1;
                     DrawConditionRow(i, entries[i], duplicateParameters, altRow);
                 }
@@ -449,10 +482,11 @@ namespace YGDR.Editor.Animation
             if (_danglingParamResolution != null && _danglingParamResolution.TryGetValue(condition.parameter, out string resolvedParam))
                 condition = new AnimatorCondition { parameter = resolvedParam, mode = condition.mode, threshold = condition.threshold };
 
-            const float stripeWidth = 7f;
+            const float stripeWidth   = 7f;
+            const float leftOverhang  = 6f;
             if (Event.current.type == EventType.Repaint)
-                EditorGUI.DrawRect(new Rect(row.x, row.y, stripeWidth, row.height),
-                    altRow ? Styles.AccentColor : Styles.SecondaryColor);
+                EditorGUI.DrawRect(new Rect(row.x - leftOverhang, row.y, stripeWidth + leftOverhang, row.height),
+                    altRow ? Styles.RowAltColor : Styles.SecondaryColor);
 
             float contentWidth          = row.width - stripeWidth;
             float parameterColumnWidth  = contentWidth * 0.5f;
@@ -473,7 +507,7 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
-            bool parameterExists = _controller.parameters.Any(x => x.name == condition.parameter);
+            bool parameterExists = _cachedParamNameSet?.Contains(condition.parameter) ?? false;
             if (!parameterExists)
             {
                 var previousColor = GUI.color;
@@ -508,18 +542,20 @@ namespace YGDR.Editor.Animation
 
             if (duplicateParameters.Contains((entry.owner, condition.parameter)))
             {
-                var duplicateIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.erroricon").image, "Transition contains a duplicate parameter");
+                var duplicateIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.erroricon").image, L10n.Get("transitions.duplicate_param_tooltip"));
                 var duplicateIconRect = new Rect(parameterRect.xMax - 40, parameterRect.y, 16, parameterRect.height);
                 GUI.Label(duplicateIconRect, duplicateIconContent);
             }
 
             var parameterType = GetParamType(condition.parameter);
+            if (Event.current.type == EventType.Repaint && AnimatorDefaultSettings.Load().showParamTypeIcons)
+                GUI.Label(parameterRect, parameterType.ToString(), Styles.MiniLabelRight);
 
             if (parameterType == AnimatorControllerParameterType.Bool)
             {
                 bool isTrue = condition.mode != AnimatorConditionMode.IfNot;
                 var boolButtonRect = new Rect(conditionModeRect.x, conditionModeRect.y, conditionModeRect.width + valueColumnWidth, conditionModeRect.height);
-                if (CursorBtn(boolButtonRect, isTrue ? "True" : "False", isTrue ? Styles.BoolBtnTrue : Styles.BoolBtnFalse))
+                if (CursorBtn(boolButtonRect, isTrue ? L10n.Get("transitions.bool_true") : L10n.Get("transitions.bool_false"), isTrue ? Styles.BoolBtnTrue : Styles.BoolBtnFalse))
                     ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = isTrue ? AnimatorConditionMode.IfNot : AnimatorConditionMode.If, threshold = 0f });
             }
             else if (parameterType != AnimatorControllerParameterType.Trigger)
@@ -584,12 +620,12 @@ namespace YGDR.Editor.Animation
 
         static string ModeLabel(AnimatorConditionMode mode) => mode switch
         {
-            AnimatorConditionMode.If       => "True",
-            AnimatorConditionMode.IfNot    => "False",
-            AnimatorConditionMode.Equals   => "Equals",
-            AnimatorConditionMode.NotEqual => "Not Equal",
-            AnimatorConditionMode.Greater  => "Greater",
-            AnimatorConditionMode.Less     => "Less",
+            AnimatorConditionMode.If       => L10n.Get("transitions.mode_true"),
+            AnimatorConditionMode.IfNot    => L10n.Get("transitions.mode_false"),
+            AnimatorConditionMode.Equals   => L10n.Get("transitions.mode_equals"),
+            AnimatorConditionMode.NotEqual => L10n.Get("transitions.mode_not_equal"),
+            AnimatorConditionMode.Greater  => L10n.Get("transitions.mode_greater"),
+            AnimatorConditionMode.Less     => L10n.Get("transitions.mode_less"),
             _                             => mode.ToString()
         };
 
@@ -762,6 +798,7 @@ namespace YGDR.Editor.Animation
             }
 
             EditorUtility.SetDirty(controller);
+            InvalidateConditionCache();
         }
 
         /* Splits each selected transition that has multiple conditions into one transition per condition, copying all non-condition settings to each new transition. */

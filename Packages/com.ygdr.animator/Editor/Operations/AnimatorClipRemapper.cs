@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System.Collections.Generic;
 using System.Linq;
@@ -289,6 +308,29 @@ namespace YGDR.Editor.Animation
                     stack.Push(child);
             }
             return validPaths;
+        }
+
+        internal static void RemapAapParameter(AnimatorController controller, string fromParamName, string toParamName)
+        {
+            foreach (var clip in CollectAllClips(controller))
+                RemapAapInClip(clip, fromParamName, toParamName);
+        }
+
+        static void RemapAapInClip(AnimationClip clip, string fromParamName, string toParamName)
+        {
+            bool modified = false;
+            foreach (var binding in AnimationUtility.GetCurveBindings(clip))
+            {
+                if (binding.type != typeof(Animator) || binding.propertyName != fromParamName) continue;
+                if (!modified) { Undo.RecordObject(clip, "Remap Parameter"); modified = true; }
+                var curve = AnimationUtility.GetEditorCurve(clip, binding);
+                AnimationUtility.SetEditorCurve(clip, binding, null);
+                var newBinding = binding;
+                newBinding.propertyName = toParamName;
+                AnimationUtility.SetEditorCurve(clip, newBinding, curve);
+            }
+            if (modified)
+                EditorUtility.SetDirty(clip);
         }
 
         internal static AnimationClip[] CollectAllClips(AnimatorController controller) =>

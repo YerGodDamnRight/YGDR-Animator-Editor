@@ -1,5 +1,25 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
+using System.Linq;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
@@ -67,9 +87,6 @@ namespace YGDR.Editor.Animation
 
             EditorApplication.update -= DoPatches;
 
-            // Core patches always enabled — no conflict risk, no toggle
-            FeatureHarmony.PatchCore();
-
             Selection.selectionChanged -= OnAnalysisSelectionChanged;
             Selection.selectionChanged += OnAnalysisSelectionChanged;
 
@@ -85,8 +102,8 @@ namespace YGDR.Editor.Animation
             FeatureHarmony.WarnIfConflict(GraphPatchReflection.DoEdgesMethod, "GraphInteraction (DoEdges)");
             FeatureHarmony.WarnIfConflict(GraphPatchReflection.DrawEdgeMethod, "TransitionOverlay (DrawEdge)");
 
-            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
             PatchNodeStyles.HandleTextures();
+            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
             EditorApplication.update -= TextureWatchdog;
             EditorApplication.update += TextureWatchdog;
 
@@ -114,15 +131,13 @@ namespace YGDR.Editor.Animation
                 AnimatorGraphAnalyzer.SuppressNextSelectionClear = false;
                 return;
             }
-            if (AnimatorGraphAnalyzer.HighlightedStates.Count == 0
-                && AnimatorGraphAnalyzer.HighlightedTransitions.Count == 0
-                && AnimatorGraphAnalyzer.HighlightedSubStateMachines.Count == 0) return;
+            if (!AnimatorGraphAnalyzer.HasResults) return;
             AnimatorGraphAnalyzer.ClearResults();
-            EditorWindow.GetWindow(AnimatorControllerToolType)?.Repaint();
+            (Resources.FindObjectsOfTypeAll(AnimatorControllerToolType).FirstOrDefault() as EditorWindow)?.Repaint();
         }
 
         // Layer 3: emergency recovery — reverts all IL in place if the Animator window is frozen
-        [MenuItem("YGDR/Emergency: Unpatch All Features")]
+        [MenuItem("YGDR/Animator Editor/Emergency: Unpatch All")]
         static void EmergencyUnpatch()
         {
             FeatureHarmony.UnpatchAll();

@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Linq;
@@ -198,6 +217,51 @@ namespace YGDR.Editor.Animation
                 Event.current.Use();
             }
             catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchParameterF2Rename: {e}"); }
+        }
+    }
+    // Bug: layer selection shows grey highlight instead of focused-blue.
+    // Root cause: ReorderableList.HasKeyboardControl() unreliable in sub-panels —
+    // GUIUtility.keyboardControl is not maintained across sub-view repaints.
+    // Fix: override drawElementBackgroundCallback to treat selected as focused.
+    [HarmonyPatch]
+    internal static class PatchLayerListFocusHighlight
+    {
+        static UnityEditorInternal.ReorderableList _lastHookedList;
+        internal static bool _layerPanelActive;
+
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() =>
+            AccessTools.Method(WindowPatchReflection.LayerControllerViewType, "OnGUI", new[] { typeof(Rect) })
+            ?? AccessTools.Method(WindowPatchReflection.LayerControllerViewType, "OnGUI");
+
+        [HarmonyPrefix]
+        static void Prefix(object __instance)
+        {
+            try
+            {
+                var eventType = Event.current.type;
+                if (eventType == EventType.MouseDown)
+                    _layerPanelActive = true;
+                else if (eventType != EventType.KeyDown || !_layerPanelActive) return;
+                var reorderableList = WindowPatchReflection.LayerListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
+                if (reorderableList == null || reorderableList.index < 0) return;
+                reorderableList.GrabKeyboardFocus();
+            }
+            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchLayerListFocusHighlight.Prefix: {e}"); }
+        }
+
+        [HarmonyPostfix]
+        static void Postfix(object __instance)
+        {
+            try
+            {
+                var reorderableList = WindowPatchReflection.LayerListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
+                if (reorderableList == null || reorderableList == _lastHookedList) return;
+                reorderableList.drawElementBackgroundCallback = (rect, index, isActive, isFocused) =>
+                    UnityEditorInternal.ReorderableList.defaultBehaviours.DrawElementBackground(rect, index, isActive, isActive && _layerPanelActive, false);
+                _lastHookedList = reorderableList;
+            }
+            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchLayerListFocusHighlight.Postfix: {e}"); }
         }
     }
 }

@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System.Linq;
 using UnityEditor;
@@ -16,6 +35,8 @@ namespace YGDR.Editor.Animation
         bool _transitionDefaultsOpen;
         bool _stateDefaultsOpen;
         bool _miscOpen;
+        bool _keybindsOpen;
+        string _recordingActionId;
 
         void DrawSettingsTab()
         {
@@ -34,6 +55,8 @@ namespace YGDR.Editor.Animation
             EditorGUILayout.Space(4);
             DrawStateDefaultsSection(settings);
             EditorGUILayout.Space(4);
+            DrawKeybindsSection(settings);
+            EditorGUILayout.Space(4);
             DrawMiscellaneousSection(settings);
         }
 
@@ -43,10 +66,10 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_interfaceOpen ? "▼ " : "▶ ") + "Interface", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_interfaceOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.interface"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _interfaceOpen = !_interfaceOpen;
                 GUILayout.FlexibleSpace();
-                if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48), GUILayout.Height(24)))
+                if (DrawResetBtn(24f))
                 {
                     settings.ResetPalette();
                     Styles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
@@ -59,26 +82,39 @@ namespace YGDR.Editor.Animation
             var bodyRect = EditorGUILayout.BeginVertical(Styles.SectionPadded);
             if (Event.current.type == EventType.Repaint)
                 EditorGUI.DrawRect(bodyRect, Styles.PrimaryColor);
+            EditorGUILayout.LabelField(L10n.Get("settings.localization_label"), EditorStyles.boldLabel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(L10n.Get("settings.language"), GUILayout.Width(150));
+                EditorGUI.BeginChangeCheck();
+                int newLanguageIndex = EditorGUILayout.Popup(L10n.LanguageIndex, L10n.SupportedLanguageLabels);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    L10n.LanguageIndex = newLanguageIndex;
+                    UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                }
+            }
+            EditorGUILayout.Space(6);
             float lineHeight = EditorGUIUtility.singleLineHeight;
             var ifRow1Rect = EditorGUILayout.GetControlRect(false, lineHeight);
             var ifRow2Rect = EditorGUILayout.GetControlRect(false, lineHeight);
             float ifColWidth = ifRow1Rect.width / 4f;
 
-            DrawOverlayToggle(new Rect(ifRow1Rect.x + 0 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), "Layer Indicators", ref settings.showLayerWDIndicator, settings);
-            DrawOverlayToggle(new Rect(ifRow1Rect.x + 1 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), "Type Icons",       ref settings.showParamTypeIcons,   settings);
-            DrawOverlayToggle(new Rect(ifRow1Rect.x + 2 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), "VRC Icons",        ref settings.showParamVrcIcons,    settings);
-            DrawOverlayToggle(new Rect(ifRow1Rect.x + 3 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), "AAP Icons",        ref settings.showParamAapIcons,    settings);
+            DrawOverlayToggle(new Rect(ifRow1Rect.x + 0 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), L10n.Get("settings.layer_indicators"), ref settings.showLayerWDIndicator,       settings);
+            DrawOverlayToggle(new Rect(ifRow1Rect.x + 1 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), L10n.Get("settings.type_icons"),        ref settings.showParamTypeIcons,         settings);
+            DrawOverlayToggle(new Rect(ifRow1Rect.x + 2 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), L10n.Get("settings.vrc_icons"),         ref settings.showParamVrcIcons,          settings);
+            DrawOverlayToggle(new Rect(ifRow1Rect.x + 3 * ifColWidth, ifRow1Rect.y, ifColWidth, lineHeight), L10n.Get("settings.aap_icons"),         ref settings.showParamAapIcons,          settings);
 
-            DrawOverlayToggle(new Rect(ifRow2Rect.x + 0 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), "Graph Footer",     ref settings.showGraphFooter,            settings);
-            DrawOverlayToggle(new Rect(ifRow2Rect.x + 1 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), "VRC Comp Icons",  ref settings.showParamVrcComponentIcons, settings);
-            DrawOverlayToggle(new Rect(ifRow2Rect.x + 2 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), "Param Budget",    ref settings.showParamBudget,            settings);
-            DrawOverlayToggle(new Rect(ifRow2Rect.x + 3 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), "Empty Params",    ref settings.showParamUnusedIcon,        settings);
+            DrawOverlayToggle(new Rect(ifRow2Rect.x + 0 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), L10n.Get("settings.graph_footer"),      ref settings.showGraphFooter,            settings);
+            DrawOverlayToggle(new Rect(ifRow2Rect.x + 1 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), L10n.Get("settings.vrc_comp_icons"),    ref settings.showParamVrcComponentIcons, settings);
+            DrawOverlayToggle(new Rect(ifRow2Rect.x + 2 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), L10n.Get("settings.param_budget"),      ref settings.showParamBudget,            settings);
+            DrawOverlayToggle(new Rect(ifRow2Rect.x + 3 * ifColWidth, ifRow2Rect.y, ifColWidth, lineHeight), L10n.Get("settings.empty_params"),      ref settings.showParamUnusedIcon,        settings);
             EditorGUILayout.Space(6);
-            DrawPaletteColorRow("Primary",   ref settings.paletteColorPrimary,   AnimatorDefaultSettings.DefaultPrimary,   settings);
-            DrawPaletteColorRow("Secondary", ref settings.paletteColorSecondary, AnimatorDefaultSettings.DefaultSecondary, settings);
-            DrawPaletteColorRow("Accent",    ref settings.paletteColorAccent,    AnimatorDefaultSettings.DefaultAccent,    settings);
+            DrawPaletteColorRow(L10n.Get("settings.palette.primary"),   ref settings.paletteColorPrimary,   AnimatorDefaultSettings.DefaultPrimary,   settings);
+            DrawPaletteColorRow(L10n.Get("settings.palette.secondary"), ref settings.paletteColorSecondary, AnimatorDefaultSettings.DefaultSecondary, settings);
+            DrawPaletteColorRow(L10n.Get("settings.palette.accent"),    ref settings.paletteColorAccent,    AnimatorDefaultSettings.DefaultAccent,    settings);
             EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField("Parameter Type / VRC Icon Colors", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L10n.Get("settings.palette.param_type_vrc_colors"), EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(!settings.showParamTypeIcons))
             {
                 DrawNodeColorRow("Float",   ref settings.paramColorFloat,   new Color(0.35f, 0.75f, 0.35f, 1f), settings);
@@ -88,11 +124,11 @@ namespace YGDR.Editor.Animation
             }
             using (new EditorGUI.DisabledScope(!settings.showParamVrcIcons))
             {
-                DrawNodeColorRow("VRC Label", ref settings.paramColorVrcLabel, Color.cyan, settings);
+                DrawNodeColorRow(L10n.Get("settings.palette.vrc_label"), ref settings.paramColorVrcLabel, Color.cyan, settings);
             }
             EditorGUILayout.Space(6);
-            EditorGUILayout.LabelField("Graph Analysis", EditorStyles.boldLabel);
-            DrawNodeColorRow("Analysis Highlight", ref settings.analysisHighlightColor, Color.red, settings);
+            EditorGUILayout.LabelField(L10n.Get("settings.palette.graph_analysis"), EditorStyles.boldLabel);
+            DrawNodeColorRow(L10n.Get("settings.palette.analysis_highlight"), ref settings.analysisHighlightColor, Color.red, settings);
             EditorGUILayout.EndVertical();
         }
 
@@ -100,7 +136,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(label, GUILayout.Width(110));
+                EditorGUILayout.LabelField(label, GUILayout.Width(150));
                 EditorGUI.BeginChangeCheck();
                 var newColor = EditorGUILayout.ColorField(GUIContent.none, color, true, false, false);
                 if (EditorGUI.EndChangeCheck())
@@ -109,7 +145,7 @@ namespace YGDR.Editor.Animation
                     Styles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
                     settings.Save();
                 }
-                if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48)))
+                if (DrawResetBtn())
                 {
                     color = defaultColor;
                     Styles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
@@ -133,17 +169,17 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_graphGridOpen ? "▼ " : "▶ ") + "Graph Background", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_graphGridOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.graph_background"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _graphGridOpen = !_graphGridOpen;
                 GUILayout.FlexibleSpace();
                 EditorGUI.BeginChangeCheck();
-                bool enabled = EditorGUILayout.ToggleLeft("Enable", settings.graphGridOverride, GUILayout.Width(70));
+                bool enabled = EditorGUILayout.ToggleLeft(L10n.Get("settings.enable"), settings.graphGridOverride, GUILayout.Width(70));
                 if (EditorGUI.EndChangeCheck())
                 {
                     settings.graphGridOverride = enabled;
                     settings.Save();
                 }
-                if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48), GUILayout.Height(24)))
+                if (DrawResetBtn(24f))
                 {
                     settings.ResetGraphGrid();
                     settings.Save();
@@ -159,12 +195,12 @@ namespace YGDR.Editor.Animation
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Background", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("settings.bg.background"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
-                    bool useImage = EditorGUILayout.ToggleLeft("Color", !settings.graphGridUseImage, GUILayout.Width(55));
+                    bool useImage = EditorGUILayout.ToggleLeft(L10n.Get("settings.bg.color"), !settings.graphGridUseImage, GUILayout.Width(55));
                     if (EditorGUI.EndChangeCheck() && useImage) { settings.graphGridUseImage = false; settings.Save(); }
                     EditorGUI.BeginChangeCheck();
-                    bool imageSelected = EditorGUILayout.ToggleLeft("Image", settings.graphGridUseImage, GUILayout.Width(55));
+                    bool imageSelected = EditorGUILayout.ToggleLeft(L10n.Get("settings.bg.image"), settings.graphGridUseImage, GUILayout.Width(55));
                     if (EditorGUI.EndChangeCheck() && imageSelected) { settings.graphGridUseImage = true; settings.Save(); }
 
                     if (!settings.graphGridUseImage)
@@ -172,7 +208,7 @@ namespace YGDR.Editor.Animation
                         EditorGUI.BeginChangeCheck();
                         var newColor = EditorGUILayout.ColorField(GUIContent.none, settings.graphGridBackgroundColor, true, false, false);
                         if (EditorGUI.EndChangeCheck()) { settings.graphGridBackgroundColor = newColor; settings.Save(); }
-                        if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48)))
+                        if (DrawResetBtn())
                         {
                             settings.graphGridBackgroundColor = new Color(0.18f, 0.18f, 0.18f, 1f);
                             settings.Save();
@@ -191,7 +227,7 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Grid", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("settings.bg.grid"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     bool drawLines = EditorGUILayout.ToggleLeft("", settings.graphGridDrawLines, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.graphGridDrawLines = drawLines; settings.Save(); }
@@ -199,12 +235,12 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUI.DisabledScope(!settings.graphGridDrawLines))
                 {
-                    DrawGraphGridColorRow("Major Grid", ref settings.graphGridColorMajor, new Color(0.30f, 0.30f, 0.30f, 1f), settings);
-                    DrawGraphGridColorRow("Minor Grid", ref settings.graphGridColorMinor, new Color(0.22f, 0.22f, 0.22f, 1f), settings);
+                    DrawGraphGridColorRow(L10n.Get("settings.bg.major_grid"), ref settings.graphGridColorMajor, new Color(0.30f, 0.30f, 0.30f, 1f), settings);
+                    DrawGraphGridColorRow(L10n.Get("settings.bg.minor_grid"), ref settings.graphGridColorMinor, new Color(0.22f, 0.22f, 0.22f, 1f), settings);
 
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        EditorGUILayout.LabelField("Grid Scale", GUILayout.Width(110));
+                        EditorGUILayout.LabelField(L10n.Get("settings.bg.grid_scale"), GUILayout.Width(110));
                         EditorGUI.BeginChangeCheck();
                         float scale = EditorGUILayout.Slider(settings.graphGridScalingMajor, 1f, 3f);
                         if (EditorGUI.EndChangeCheck()) { settings.graphGridScalingMajor = scale; settings.Save(); }
@@ -212,7 +248,7 @@ namespace YGDR.Editor.Animation
 
                     using (new EditorGUILayout.HorizontalScope())
                     {
-                        EditorGUILayout.LabelField("Minor Divisions", GUILayout.Width(110));
+                        EditorGUILayout.LabelField(L10n.Get("settings.bg.minor_divisions"), GUILayout.Width(110));
                         EditorGUI.BeginChangeCheck();
                         int div = EditorGUILayout.IntSlider(settings.graphGridDivisorMinor, 2, 10);
                         if (EditorGUI.EndChangeCheck()) { settings.graphGridDivisorMinor = div; settings.Save(); }
@@ -235,7 +271,7 @@ namespace YGDR.Editor.Animation
                     color = newColor;
                     settings.Save();
                 }
-                if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48)))
+                if (DrawResetBtn())
                 {
                     color = defaultColor;
                     settings.Save();
@@ -249,11 +285,11 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_nodeIconsOpen ? "▼ " : "▶ ") + "Node Icons", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_nodeIconsOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.node_icons"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _nodeIconsOpen = !_nodeIconsOpen;
                 GUILayout.FlexibleSpace();
                 EditorGUI.BeginChangeCheck();
-                bool enabled = EditorGUILayout.ToggleLeft("Enable", settings.overlayEnabled, GUILayout.Width(70));
+                bool enabled = EditorGUILayout.ToggleLeft(L10n.Get("settings.enable"), settings.overlayEnabled, GUILayout.Width(70));
                 if (EditorGUI.EndChangeCheck()) { settings.overlayEnabled = enabled; settings.Save(); }
             }
 
@@ -269,18 +305,18 @@ namespace YGDR.Editor.Animation
                 var row2Rect = EditorGUILayout.GetControlRect(false, lineHeight);
                 float colWidth = row1Rect.width / 4f;
 
-                DrawOverlayToggle(new Rect(row1Rect.x + 0 * colWidth, row1Rect.y, colWidth, lineHeight), "! Empty",   ref settings.overlayShowEmpty,      settings);
-                DrawOverlayToggle(new Rect(row1Rect.x + 1 * colWidth, row1Rect.y, colWidth, lineHeight), "↻ Loop",    ref settings.overlayShowLoop,       settings);
-                DrawOverlayToggle(new Rect(row1Rect.x + 2 * colWidth, row1Rect.y, colWidth, lineHeight), "WD",        ref settings.overlayShowWD,         settings);
-                DrawOverlayToggle(new Rect(row1Rect.x + 3 * colWidth, row1Rect.y, colWidth, lineHeight), "Behaviors", ref settings.overlayShowB,          settings);
+                DrawOverlayToggle(new Rect(row1Rect.x + 0 * colWidth, row1Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.loop_empty"), ref settings.overlayShowLoopEmpty,  settings);
+                DrawOverlayToggle(new Rect(row1Rect.x + 1 * colWidth, row1Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.clip_time"), ref settings.overlayShowClipTime,   settings);
+                DrawOverlayToggle(new Rect(row1Rect.x + 2 * colWidth, row1Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.wd"),        ref settings.overlayShowWD,         settings);
+                DrawOverlayToggle(new Rect(row1Rect.x + 3 * colWidth, row1Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.behaviors"), ref settings.overlayShowB,          settings);
 
-                DrawOverlayToggle(new Rect(row2Rect.x + 0 * colWidth, row2Rect.y, colWidth, lineHeight), "Speed",     ref settings.overlayShowSpeed,      settings);
-                DrawOverlayToggle(new Rect(row2Rect.x + 1 * colWidth, row2Rect.y, colWidth, lineHeight), "Motion",    ref settings.overlayShowMotion,     settings);
-                DrawOverlayToggle(new Rect(row2Rect.x + 2 * colWidth, row2Rect.y, colWidth, lineHeight), "Clip Name", ref settings.overlayShowMotionName, settings);
-                DrawOverlayToggle(new Rect(row2Rect.x + 3 * colWidth, row2Rect.y, colWidth, lineHeight), "Coords",    ref settings.overlayShowCoords,     settings);
+                DrawOverlayToggle(new Rect(row2Rect.x + 0 * colWidth, row2Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.coords"),    ref settings.overlayShowCoords,     settings);
+                DrawOverlayToggle(new Rect(row2Rect.x + 1 * colWidth, row2Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.clip_name"), ref settings.overlayShowMotionName, settings);
+                DrawOverlayToggle(new Rect(row2Rect.x + 2 * colWidth, row2Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.motion"),    ref settings.overlayShowMotion,     settings);
+                DrawOverlayToggle(new Rect(row2Rect.x + 3 * colWidth, row2Rect.y, colWidth, lineHeight), L10n.Get("settings.overlay.speed"),     ref settings.overlayShowSpeed,      settings);
                 EditorGUILayout.Space(4);
-                DrawNodeColorRow("Active",   ref settings.overlayActiveColor,   Color.white,                         settings);
-                DrawNodeColorRow("Inactive", ref settings.overlayInactiveColor, new Color(0.45f, 0.45f, 0.45f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.overlay.active"),   ref settings.overlayActiveColor,   Color.white,                         settings);
+                DrawNodeColorRow(L10n.Get("settings.overlay.inactive"), ref settings.overlayInactiveColor, new Color(0.45f, 0.45f, 0.45f, 1f), settings);
             }
             EditorGUILayout.EndVertical();
         }
@@ -291,11 +327,11 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_transitionOverlayOpen ? "▼ " : "▶ ") + "Transition Overlay", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_transitionOverlayOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.transition_overlay"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _transitionOverlayOpen = !_transitionOverlayOpen;
                 GUILayout.FlexibleSpace();
                 EditorGUI.BeginChangeCheck();
-                bool enabled = EditorGUILayout.ToggleLeft("Enable", settings.transitionOverlayEnabled, GUILayout.Width(70));
+                bool enabled = EditorGUILayout.ToggleLeft(L10n.Get("settings.enable"), settings.transitionOverlayEnabled, GUILayout.Width(70));
                 if (EditorGUI.EndChangeCheck()) { settings.transitionOverlayEnabled = enabled; settings.Save(); }
             }
 
@@ -309,35 +345,35 @@ namespace YGDR.Editor.Animation
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     EditorGUI.BeginChangeCheck();
-                    bool showLabel = EditorGUILayout.ToggleLeft("Labels", settings.transitionShowLabel, GUILayout.Width(60));
+                    bool showLabel = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.labels"), settings.transitionShowLabel, GUILayout.Width(60));
                     if (EditorGUI.EndChangeCheck()) { settings.transitionShowLabel = showLabel; settings.Save(); }
                     GUILayout.Space(6);
                     EditorGUI.BeginChangeCheck();
-                    bool selectionColor = EditorGUILayout.ToggleLeft("Selection Colors", settings.transitionSelectionColorEnabled, GUILayout.Width(120));
+                    bool selectionColor = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.selection_colors"), settings.transitionSelectionColorEnabled, GUILayout.Width(120));
                     if (EditorGUI.EndChangeCheck()) { settings.transitionSelectionColorEnabled = selectionColor; settings.Save(); }
                     GUILayout.Space(6);
                     EditorGUI.BeginChangeCheck();
-                    bool arrows = EditorGUILayout.ToggleLeft("Indicator Arrows", settings.transitionIndicatorArrowsEnabled, GUILayout.Width(115));
+                    bool arrows = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.indicator_arrows"), settings.transitionIndicatorArrowsEnabled, GUILayout.Width(115));
                     if (EditorGUI.EndChangeCheck()) { settings.transitionIndicatorArrowsEnabled = arrows; settings.Save(); }
                     GUILayout.Space(6);
                     EditorGUI.BeginChangeCheck();
-                    bool animate = EditorGUILayout.ToggleLeft("Animate", settings.transitionAnimateSelected, GUILayout.Width(72));
+                    bool animate = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.animate"), settings.transitionAnimateSelected, GUILayout.Width(72));
                     if (EditorGUI.EndChangeCheck()) { settings.transitionAnimateSelected = animate; settings.Save(); }
                 }
 
-                DrawNodeColorRow("Transition Line",    ref settings.transitionOverlayColor,         new Color(1.0f, 1.0f, 1.0f, 1.0f), settings);
+                DrawNodeColorRow(L10n.Get("settings.trans_overlay.transition_line"), ref settings.transitionOverlayColor,         new Color(1.0f, 1.0f, 1.0f, 1.0f), settings);
 
                 using (new EditorGUI.DisabledScope(!settings.transitionSelectionColorEnabled))
                 {
-                    DrawNodeColorRow("Selection In",   ref settings.transitionIncomingColor,        new Color(0.0f, 1.0f, 1.0f, 1.0f), settings);
-                    DrawNodeColorRow("Selection Out",  ref settings.transitionOutgoingColor,        new Color(1.0f, 0.0f, 1.0f, 1.0f), settings);
+                    DrawNodeColorRow(L10n.Get("settings.trans_overlay.selection_in"),  ref settings.transitionIncomingColor, new Color(0.0f, 1.0f, 1.0f, 1.0f), settings);
+                    DrawNodeColorRow(L10n.Get("settings.trans_overlay.selection_out"), ref settings.transitionOutgoingColor, new Color(1.0f, 0.0f, 1.0f, 1.0f), settings);
                 }
 
                 using (new EditorGUI.DisabledScope(!settings.transitionIndicatorArrowsEnabled))
                 {
-                    DrawNodeColorRow("Default ▶",       ref settings.transitionOverlayArrowColor,    new Color(0.6f, 0.6f, 0.6f, 1.0f), settings);
-                    DrawNodeColorRow("No Condition ▶",  ref settings.transitionArrowNoConditionColor, new Color(1.0f, 0.28f, 0.0f, 1.0f), settings);
-                    DrawNodeColorRow("Instant ▶",       ref settings.transitionArrowInstantColor,     new Color(0.0f, 0.25f, 0.66f, 1.0f), settings);
+                    DrawNodeColorRow(L10n.Get("settings.trans_overlay.default_arrow"),      ref settings.transitionOverlayArrowColor,    new Color(0.6f, 0.6f, 0.6f, 1.0f),  settings);
+                    DrawNodeColorRow(L10n.Get("settings.trans_overlay.no_condition_arrow"), ref settings.transitionArrowNoConditionColor, new Color(1.0f, 0.28f, 0.0f, 1.0f), settings);
+                    DrawNodeColorRow(L10n.Get("settings.trans_overlay.instant_arrow"),      ref settings.transitionArrowInstantColor,     new Color(0.0f, 0.25f, 0.66f, 1.0f), settings);
                 }
             }
             EditorGUILayout.EndVertical();
@@ -349,17 +385,17 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_nodeColorsOpen ? "▼ " : "▶ ") + "Node Colors", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_nodeColorsOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.node_colors"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _nodeColorsOpen = !_nodeColorsOpen;
                 GUILayout.FlexibleSpace();
                 EditorGUI.BeginChangeCheck();
-                bool enabled = EditorGUILayout.ToggleLeft("Enable", settings.nodeColorEnabled, GUILayout.Width(70));
+                bool enabled = EditorGUILayout.ToggleLeft(L10n.Get("settings.enable"), settings.nodeColorEnabled, GUILayout.Width(70));
                 if (EditorGUI.EndChangeCheck())
                 {
                     settings.nodeColorEnabled = enabled;
                     settings.Save();
                 }
-                if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48), GUILayout.Height(24)))
+                if (DrawResetBtn(24f))
                 {
                     settings.ResetNodeColors();
                     settings.Save();
@@ -375,9 +411,9 @@ namespace YGDR.Editor.Animation
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Visual Style", GUILayout.Width(115));
+                    EditorGUILayout.LabelField(L10n.Get("settings.node_colors.visual_style"), GUILayout.Width(115));
                     EditorGUI.BeginChangeCheck();
-                    bool is3D = EditorGUILayout.ToggleLeft("Flat / 3D", settings.nodeColor3DEnabled);
+                    bool is3D = EditorGUILayout.ToggleLeft(L10n.Get("settings.node_colors.flat_3d"), settings.nodeColor3DEnabled);
                     if (EditorGUI.EndChangeCheck())
                     {
                         settings.nodeColor3DEnabled = is3D;
@@ -385,18 +421,18 @@ namespace YGDR.Editor.Animation
                         PatchNodeStyles.Invalidate();
                     }
                 }
-                DrawNodeColorRow("Selection Highlight",     ref settings.nodeSelectionColor,      new(1f, 1f, 1f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.selection_highlight"), ref settings.nodeSelectionColor,      new(1f, 1f, 1f, 1f), settings);
                 EditorGUILayout.Space(8);
-                DrawNodeColorRow("State Nodes",       ref settings.stateNodeColor,       new(0.30f, 0.30f, 0.30f, 1f), settings);
-                DrawNodeColorRow("Default State",     ref settings.defaultStateColor,    new(0.60f, 0.35f, 0.10f, 1f), settings);
-                DrawNodeColorRow("Sub State Machine", ref settings.subStateMachineColor, new(0.35f, 0.25f, 0.50f, 1f), settings);
-                DrawNodeColorRow("Entry Node",        ref settings.entryNodeColor,       new(0.20f, 0.55f, 0.20f, 1f), settings);
-                DrawNodeColorRow("Exit Node",         ref settings.exitNodeColor,        new(0.55f, 0.15f, 0.15f, 1f), settings);
-                DrawNodeColorRow("Any State",         ref settings.anyStateNodeColor,    new(0.15f, 0.40f, 0.50f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.state_nodes"),       ref settings.stateNodeColor,       new(0.30f, 0.30f, 0.30f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.default_state"),     ref settings.defaultStateColor,    new(0.60f, 0.35f, 0.10f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.sub_state_machine"), ref settings.subStateMachineColor, new(0.35f, 0.25f, 0.50f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.entry_node"),        ref settings.entryNodeColor,       new(0.20f, 0.55f, 0.20f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.exit_node"),         ref settings.exitNodeColor,        new(0.55f, 0.15f, 0.15f, 1f), settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.any_state"),         ref settings.anyStateNodeColor,    new(0.15f, 0.40f, 0.50f, 1f), settings);
                 EditorGUILayout.Space(8);
-                DrawNodeColorRow("Blend Tree Direct",       ref settings.blendTreeDirectNodeColor, new(0.70f, 0.37f, 0.20f, 1f), settings);
-                DrawNodeColorRow("Blend Tree 1D",           ref settings.blendTree1DNodeColor,    new(0.24f, 0.50f, 0.60f, 1f),  settings);
-                DrawNodeColorRow("Blend Tree 2D",           ref settings.blendTree2DNodeColor,    new(00.24f, 0.60f, 0.45f, 1f),  settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.blend_tree_direct"), ref settings.blendTreeDirectNodeColor, new(0.70f, 0.37f, 0.20f, 1f),  settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.blend_tree_1d"),     ref settings.blendTree1DNodeColor,    new(0.24f, 0.50f, 0.60f, 1f),   settings);
+                DrawNodeColorRow(L10n.Get("settings.node_colors.blend_tree_2d"),     ref settings.blendTree2DNodeColor,    new(0.24f, 0.60f, 0.45f, 1f),   settings);
             }
             EditorGUILayout.EndVertical();
         }
@@ -411,7 +447,6 @@ namespace YGDR.Editor.Animation
 
         static void DrawFeatureToggle(string featureId, string label, string tooltip)
         {
-            // Read from _instances state — reflects actual patch state, not just saved prefs
             bool current = FeatureHarmony.IsEnabled(featureId);
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -419,8 +454,25 @@ namespace YGDR.Editor.Animation
                 var content = string.IsNullOrEmpty(tooltip) ? new GUIContent(label) : new GUIContent(label, tooltip);
                 bool newValue = EditorGUILayout.ToggleLeft(content, current);
                 if (EditorGUI.EndChangeCheck())
+                {
                     FeatureHarmony.SetEnabled(featureId, newValue);
+                    UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+                }
             }
+        }
+
+        static void DrawFeatureToggle(Rect rect, string featureId, string label, string tooltip)
+        {
+            bool current = FeatureHarmony.IsEnabled(featureId);
+            EditorGUI.BeginChangeCheck();
+            var content = string.IsNullOrEmpty(tooltip) ? new GUIContent(label) : new GUIContent(label, tooltip);
+            bool newValue = EditorGUI.ToggleLeft(rect, content, current);
+            if (EditorGUI.EndChangeCheck())
+            {
+                FeatureHarmony.SetEnabled(featureId, newValue);
+                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+            }
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
         }
 
         /* Draws a labeled color field row with a Reset button that restores defaultColor and auto-saves. Shared by node color and transition overlay color rows. */
@@ -428,7 +480,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(label, GUILayout.Width(115));
+                EditorGUILayout.LabelField(label, GUILayout.Width(150));
                 EditorGUI.BeginChangeCheck();
                 var newColor = EditorGUILayout.ColorField(GUIContent.none, color, true, false, false);
                 if (EditorGUI.EndChangeCheck())
@@ -436,7 +488,7 @@ namespace YGDR.Editor.Animation
                     color = newColor;
                     settings.Save();
                 }
-                if (CursorBtn("Reset", Styles.IconBtn, GUILayout.Width(48)))
+                if (DrawResetBtn())
                 {
                     color = defaultColor;
                     settings.Save();
@@ -450,11 +502,11 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_transitionDefaultsOpen ? "▼ " : "▶ ") + "Transition Defaults", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_transitionDefaultsOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.transition_defaults"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _transitionDefaultsOpen = !_transitionDefaultsOpen;
                 GUILayout.FlexibleSpace();
                 EditorGUI.BeginChangeCheck();
-                bool applyOnCreate = EditorGUILayout.ToggleLeft("Apply on Create", settings.applyToTransitions, GUILayout.Width(110));
+                bool applyOnCreate = EditorGUILayout.ToggleLeft(L10n.Get("settings.apply_on_create"), settings.applyToTransitions, GUILayout.Width(110));
                 if (EditorGUI.EndChangeCheck())
                 {
                     settings.applyToTransitions = applyOnCreate;
@@ -471,12 +523,12 @@ namespace YGDR.Editor.Animation
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Has Exit Time", GUILayout.Width(160));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.has_exit_time"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
                     bool hasExit = EditorGUILayout.Toggle(settings.transHasExitTime, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transHasExitTime = hasExit; settings.Save(); }
                     GUILayout.FlexibleSpace();
-                    EditorGUILayout.LabelField("Exit Time", GUILayout.Width(120));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.exit_time"), GUILayout.Width(120));
                     EditorGUI.BeginChangeCheck();
                     float exitTime = EditorGUILayout.FloatField(settings.transExitTime);
                     if (EditorGUI.EndChangeCheck()) { settings.transExitTime = exitTime; settings.Save(); }
@@ -484,12 +536,12 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Has Fixed Duration", GUILayout.Width(160));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.has_fixed_duration"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
                     bool hasFixed = EditorGUILayout.Toggle(settings.transHasFixedDuration, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transHasFixedDuration = hasFixed; settings.Save(); }
                     GUILayout.FlexibleSpace();
-                    EditorGUILayout.LabelField("Transition Duration", GUILayout.Width(120));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.duration"), GUILayout.Width(120));
                     EditorGUI.BeginChangeCheck();
                     float duration = EditorGUILayout.FloatField(settings.transDuration);
                     if (EditorGUI.EndChangeCheck()) { settings.transDuration = duration; settings.Save(); }
@@ -497,7 +549,7 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Transition Offset", GUILayout.Width(160));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.offset"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
                     float offset = EditorGUILayout.FloatField(settings.transOffset);
                     if (EditorGUI.EndChangeCheck()) { settings.transOffset = offset; settings.Save(); }
@@ -505,20 +557,22 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Interruption Source", GUILayout.Width(160));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.interruption_source"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
-                    var interruptionSource = (TransitionInterruptionSource)EditorGUILayout.EnumPopup(settings.transInterruptionSource);
+                    var interruptionSource = (TransitionInterruptionSource)EditorGUILayout.Popup(
+                        (int)settings.transInterruptionSource,
+                        new[] { L10n.Get("transitions.interruption.none"), L10n.Get("transitions.interruption.source"), L10n.Get("transitions.interruption.destination"), L10n.Get("transitions.interruption.source_then_destination"), L10n.Get("transitions.interruption.destination_then_source") });
                     if (EditorGUI.EndChangeCheck()) { settings.transInterruptionSource = interruptionSource; settings.Save(); }
                 }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Ordered Interruption", GUILayout.Width(160));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.ordered_interruption"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
                     bool ordered = EditorGUILayout.Toggle(settings.transOrderedInterruption, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transOrderedInterruption = ordered; settings.Save(); }
                     GUILayout.FlexibleSpace();
-                    EditorGUILayout.LabelField("Mute", GUILayout.Width(80));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.mute"), GUILayout.Width(80));
                     EditorGUI.BeginChangeCheck();
                     bool mute = EditorGUILayout.Toggle(settings.transMute, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transMute = mute; settings.Save(); }
@@ -526,12 +580,12 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Can Transition To Self", GUILayout.Width(160));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.can_transition_to_self"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
                     bool canTransitionToSelf = EditorGUILayout.Toggle(settings.transCanTransitionToSelf, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transCanTransitionToSelf = canTransitionToSelf; settings.Save(); }
                     GUILayout.FlexibleSpace();
-                    EditorGUILayout.LabelField("Solo", GUILayout.Width(80));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.solo"), GUILayout.Width(80));
                     EditorGUI.BeginChangeCheck();
                     bool solo = EditorGUILayout.Toggle(settings.transSolo, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transSolo = solo; settings.Save(); }
@@ -546,11 +600,11 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_stateDefaultsOpen ? "▼ " : "▶ ") + "State Defaults", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_stateDefaultsOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.state_defaults"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _stateDefaultsOpen = !_stateDefaultsOpen;
                 GUILayout.FlexibleSpace();
                 EditorGUI.BeginChangeCheck();
-                bool applyOnCreate = EditorGUILayout.ToggleLeft("Apply on Create", settings.applyToStates, GUILayout.Width(110));
+                bool applyOnCreate = EditorGUILayout.ToggleLeft(L10n.Get("settings.apply_on_create"), settings.applyToStates, GUILayout.Width(110));
                 if (EditorGUI.EndChangeCheck())
                 {
                     settings.applyToStates = applyOnCreate;
@@ -567,7 +621,7 @@ namespace YGDR.Editor.Animation
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Tag", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.tag"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     string tag = EditorGUILayout.TextField(settings.stateTag);
                     if (EditorGUI.EndChangeCheck()) { settings.stateTag = tag; settings.Save(); }
@@ -575,7 +629,7 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Speed", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.speed"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     float speed = EditorGUILayout.FloatField(settings.stateSpeed);
                     if (EditorGUI.EndChangeCheck()) { settings.stateSpeed = speed; settings.Save(); }
@@ -585,20 +639,20 @@ namespace YGDR.Editor.Animation
                 {
                     using (new EditorGUI.DisabledScope(!settings.stateSpeedParameterActive))
                     {
-                        EditorGUILayout.LabelField("Multiplier", GUILayout.Width(110));
+                        EditorGUILayout.LabelField(L10n.Get("states.multiplier"), GUILayout.Width(110));
                         EditorGUI.BeginChangeCheck();
                         string speedParam = EditorGUILayout.TextField(settings.stateSpeedParameter);
                         if (EditorGUI.EndChangeCheck()) { settings.stateSpeedParameter = speedParam; settings.Save(); }
                         GUILayout.FlexibleSpace();
                     }
                     EditorGUI.BeginChangeCheck();
-                    bool speedParamActive = EditorGUILayout.ToggleLeft("Parameter", settings.stateSpeedParameterActive, GUILayout.Width(90));
+                    bool speedParamActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"), settings.stateSpeedParameterActive, GUILayout.Width(90));
                     if (EditorGUI.EndChangeCheck()) { settings.stateSpeedParameterActive = speedParamActive; settings.Save(); }
                 }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Motion Time", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.motion_time"), GUILayout.Width(110));
                     if (settings.stateTimeParameterActive)
                     {
                         EditorGUI.BeginChangeCheck();
@@ -607,37 +661,37 @@ namespace YGDR.Editor.Animation
                     }
                     GUILayout.FlexibleSpace();
                     EditorGUI.BeginChangeCheck();
-                    bool timeActive = EditorGUILayout.ToggleLeft("Parameter", settings.stateTimeParameterActive, GUILayout.Width(90));
+                    bool timeActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"), settings.stateTimeParameterActive, GUILayout.Width(90));
                     if (EditorGUI.EndChangeCheck()) { settings.stateTimeParameterActive = timeActive; settings.Save(); }
                 }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Mirror", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.mirror"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     bool mirror = EditorGUILayout.Toggle(settings.stateMirror, GUILayout.Width(16));
                     if (EditorGUI.EndChangeCheck()) { settings.stateMirror = mirror; settings.Save(); }
                     GUILayout.FlexibleSpace();
                     EditorGUI.BeginChangeCheck();
-                    bool mirrorActive = EditorGUILayout.ToggleLeft("Parameter", settings.stateMirrorParameterActive, GUILayout.Width(90));
+                    bool mirrorActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"), settings.stateMirrorParameterActive, GUILayout.Width(90));
                     if (EditorGUI.EndChangeCheck()) { settings.stateMirrorParameterActive = mirrorActive; settings.Save(); }
                 }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Cycle Offset", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.cycle_offset"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     float cycleOffset = EditorGUILayout.FloatField(settings.stateCycleOffset);
                     if (EditorGUI.EndChangeCheck()) { settings.stateCycleOffset = cycleOffset; settings.Save(); }
                     GUILayout.FlexibleSpace();
                     EditorGUI.BeginChangeCheck();
-                    bool cycleActive = EditorGUILayout.ToggleLeft("Parameter", settings.stateCycleOffsetParameterActive, GUILayout.Width(90));
+                    bool cycleActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"), settings.stateCycleOffsetParameterActive, GUILayout.Width(90));
                     if (EditorGUI.EndChangeCheck()) { settings.stateCycleOffsetParameterActive = cycleActive; settings.Save(); }
                 }
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Foot IK", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.foot_ik"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     bool footIK = EditorGUILayout.Toggle(settings.stateIKOnFeet, GUILayout.Width(16));
                     if (EditorGUI.EndChangeCheck()) { settings.stateIKOnFeet = footIK; settings.Save(); }
@@ -645,7 +699,7 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField("Write Defaults", GUILayout.Width(110));
+                    EditorGUILayout.LabelField(L10n.Get("states.write_defaults"), GUILayout.Width(110));
                     EditorGUI.BeginChangeCheck();
                     bool writeDefaults = EditorGUILayout.Toggle(settings.stateWriteDefaultValues, GUILayout.Width(16));
                     if (EditorGUI.EndChangeCheck()) { settings.stateWriteDefaultValues = writeDefaults; settings.Save(); }
@@ -659,7 +713,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                if (CursorBtn((_miscOpen ? "▼ " : "▶ ") + "Miscellaneous", Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                if (CursorBtn((_miscOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.miscellaneous"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
                     _miscOpen = !_miscOpen;
                 GUILayout.FlexibleSpace();
             }
@@ -675,33 +729,274 @@ namespace YGDR.Editor.Animation
             var miscRow2Rect = EditorGUILayout.GetControlRect(false, miscLineHeight);
             float miscColWidth = miscRow1Rect.width / 4f;
 
-            DrawOverlayToggle(new Rect(miscRow1Rect.x + 0 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), "WD Blend Trees",       ref settings.wdIncludeBlendTreeStates,   settings);
-            DrawOverlayToggle(new Rect(miscRow1Rect.x + 1 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), "Prevent Layer Scroll",  ref settings.preventLayerScroll,         settings);
-            DrawOverlayToggle(new Rect(miscRow1Rect.x + 2 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), "Prevent Param Scroll",  ref settings.preventParameterScroll,     settings);
-            DrawOverlayToggle(new Rect(miscRow1Rect.x + 3 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), "Layer Weight 1",        ref settings.newLayerWeightOne,        settings);
+            DrawOverlayToggle(new Rect(miscRow1Rect.x + 0 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.wd_blend_trees"),       ref settings.wdIncludeBlendTreeStates,   settings);
+            DrawOverlayToggle(new Rect(miscRow1Rect.x + 1 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.prevent_layer_scroll"), ref settings.preventLayerScroll,         settings);
+            DrawOverlayToggle(new Rect(miscRow1Rect.x + 2 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.prevent_param_scroll"), ref settings.preventParameterScroll,     settings);
+            DrawOverlayToggle(new Rect(miscRow1Rect.x + 3 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.layer_weight_1"),       ref settings.newLayerWeightOne,          settings);
 
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 0 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), "Clip Menu Nesting",     ref settings.clipMenuNestingEnabled,     settings);
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 1 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), "Layer Templates",        ref settings.layerTemplateButtonEnabled, settings);
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 2 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), "Param Add Menu",         ref settings.parameterAddMenuEnabled,    settings);
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 3 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), "Frames",                 ref settings.framesEnabled,              settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 0 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.clip_menu_nesting"), ref settings.clipMenuNestingEnabled,     settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 1 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.layer_templates"),   ref settings.layerTemplateButtonEnabled, settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 2 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.param_add_menu"),    ref settings.parameterAddMenuEnabled,    settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 3 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.frames"),            ref settings.framesEnabled,              settings);
+
+            EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField(L10n.Get("settings.misc.color_tags"), EditorStyles.boldLabel);
+            for (int i = 0; i < settings.colorTags.Count; i++)
+            {
+                var tagRowRect       = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+                float removeBtnWidth = 24f;
+                float availableWidth = tagRowRect.width - removeBtnWidth - 2f;
+                float colorPickerWidth = availableWidth * 0.25f;
+                float textFieldWidth   = availableWidth * 0.75f;
+
+                var textFieldRect  = new Rect(tagRowRect.x, tagRowRect.y, textFieldWidth, tagRowRect.height);
+                var colorFieldRect = new Rect(tagRowRect.x + textFieldWidth, tagRowRect.y, colorPickerWidth, tagRowRect.height);
+                var removeBtnRect  = new Rect(tagRowRect.xMax - removeBtnWidth, tagRowRect.y, removeBtnWidth, tagRowRect.height);
+
+                EditorGUI.BeginChangeCheck();
+                settings.colorTags[i].tagName = EditorGUI.TextField(textFieldRect, settings.colorTags[i].tagName);
+                settings.colorTags[i].color   = EditorGUI.ColorField(colorFieldRect, GUIContent.none, settings.colorTags[i].color, true, false, false);
+                if (EditorGUI.EndChangeCheck()) settings.Save();
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    bool hovered = removeBtnRect.Contains(Event.current.mousePosition);
+                    var accent = Styles.AccentColor;
+                    EditorGUI.DrawRect(removeBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                    GUI.Label(removeBtnRect, "−", BindingBtnLabelStyle);
+                }
+                EditorGUIUtility.AddCursorRect(removeBtnRect, MouseCursor.Link);
+                if (GUI.Button(removeBtnRect, GUIContent.none, GUIStyle.none))
+                {
+                    settings.colorTags.RemoveAt(i);
+                    settings.Save();
+                    GUIUtility.ExitGUI();
+                }
+            }
+
+            var addTagBtnRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight, GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.Repaint)
+            {
+                bool hovered = addTagBtnRect.Contains(Event.current.mousePosition);
+                var accent = Styles.AccentColor;
+                EditorGUI.DrawRect(addTagBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                GUI.Label(addTagBtnRect, L10n.Get("settings.misc.add_color_tag"), BindingBtnLabelStyle);
+            }
+            EditorGUIUtility.AddCursorRect(addTagBtnRect, MouseCursor.Link);
+            if (GUI.Button(addTagBtnRect, GUIContent.none, GUIStyle.none))
+            {
+                settings.colorTags.Add(new AnimatorColorTag());
+                settings.Save();
+            }
 
             EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("Compatibility", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Disable features that conflict with other tools. Toggles take effect instantly.", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField(L10n.Get("settings.misc.compatibility"), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(L10n.Get("settings.misc.compatibility_desc"), EditorStyles.wordWrappedMiniLabel);
             EditorGUILayout.Space(2);
-            DrawFeatureToggle(FeatureHarmony.ContextMenuId,   "Context Menus",     "Disable if using RATS or another tool that patches HandleContextMenu.");
-            DrawFeatureToggle(FeatureHarmony.NodeOverlayId,   "Node Overlay",      "Disable if using RATS or another tool that patches StateNode.NodeUI.");
-            DrawFeatureToggle(FeatureHarmony.NodeColorId,     "Node Colors",       "Disable if using a tool that patches NodeUI or node styles.");
-            DrawFeatureToggle(FeatureHarmony.TransitionId,    "Transition Overlay","Disable if using a tool that patches EdgeGUI.DrawEdge.");
-            DrawFeatureToggle(FeatureHarmony.GraphInteractId, "Graph Interaction", "Disable if using RATS or a tool that patches EdgeGUI.DoEdges or GraphGUI.OnGraphGUI.");
-            DrawFeatureToggle(FeatureHarmony.GridBgId,        "Grid Background",   "Disable if using a tool that patches GraphGUI.DrawGrid.");
-            DrawFeatureToggle(FeatureHarmony.LayerViewId,     "Layer View",        "");
-            DrawFeatureToggle(FeatureHarmony.ParamViewId,     "Parameter View",    "");
-            DrawFeatureToggle(FeatureHarmony.BlendTreeId,     "Blend Tree",        "");
-            DrawFeatureToggle(FeatureHarmony.BottomBarId,     "Bottom Bar",        "");
+            float cLineH = EditorGUIUtility.singleLineHeight;
+            var   cRow1  = EditorGUILayout.GetControlRect(false, cLineH);
+            var   cRow2  = EditorGUILayout.GetControlRect(false, cLineH);
+            var   cRow3  = EditorGUILayout.GetControlRect(false, cLineH);
+            var   cRow4  = EditorGUILayout.GetControlRect(false, cLineH);
+            var   cRow5  = EditorGUILayout.GetControlRect(false, cLineH);
+            float cColW  = cRow1.width / 2f;
+
+            DrawFeatureToggle(new Rect(cRow1.x,         cRow1.y, cColW, cLineH), FeatureHarmony.ContextMenuId,   L10n.Get("settings.misc.context_menus"),     L10n.Get("settings.misc.tt.context_menus"));
+            DrawFeatureToggle(new Rect(cRow1.x + cColW, cRow1.y, cColW, cLineH), FeatureHarmony.NodeOverlayId,   L10n.Get("settings.misc.node_overlay"),      L10n.Get("settings.misc.tt.node_overlay"));
+            DrawFeatureToggle(new Rect(cRow2.x,         cRow2.y, cColW, cLineH), FeatureHarmony.NodeColorId,     L10n.Get("settings.misc.node_colors_feat"),  L10n.Get("settings.misc.tt.node_colors"));
+            DrawFeatureToggle(new Rect(cRow2.x + cColW, cRow2.y, cColW, cLineH), FeatureHarmony.TransitionId,    L10n.Get("settings.misc.transition_overlay"), L10n.Get("settings.misc.tt.transition_overlay"));
+            DrawFeatureToggle(new Rect(cRow3.x,         cRow3.y, cColW, cLineH), FeatureHarmony.GraphInteractId, L10n.Get("settings.misc.graph_interaction"), L10n.Get("settings.misc.tt.graph_interaction"));
+            DrawFeatureToggle(new Rect(cRow3.x + cColW, cRow3.y, cColW, cLineH), FeatureHarmony.GridBgId,        L10n.Get("settings.misc.grid_background"),   L10n.Get("settings.misc.tt.grid_background"));
+            DrawFeatureToggle(new Rect(cRow4.x,         cRow4.y, cColW, cLineH), FeatureHarmony.LayerViewId,     L10n.Get("settings.misc.layer_view"),        L10n.Get("settings.misc.tt.layer_view"));
+            DrawFeatureToggle(new Rect(cRow4.x + cColW, cRow4.y, cColW, cLineH), FeatureHarmony.ParamViewId,     L10n.Get("settings.misc.parameter_view"),    L10n.Get("settings.misc.tt.parameter_view"));
+            DrawFeatureToggle(new Rect(cRow5.x,         cRow5.y, cColW, cLineH), FeatureHarmony.BlendTreeId,     L10n.Get("settings.misc.blend_tree_feat"),   L10n.Get("settings.misc.tt.blend_tree"));
+            DrawFeatureToggle(new Rect(cRow5.x + cColW, cRow5.y, cColW, cLineH), FeatureHarmony.BottomBarId,     L10n.Get("settings.misc.bottom_bar"),        L10n.Get("settings.misc.tt.bottom_bar"));
 
             EditorGUILayout.EndVertical();
         }
+
+        // ── Keybindings ───────────────────────────────────────────────────────
+
+        void DrawKeybindsSection(AnimatorDefaultSettings settings)
+        {
+            using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
+            {
+                if (CursorBtn((_keybindsOpen ? "▼ " : "▶ ") + L10n.Get("settings.section.keybindings"), Styles.HeaderLabel, GUILayout.ExpandWidth(false), GUILayout.Height(24)))
+                    _keybindsOpen = !_keybindsOpen;
+                GUILayout.FlexibleSpace();
+                if (DrawResetBtn(24f))
+                {
+                    settings.ResetKeybinds();
+                    settings.Save();
+                    _recordingActionId = null;
+                }
+            }
+
+            if (!_keybindsOpen) return;
+
+            var ev = Event.current;
+            if (_recordingActionId != null && ev.type == EventType.KeyDown && ev.keyCode != KeyCode.None)
+            {
+                if (ev.keyCode == KeyCode.Escape)
+                {
+                    _recordingActionId = null;
+                    ev.Use();
+                    Repaint();
+                    return;
+                }
+                if (IsModifierKey(ev.keyCode)) return; // wait for non-modifier
+                ApplyKeybind(settings, _recordingActionId, new KeyBinding(ev.keyCode, ev.control, ev.shift, ev.alt));
+                settings.Save();
+                _recordingActionId = null;
+                ev.Use();
+                Repaint();
+                return;
+            }
+
+            var bodyRect = EditorGUILayout.BeginVertical(Styles.SectionPadded);
+            if (Event.current.type == EventType.Repaint)
+                EditorGUI.DrawRect(bodyRect, Styles.PrimaryColor);
+
+            EditorGUILayout.BeginHorizontal();
+
+            EditorGUILayout.BeginVertical();
+            DrawBindingRow(L10n.Get("settings.kb.select_incoming"),        "kbSelectIncoming",       settings.kbSelectIncoming,       settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.select_outgoing"),        "kbSelectOutgoing",       settings.kbSelectOutgoing,       settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.select_both"),            "kbSelectBoth",           settings.kbSelectBoth,           settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.select_all_nodes"),       "kbSelectAll",            settings.kbSelectAll,            settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.select_all_transitions"), "kbSelectAllTransitions", settings.kbSelectAllTransitions, settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.copy"),                   "kbCopy",                 settings.kbCopy,                 settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.paste"),                  "kbPaste",                settings.kbPaste,                settings, 125, 85);
+            EditorGUILayout.EndVertical();
+
+            GUILayout.Space(8f);
+
+            EditorGUILayout.BeginVertical();
+            DrawBindingRow(L10n.Get("settings.kb.chain_mode"),          "kbChainMode",          settings.kbChainMode,          settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.fan_mode"),            "kbFanMode",            settings.kbFanMode,            settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.multi_transition"),    "kbMultiTransition",    settings.kbMultiTransition,    settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.reverse_transitions"), "kbReverseTransitions", settings.kbReverseTransitions, settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.replicate"),           "kbReplicate",          settings.kbReplicate,          settings, 125, 85);
+            DrawBindingRow(L10n.Get("settings.kb.redirect"),            "kbRedirect",           settings.kbRedirect,           settings, 125, 85);
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.EndVertical();
+        }
+
+        static GUIStyle s_bindingBtnLabelStyle;
+        static GUIStyle BindingBtnLabelStyle => s_bindingBtnLabelStyle ??= new GUIStyle(GUIStyle.none)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontSize  = 11,
+            normal    = { textColor = Color.white }
+        };
+
+        bool DrawResetBtn(float height = 0f)
+        {
+            float h = height > 0f ? height : EditorGUIUtility.singleLineHeight;
+            var resetBtnRect = GUILayoutUtility.GetRect(24, h, GUILayout.Width(24));
+            if (Event.current.type == EventType.Repaint)
+            {
+                bool hovered = resetBtnRect.Contains(Event.current.mousePosition);
+                var accent = Styles.AccentColor;
+                EditorGUI.DrawRect(resetBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                GUI.Label(resetBtnRect, "↺", BindingBtnLabelStyle);
+            }
+            EditorGUIUtility.AddCursorRect(resetBtnRect, MouseCursor.Link);
+            return GUI.Button(resetBtnRect, GUIContent.none, GUIStyle.none);
+        }
+
+        void DrawBindingRow(string label, string actionId, KeyBinding binding, AnimatorDefaultSettings settings, int labelWidth = 160, int btnWidth = 180)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(label, GUILayout.Width(labelWidth));
+                bool isRecording = _recordingActionId == actionId;
+                string btnLabel = isRecording ? L10n.Get("settings.kb.press_key") : binding.Label();
+                var btnRect = GUILayoutUtility.GetRect(btnWidth, EditorGUIUtility.singleLineHeight, GUILayout.Width(btnWidth));
+                if (Event.current.type == EventType.Repaint)
+                {
+                    bool hovered = btnRect.Contains(Event.current.mousePosition);
+                    var accent = Styles.AccentColor;
+                    var hoverColor = new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f);
+                    EditorGUI.DrawRect(btnRect, hovered ? hoverColor : accent);
+                    GUI.Label(btnRect, btnLabel, BindingBtnLabelStyle);
+                }
+                if (GUI.Button(btnRect, GUIContent.none, GUIStyle.none))
+                {
+                    _recordingActionId = isRecording ? null : actionId;
+                    Repaint();
+                }
+                EditorGUIUtility.AddCursorRect(btnRect, MouseCursor.Link);
+                if (!isRecording)
+                {
+                    GUILayout.Space(4f);
+                    var resetRect = GUILayoutUtility.GetRect(24, EditorGUIUtility.singleLineHeight, GUILayout.Width(24));
+                    if (Event.current.type == EventType.Repaint)
+                    {
+                        bool resetHovered = resetRect.Contains(Event.current.mousePosition);
+                        var accent = Styles.AccentColor;
+                        var hoverColor = new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f);
+                        EditorGUI.DrawRect(resetRect, resetHovered ? hoverColor : accent);
+                        GUI.Label(resetRect, "↺", BindingBtnLabelStyle);
+                    }
+                    if (GUI.Button(resetRect, GUIContent.none, GUIStyle.none))
+                    {
+                        var defaults = new AnimatorDefaultSettings();
+                        ApplyKeybind(settings, actionId, GetDefaultBinding(defaults, actionId));
+                        settings.Save();
+                    }
+                    EditorGUIUtility.AddCursorRect(resetRect, MouseCursor.Link);
+                }
+            }
+        }
+
+        void ApplyKeybind(AnimatorDefaultSettings settings, string actionId, KeyBinding binding)
+        {
+            switch (actionId)
+            {
+                case "kbSelectIncoming":       settings.kbSelectIncoming       = binding; break;
+                case "kbSelectOutgoing":       settings.kbSelectOutgoing       = binding; break;
+                case "kbSelectBoth":           settings.kbSelectBoth           = binding; break;
+                case "kbSelectAll":            settings.kbSelectAll            = binding; break;
+                case "kbSelectAllTransitions": settings.kbSelectAllTransitions = binding; break;
+                case "kbCopy":                 settings.kbCopy                 = binding; break;
+                case "kbPaste":                settings.kbPaste                = binding; break;
+                case "kbChainMode":            settings.kbChainMode            = binding; break;
+                case "kbFanMode":              settings.kbFanMode              = binding; break;
+                case "kbMultiTransition":      settings.kbMultiTransition      = binding; break;
+                case "kbReverseTransitions":   settings.kbReverseTransitions   = binding; break;
+                case "kbReplicate":            settings.kbReplicate            = binding; break;
+                case "kbRedirect":             settings.kbRedirect             = binding; break;
+            }
+        }
+
+        static bool IsModifierKey(KeyCode key) => key is
+            KeyCode.LeftControl  or KeyCode.RightControl  or
+            KeyCode.LeftAlt      or KeyCode.RightAlt      or
+            KeyCode.LeftShift    or KeyCode.RightShift    or
+            KeyCode.LeftCommand  or KeyCode.RightCommand  or
+            KeyCode.LeftWindows  or KeyCode.RightWindows;
+
+        KeyBinding GetDefaultBinding(AnimatorDefaultSettings defaults, string actionId) => actionId switch
+        {
+            "kbSelectIncoming"       => defaults.kbSelectIncoming,
+            "kbSelectOutgoing"       => defaults.kbSelectOutgoing,
+            "kbSelectBoth"           => defaults.kbSelectBoth,
+            "kbSelectAll"            => defaults.kbSelectAll,
+            "kbSelectAllTransitions" => defaults.kbSelectAllTransitions,
+            "kbCopy"                 => defaults.kbCopy,
+            "kbPaste"                => defaults.kbPaste,
+            "kbChainMode"            => defaults.kbChainMode,
+            "kbFanMode"              => defaults.kbFanMode,
+            "kbMultiTransition"      => defaults.kbMultiTransition,
+            "kbReverseTransitions"   => defaults.kbReverseTransitions,
+            "kbReplicate"            => defaults.kbReplicate,
+            "kbRedirect"             => defaults.kbRedirect,
+            _ => default,
+        };
     }
 }
 #endif

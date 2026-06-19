@@ -1,4 +1,23 @@
-﻿#if UNITY_EDITOR
+﻿/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -139,23 +158,23 @@ namespace YGDR.Editor.Animation
             evt.Use();
             var menu = new GenericMenu();
 
-            menu.AddItem(new GUIContent("Copy layer"), false,
+            menu.AddItem(new GUIContent(L10n.Get("layer_menu.copy")), false,
                 static data => CopyLayer(data), __instance);
 
             if (_layerClipboard != null)
             {
-                menu.AddItem(new GUIContent("Paste layer"), false,
+                menu.AddItem(new GUIContent(L10n.Get("layer_menu.paste")), false,
                     static data => PasteLayer(data), __instance);
-                menu.AddItem(new GUIContent("Paste layer settings"), false,
+                menu.AddItem(new GUIContent(L10n.Get("layer_menu.paste_settings")), false,
                     static data => PasteLayerSettings(data), __instance);
             }
             else
             {
-                menu.AddDisabledItem(new GUIContent("Paste layer"));
-                menu.AddDisabledItem(new GUIContent("Paste layer settings"));
+                menu.AddDisabledItem(new GUIContent(L10n.Get("layer_menu.paste")));
+                menu.AddDisabledItem(new GUIContent(L10n.Get("layer_menu.paste_settings")));
             }
 
-            menu.AddItem(new GUIContent("Delete layer"), false,
+            menu.AddItem(new GUIContent(L10n.Get("layer_menu.delete")), false,
                 static data => Traverse.Create(data).Method("DeleteLayer").GetValue(null), __instance);
 
             if (AnimatorDefaultSettings.Load().layerTemplateButtonEnabled)
@@ -163,7 +182,7 @@ namespace YGDR.Editor.Animation
                 var capturedController = GetController(__instance);
                 int capturedIndex      = index;
                 menu.AddSeparator("");
-                menu.AddItem(new GUIContent("Create Template"), false, () =>
+                menu.AddItem(new GUIContent(L10n.Get("layer_menu.create_template")), false, () =>
                     AnimatorTemplateParameterWindow.OpenCreate(capturedController, capturedIndex));
             }
 

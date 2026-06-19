@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -7,20 +26,24 @@ using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+#if VRC_SDK_VRCSDK3
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Avatars.ScriptableObjects;
 using VRC.SDKBase;
+#endif
 
 namespace YGDR.Editor.Animation
 {
     internal static class AnimatorParameterOps
     {
+#if VRC_SDK_VRCSDK3
         static VRCExpressionParameters.ValueType MapToVrcValueType(AnimatorControllerParameterType type) => type switch
         {
             AnimatorControllerParameterType.Float => VRCExpressionParameters.ValueType.Float,
             AnimatorControllerParameterType.Int   => VRCExpressionParameters.ValueType.Int,
             _                                      => VRCExpressionParameters.ValueType.Bool
         };
+#endif
 
         internal static void InsertParameterAtIndex(AnimatorController controller,
             int index, string paramName, AnimatorControllerParameterType type)
@@ -162,6 +185,9 @@ namespace YGDR.Editor.Animation
             var usedParamNames = new HashSet<string>();
             foreach (var layer in controller.layers)
                 CollectUsedParameters(layer.stateMachine, usedParamNames);
+#if VRC_SDK_VRCSDK3
+            CollectParameterDriverNames(controller, usedParamNames);
+#endif
 
             var unusedParamNames = controller.parameters
                 .Where(parameter => !usedParamNames.Contains(parameter.name))
@@ -195,10 +221,6 @@ namespace YGDR.Editor.Animation
                         result.Add(condition.parameter);
 
                 CollectMotionParameters(childState.state.motion, result);
-
-                foreach (var driver in childState.state.behaviours.OfType<VRCAvatarParameterDriver>())
-                    foreach (var driverParameter in driver.parameters)
-                        result.Add(driverParameter.name);
             }
 
             foreach (var childStateMachine in stateMachine.stateMachines)
@@ -211,8 +233,44 @@ namespace YGDR.Editor.Animation
             result.Add(blendTree.blendParameter);
             result.Add(blendTree.blendParameterY);
             foreach (var childMotion in blendTree.children)
+            {
+                if (!string.IsNullOrEmpty(childMotion.directBlendParameter))
+                    result.Add(childMotion.directBlendParameter);
                 CollectMotionParameters(childMotion.motion, result);
+            }
         }
+
+#if VRC_SDK_VRCSDK3
+        internal static void CollectParameterDriverNames(AnimatorController controller, HashSet<string> result)
+        {
+            foreach (var layer in controller.layers)
+                CollectVrcBehaviourNames(layer.stateMachine, result);
+        }
+
+        static void CollectVrcBehaviourNames(AnimatorStateMachine stateMachine, HashSet<string> result)
+        {
+            CollectBehaviourNames(stateMachine.behaviours, result);
+            foreach (var childState in stateMachine.states)
+                CollectBehaviourNames(childState.state.behaviours, result);
+            foreach (var childStateMachine in stateMachine.stateMachines)
+                CollectVrcBehaviourNames(childStateMachine.stateMachine, result);
+        }
+
+        static void CollectBehaviourNames(StateMachineBehaviour[] behaviours, HashSet<string> result)
+        {
+            foreach (var driver in behaviours.OfType<VRCAvatarParameterDriver>())
+                foreach (var driverParameter in driver.parameters)
+                {
+                    if (!string.IsNullOrEmpty(driverParameter.name))
+                        result.Add(driverParameter.name);
+                    if (driverParameter.type == VRC_AvatarParameterDriver.ChangeType.Copy && !string.IsNullOrEmpty(driverParameter.source))
+                        result.Add(driverParameter.source);
+                }
+            foreach (var playAudio in behaviours.OfType<VRCAnimatorPlayAudio>())
+                if (!string.IsNullOrEmpty(playAudio.ParameterName))
+                    result.Add(playAudio.ParameterName);
+        }
+#endif
 
         internal static void DeleteParameterAndClean(AnimatorController controller, string paramName)
         {
@@ -253,27 +311,33 @@ namespace YGDR.Editor.Animation
         internal static void RemapParameter(AnimatorController controller, string fromParamName, string toParamName)
         {
             foreach (var layer in controller.layers)
-                RemapParameterInStateMachine(layer.stateMachine, fromParamName, toParamName);
+                RemapConditionsInStateMachine(layer.stateMachine, fromParamName, toParamName);
+            RemapParameterReferences(controller, fromParamName, toParamName);
             EditorUtility.SetDirty(controller);
         }
 
-        static void RemapParameterInStateMachine(AnimatorStateMachine stateMachine,
-            string fromParamName, string toParamName)
+        internal static void RemapParameterReferences(AnimatorController controller, string fromParamName, string toParamName)
+        {
+            foreach (var layer in controller.layers)
+                RemapBehavioursInStateMachine(layer.stateMachine, fromParamName, toParamName);
+            AnimatorClipRemapper.RemapAapParameter(controller, fromParamName, toParamName);
+#if VRC_SDK_VRCSDK3
+            RemapVrcParameters(fromParamName, toParamName);
+#endif
+        }
+
+        static void RemapConditionsInStateMachine(AnimatorStateMachine stateMachine, string fromParamName, string toParamName)
         {
             foreach (var transition in stateMachine.anyStateTransitions)
                 RemapConditions(transition, fromParamName, toParamName);
             foreach (var childState in stateMachine.states)
-            {
                 foreach (var transition in childState.state.transitions)
                     RemapConditions(transition, fromParamName, toParamName);
-                RemapDriverParameters(childState.state, fromParamName, toParamName);
-            }
             foreach (var childStateMachine in stateMachine.stateMachines)
-                RemapParameterInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
+                RemapConditionsInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
         }
 
-        static void RemapConditions(AnimatorStateTransition transition,
-            string fromParamName, string toParamName)
+        static void RemapConditions(AnimatorStateTransition transition, string fromParamName, string toParamName)
         {
             var conditions = transition.conditions;
             bool modified = false;
@@ -290,39 +354,55 @@ namespace YGDR.Editor.Animation
             transition.conditions = conditions;
         }
 
-        internal static void RemapDriverParameters(AnimatorState state,
-            string fromParamName, string toParamName)
+#if VRC_SDK_VRCSDK3
+        static void RemapBehaviours(StateMachineBehaviour[] behaviours, string fromParamName, string toParamName)
         {
-            foreach (var driver in state.behaviours.OfType<VRCAvatarParameterDriver>())
+            foreach (var driver in behaviours.OfType<VRCAvatarParameterDriver>())
             {
                 bool modified = false;
                 for (int i = 0; i < driver.parameters.Count; i++)
                 {
-                    if (driver.parameters[i].name != fromParamName) continue;
-                    Undo.RecordObject(driver, "Remap Parameter");
+                    var driverParam = driver.parameters[i];
+                    bool nameMatches   = driverParam.name == fromParamName;
+                    bool sourceMatches = driverParam.type == VRC_AvatarParameterDriver.ChangeType.Copy
+                                        && driverParam.source == fromParamName;
+                    if (!nameMatches && !sourceMatches) continue;
+                    if (!modified) { Undo.RecordObject(driver, "Remap Parameter"); modified = true; }
                     driver.parameters[i] = new VRC_AvatarParameterDriver.Parameter
                     {
-                        name     = toParamName,
-                        type     = driver.parameters[i].type,
-                        value    = driver.parameters[i].value,
-                        valueMin = driver.parameters[i].valueMin,
-                        valueMax = driver.parameters[i].valueMax,
-                        chance   = driver.parameters[i].chance
+                        name           = nameMatches   ? toParamName : driverParam.name,
+                        source         = sourceMatches ? toParamName : driverParam.source,
+                        type           = driverParam.type,
+                        value          = driverParam.value,
+                        valueMin       = driverParam.valueMin,
+                        valueMax       = driverParam.valueMax,
+                        chance         = driverParam.chance,
+                        convertRange   = driverParam.convertRange,
+                        sourceMin      = driverParam.sourceMin,
+                        sourceMax      = driverParam.sourceMax,
+                        destMin        = driverParam.destMin,
+                        destMax        = driverParam.destMax,
+                        preventRepeats = driverParam.preventRepeats
                     };
-                    modified = true;
                 }
-                if (!modified) continue;
-                EditorUtility.SetDirty(driver);
+                if (modified) EditorUtility.SetDirty(driver);
+            }
+            foreach (var playAudio in behaviours.OfType<VRCAnimatorPlayAudio>())
+            {
+                if (playAudio.ParameterName != fromParamName) continue;
+                Undo.RecordObject(playAudio, "Remap Parameter");
+                playAudio.ParameterName = toParamName;
+                EditorUtility.SetDirty(playAudio);
             }
         }
 
-        internal static void RemapDriverParametersInStateMachine(AnimatorStateMachine stateMachine,
-            string fromParamName, string toParamName)
+        static void RemapBehavioursInStateMachine(AnimatorStateMachine stateMachine, string fromParamName, string toParamName)
         {
+            RemapBehaviours(stateMachine.behaviours, fromParamName, toParamName);
             foreach (var childState in stateMachine.states)
-                RemapDriverParameters(childState.state, fromParamName, toParamName);
+                RemapBehaviours(childState.state.behaviours, fromParamName, toParamName);
             foreach (var childStateMachine in stateMachine.stateMachines)
-                RemapDriverParametersInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
+                RemapBehavioursInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
         }
 
         internal static void AddAllToVrcParameters(VRCExpressionParameters expressionParameters,
@@ -368,7 +448,7 @@ namespace YGDR.Editor.Animation
             EditorUtility.SetDirty(expressionParameters);
         }
 
-        internal static void RenameVrcParameters(string oldName, string newName)
+        internal static void RemapVrcParameters(string oldName, string newName)
         {
             var expressionParameters = VRCSyncCache.GetExpressionParameters();
             if (expressionParameters?.parameters != null)
@@ -490,6 +570,19 @@ namespace YGDR.Editor.Animation
                     RenameInMenu(control.subMenu, oldName, newName, visited);
         }
 
+        internal static void ConvertVrcParameter(VRCExpressionParameters expressionParameters,
+            string paramName, AnimatorControllerParameterType newType)
+        {
+            foreach (var expressionParameter in expressionParameters.parameters)
+            {
+                if (expressionParameter.name != paramName) continue;
+                Undo.RecordObject(expressionParameters, "Convert VRC Parameter");
+                expressionParameter.valueType = MapToVrcValueType(newType);
+                EditorUtility.SetDirty(expressionParameters);
+                break;
+            }
+        }
+
         internal static void SetVrcSynced(VRCExpressionParameters expressionParameters,
             string paramName, bool synced)
         {
@@ -505,6 +598,7 @@ namespace YGDR.Editor.Animation
             }
             EditorUtility.SetDirty(expressionParameters);
         }
+#endif
     }
 }
 #endif

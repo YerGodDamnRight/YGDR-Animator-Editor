@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Reflection;
@@ -193,8 +212,9 @@ namespace YGDR.Editor.Animation
                 // Name label
                 var nameRect = Rect.MinMaxRect(rect.xMin, rect.yMin, badgeCursor.xMin - 4f, rect.yMax);
 
-                // Rename overlay
-                var renameOverlay = RenameOverlayField?.GetValue(instance);
+                // Rename overlay — use Property accessor (field accessor may be null if Unity exposes as property)
+                var renameOverlay = WindowPatchReflection.LayerRenameOverlayProperty?.GetValue(instance)
+                    ?? RenameOverlayField?.GetValue(instance);
                 if (renameOverlay != null)
                 {
                     var overlayTraverse  = Traverse.Create(renameOverlay);
@@ -254,7 +274,10 @@ namespace YGDR.Editor.Animation
 
                 bool newCompact = GUI.Toggle(buttonRect, PatchLayerCompact.IsCompact, icon, EditorStyles.iconButton);
                 if (newCompact != PatchLayerCompact.IsCompact)
+                {
                     PatchLayerCompact.IsCompact = newCompact;
+                    EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
+                }
             }
             catch (Exception e)
             {

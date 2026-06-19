@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Reflection;
@@ -20,6 +39,8 @@ namespace YGDR.Editor.Animation
                 Debug.LogWarning("[AnimatorTools] LayerControllerView.m_LayerList not found — Unity version mismatch?");
             if (LayerSelectedIndexField == null)
                 Debug.LogWarning("[AnimatorTools] LayerControllerView.m_SelectedLayerIndex not found — Unity version mismatch?");
+            if (AnimatorControllerDirtyField == null)
+                Debug.LogWarning("[AnimatorTools] AnimatorController.OnAnimatorControllerDirty not found — Unity version mismatch?");
             if (AnimatorControllerGetter == null)
                 Debug.LogWarning("[AnimatorTools] AnimatorControllerTool.animatorController not found — Unity version mismatch?");
         }
@@ -45,6 +66,10 @@ namespace YGDR.Editor.Animation
             AccessTools.Method(typeof(ReorderableList), "GetElementHeight", new Type[] { typeof(int) });
         internal static readonly MethodInfo GetElementYOffsetMethod =
             AccessTools.Method(typeof(ReorderableList), "GetElementYOffset", new Type[] { typeof(int) });
+
+        // AnimatorController internals
+        internal static readonly FieldInfo AnimatorControllerDirtyField =
+            AccessTools.Field(typeof(UnityEditor.Animations.AnimatorController), "OnAnimatorControllerDirty");
 
         // AnimatorControllerTool access
         internal static readonly MethodInfo AnimatorControllerGetter =
@@ -111,9 +136,6 @@ namespace YGDR.Editor.Animation
                 LayerSelectedIndexField != null ? (int)(LayerSelectedIndexField.GetValue(_instance) ?? -1) : -1;
         }
 
-        // Optional MDV integration
-        internal static readonly MethodInfo MdvOpenMethod =
-            AccessTools.Method(AccessTools.TypeByName("YGDR.MDV.MDViewer"), "Open");
 
         static FieldInfo FindReorderableListField(Type type)
         {

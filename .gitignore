@@ -70,3 +70,6 @@ YGDR-Notes/
 CLAUDE.md
 IconBrowserWindow.cs
 IconBrowserWindow.cs.meta
+
+# Windows null device artifact
+nul

@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -8,8 +27,10 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 using HarmonyLib;
+#if VRC_SDK_VRCSDK3
 using VRC.SDK3.Avatars.Components;
 using VRC.SDKBase;
+#endif
 
 namespace YGDR.Editor.Animation
 {
@@ -20,6 +41,7 @@ namespace YGDR.Editor.Animation
         // Behavior clipboard.
         static Type _copiedBehaviorType;
         static readonly List<string> _copiedBehaviorJsons = new List<string>();
+#if VRC_SDK_VRCSDK3
         static readonly (string label, Type type)[] _behaviorTypes =
         {
             ("Param Drivers", typeof(VRCAvatarParameterDriver)),
@@ -30,6 +52,9 @@ namespace YGDR.Editor.Animation
             ("Pose Space",    typeof(VRCAnimatorTemporaryPoseSpace)),
             ("Playable Layer",typeof(VRCPlayableLayerControl)),
         };
+#else
+        static readonly (string label, Type type)[] _behaviorTypes = System.Array.Empty<(string, Type)>();
+#endif
 
         // Step-1 state for two-phase operations.
         internal static AnimatorState[] _multiTransitionSources;
@@ -122,7 +147,7 @@ namespace YGDR.Editor.Animation
                         .SelectMany(state => CollectClips(state.motion))
                         .All(clip => AnimationUtility.GetAnimationClipSettings(clip).loopTime);
                     menu.AddItem(
-                        new GUIContent("Looptime"),
+                        new GUIContent(L10n.Get("context_menu.looptime")),
                         loopOn,
                         static data =>
                         {
@@ -131,7 +156,7 @@ namespace YGDR.Editor.Animation
                         },
                         (capturedStates, loopOn));
                     menu.AddItem(
-                        new GUIContent("Pack into Sub-State Machine"),
+                        new GUIContent(L10n.Get("context_menu.pack_subsm")),
                         false,
                         static data =>
                         {
@@ -140,7 +165,7 @@ namespace YGDR.Editor.Animation
                         },
                         (capturedSM, capturedStates));
                     menu.AddItem(
-                        new GUIContent("Select Transitions/Incoming"),
+                        new GUIContent($"{L10n.Get("context_menu.select_transitions")}/{L10n.Get("context_menu.select_incoming")}"),
                         false,
                         static data =>
                         {
@@ -151,12 +176,12 @@ namespace YGDR.Editor.Animation
                         },
                         (capturedSM, capturedStates));
                     menu.AddItem(
-                        new GUIContent("Select Transitions/Outgoing"),
+                        new GUIContent($"{L10n.Get("context_menu.select_transitions")}/{L10n.Get("context_menu.select_outgoing")}"),
                         false,
                         static data => AnimationEditorWindow.SelectOutgoingTransitions((AnimatorState[])data),
                         capturedStates);
                     menu.AddItem(
-                        new GUIContent("Select Transitions/Both"),
+                        new GUIContent($"{L10n.Get("context_menu.select_transitions")}/{L10n.Get("context_menu.select_both")}"),
                         false,
                         static data =>
                         {
@@ -171,7 +196,7 @@ namespace YGDR.Editor.Animation
                 if (isAnyStateSelected)
                 {
                     var capturedSM = activeSM;
-                    menu.AddItem(new GUIContent("Select Outgoing Transitions"), false,
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.select_outgoing_all")), false,
                         static data =>
                         {
                             var sm = (AnimatorStateMachine)data;
@@ -185,7 +210,7 @@ namespace YGDR.Editor.Animation
                 if (isExitSelected)
                 {
                     var capturedSM = activeSM;
-                    menu.AddItem(new GUIContent("Select Incoming Transitions"), false,
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.select_incoming_all")), false,
                         static data =>
                         {
                             var sm = (AnimatorStateMachine)data;
@@ -203,11 +228,11 @@ namespace YGDR.Editor.Animation
                     foreach (var (label, type) in _behaviorTypes)
                     {
                         if (copyState.behaviours.Any(b => b.GetType() == type))
-                            menu.AddItem(new GUIContent($"Copy Behaviors/{label}"), false,
+                            menu.AddItem(new GUIContent($"{L10n.Get("context_menu.copy_behaviors")}/{label}"), false,
                                 static data => { var (t, s) = ((Type, AnimatorState))data; CopyBehavior(s, t); },
                                 (type, copyState));
                         else
-                            menu.AddDisabledItem(new GUIContent($"Copy Behaviors/{label}"));
+                            menu.AddDisabledItem(new GUIContent($"{L10n.Get("context_menu.copy_behaviors")}/{label}"));
                     }
                 }
 
@@ -215,7 +240,7 @@ namespace YGDR.Editor.Animation
                 {
                     var match = _behaviorTypes.FirstOrDefault(x => x.type == _copiedBehaviorType);
                     var typeName = match.label ?? _copiedBehaviorType.Name;
-                    menu.AddItem(new GUIContent($"Paste Behaviors ({typeName})"), false,
+                    menu.AddItem(new GUIContent($"{L10n.Get("context_menu.paste_behaviors")} ({typeName})"), false,
                         static data => PasteBehaviors((AnimatorState[])data),
                         selectedStates);
                 }
@@ -228,7 +253,7 @@ namespace YGDR.Editor.Animation
                     if (_multiTransitionSources == null)
                     {
                         if (selectedStates.Length > 0)
-                            menu.AddItem(new GUIContent("Multi Transition"), false,
+                            menu.AddItem(new GUIContent(L10n.Get("context_menu.multi_transition")), false,
                                 static data =>
                                 {
                                     var (states, sm) = ((AnimatorState[], AnimatorStateMachine))data;
@@ -242,7 +267,7 @@ namespace YGDR.Editor.Animation
                                 },
                                 (selectedStates, activeSM));
                         else if (isAnyStateSelected)
-                            menu.AddItem(new GUIContent("Multi Transition"), false,
+                            menu.AddItem(new GUIContent(L10n.Get("context_menu.multi_transition")), false,
                                 static data =>
                                 {
                                     var sm = (AnimatorStateMachine)data;
@@ -258,11 +283,11 @@ namespace YGDR.Editor.Animation
                     }
                     else if (_multiTransitionFromAnyState && isExitSelected)
                     {
-                        menu.AddDisabledItem(new GUIContent("Multi Transition (AnyState cannot target Exit)"));
+                        menu.AddDisabledItem(new GUIContent($"{L10n.Get("context_menu.multi_transition")} (AnyState cannot target Exit)"));
                     }
                     else
                     {
-                        menu.AddItem(new GUIContent("Multi Transition"), true,
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.multi_transition")), true,
                             static data =>
                             {
                                 var (dests, toExit, fromAnyState) = ((AnimatorState[], bool, bool))data;
@@ -272,11 +297,11 @@ namespace YGDR.Editor.Animation
                                 _multiTransitionSM = null;
                                 _multiTransitionFromAnyState = false;
                                 if (toExit && !fromAnyState)
-                                    AnimatorLayerOps.MultiTransitionToExit(sm, sources);
+                                    AnimatorBulkTransitionOps.MultiTransitionToExit(sm, sources);
                                 else if (fromAnyState && dests.Length > 0)
-                                    AnimatorLayerOps.MultiTransitionFromAnyState(sm, dests);
+                                    AnimatorBulkTransitionOps.MultiTransitionFromAnyState(sm, dests);
                                 else if (dests.Length > 0)
-                                    AnimatorLayerOps.MultiTransition(sm, sources, dests);
+                                    AnimatorBulkTransitionOps.MultiTransition(sm, sources, dests);
                             },
                             (selectedStates, isExitSelected, _multiTransitionFromAnyState));
                     }
@@ -293,12 +318,12 @@ namespace YGDR.Editor.Animation
                         var capturedSM = activeSM;
                         var capturedTransitions = selectedTransitions;
                         menu.AddItem(
-                            new GUIContent("Reverse Transitions"),
+                            new GUIContent(L10n.Get("context_menu.reverse_transitions")),
                             false,
                             static data =>
                             {
                                 var pair = ((AnimatorStateMachine, AnimatorStateTransition[]))data;
-                                AnimatorLayerOps.ReverseNegateTransitions(pair.Item1, pair.Item2);
+                                AnimatorBulkTransitionOps.ReverseNegateTransitions(pair.Item1, pair.Item2);
                             },
                             (capturedSM, capturedTransitions));
                     }
@@ -306,7 +331,7 @@ namespace YGDR.Editor.Animation
                     if (_redirectTransitions == null)
                     {
                         if (selectedTransitions.Length > 0)
-                            menu.AddItem(new GUIContent("Redirect Transitions"), false,
+                            menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), false,
                                 static data =>
                                 {
                                     var (transitions, sm) = ((AnimatorStateTransition[], AnimatorStateMachine))data;
@@ -321,7 +346,7 @@ namespace YGDR.Editor.Animation
                     }
                     else
                     {
-                        menu.AddItem(new GUIContent("Redirect Transitions"), true,
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), true,
                             static data =>
                             {
                                 var (dests, toExit) = ((AnimatorState[], bool))data;
@@ -330,9 +355,9 @@ namespace YGDR.Editor.Animation
                                 _redirectTransitions = null;
                                 _redirectSM = null;
                                 if (toExit)
-                                    AnimatorLayerOps.RedirectTransitionsToExit(sm, transitions);
+                                    AnimatorBulkTransitionOps.RedirectTransitionsToExit(sm, transitions);
                                 else if (dests.Length > 0)
-                                    AnimatorLayerOps.RedirectTransitions(sm, transitions, dests);
+                                    AnimatorBulkTransitionOps.RedirectTransitions(sm, transitions, dests);
                             },
                             (selectedStates, isExitSelected));
                     }
@@ -340,7 +365,7 @@ namespace YGDR.Editor.Animation
                     if (_replicateTransitions == null)
                     {
                         if (selectedTransitions.Length > 0)
-                            menu.AddItem(new GUIContent("Replicate Transitions"), false,
+                            menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), false,
                                 static data =>
                                 {
                                     var (transitions, sm) = ((AnimatorStateTransition[], AnimatorStateMachine))data;
@@ -355,7 +380,7 @@ namespace YGDR.Editor.Animation
                     }
                     else
                     {
-                        menu.AddItem(new GUIContent("Replicate Transitions"), true,
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
                             static data =>
                             {
                                 var (newSourceStates, fromAnyState) = ((AnimatorState[], bool))data;
@@ -364,12 +389,59 @@ namespace YGDR.Editor.Animation
                                 _replicateTransitions = null;
                                 _replicateSM = null;
                                 if (fromAnyState)
-                                    AnimatorLayerOps.ReplicateTransitionsFromAnyState(sm, transitions);
+                                    AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(sm, transitions);
                                 else if (newSourceStates.Length > 0)
-                                    AnimatorLayerOps.ReplicateTransitions(sm, transitions, newSourceStates);
+                                    AnimatorBulkTransitionOps.ReplicateTransitions(sm, transitions, newSourceStates);
                             },
                             (selectedStates, isAnyStateSelected));
                     }
+                }
+
+                var colorTagSettings = AnimatorDefaultSettings.Load();
+                if (colorTagSettings.colorTags.Count > 0 && (selectedStates.Length > 0 || selectedTransitions.Length > 0))
+                {
+                    menu.AddSeparator("");
+                    var capturedTagStates = selectedStates;
+                    var capturedTagTransitions = selectedTransitions;
+                    foreach (var colorTag in colorTagSettings.colorTags)
+                    {
+                        var capturedTagName = colorTag.tagName;
+                        bool allStatesChecked = capturedTagStates.Length == 0 || capturedTagStates.All(state => state.tag == capturedTagName);
+                        bool allTransitionsChecked = capturedTagTransitions.Length == 0 || capturedTagTransitions.All(transition => transition.name == capturedTagName);
+                        bool allChecked = allStatesChecked && allTransitionsChecked;
+                        menu.AddItem(
+                            new GUIContent($"{L10n.Get("context_menu.tag")}/{capturedTagName}"),
+                            allChecked,
+                            static data =>
+                            {
+                                var (states, transitions, tagName, wasChecked) = ((AnimatorState[], AnimatorStateTransition[], string, bool))data;
+                                var allObjects = states.Cast<UnityEngine.Object>().Concat(transitions).ToArray();
+                                Undo.RecordObjects(allObjects, "Apply Tag");
+                                foreach (var state in states)
+                                    state.tag = wasChecked ? "" : tagName;
+                                foreach (var transition in transitions)
+                                    transition.name = wasChecked ? "" : tagName;
+                                foreach (var obj in allObjects)
+                                    EditorUtility.SetDirty(obj);
+                            },
+                            (capturedTagStates, capturedTagTransitions, capturedTagName, allChecked));
+                    }
+                    menu.AddItem(
+                        new GUIContent($"{L10n.Get("context_menu.tag")}/{L10n.Get("context_menu.remove_tags")}"),
+                        false,
+                        static data =>
+                        {
+                            var (states, transitions) = ((AnimatorState[], AnimatorStateTransition[]))data;
+                            var allObjects = states.Cast<UnityEngine.Object>().Concat(transitions).ToArray();
+                            Undo.RecordObjects(allObjects, "Remove Tag");
+                            foreach (var state in states)
+                                state.tag = "";
+                            foreach (var transition in transitions)
+                                transition.name = "";
+                            foreach (var obj in allObjects)
+                                EditorUtility.SetDirty(obj);
+                        },
+                        (capturedTagStates, capturedTagTransitions));
                 }
 
             }
@@ -549,7 +621,7 @@ namespace YGDR.Editor.Animation
                     var capturedParent = activeSM;
                     var capturedSub = subStateMachine;
                     menu.AddItem(
-                        new GUIContent("Unpack Sub State Machine"),
+                        new GUIContent(L10n.Get("context_menu.unpack_subsm")),
                         false,
                         static data =>
                         {
@@ -654,11 +726,11 @@ namespace YGDR.Editor.Animation
                 {
                     var capturedSM = activeStateMachine;
                     var capturedTransitions = selectedTransitions;
-                    menu.AddItem(new GUIContent("Reverse Transitions"), false,
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.reverse_transitions")), false,
                         static data =>
                         {
                             var pair = ((AnimatorStateMachine, AnimatorStateTransition[]))data;
-                            AnimatorLayerOps.ReverseNegateTransitions(pair.Item1, pair.Item2);
+                            AnimatorBulkTransitionOps.ReverseNegateTransitions(pair.Item1, pair.Item2);
                         },
                         (capturedSM, capturedTransitions));
                 }
@@ -666,7 +738,7 @@ namespace YGDR.Editor.Animation
                 if (PatchStateNodeMenu._redirectTransitions == null)
                 {
                     if (selectedTransitions.Length > 0)
-                        menu.AddItem(new GUIContent("Redirect Transitions"), false,
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), false,
                             static data =>
                             {
                                 var (transitions, sm) = ((AnimatorStateTransition[], AnimatorStateMachine))data;
@@ -681,7 +753,7 @@ namespace YGDR.Editor.Animation
                 }
                 else
                 {
-                    menu.AddItem(new GUIContent("Redirect Transitions"), true,
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), true,
                         static data =>
                         {
                             var dests = (AnimatorState[])data;
@@ -690,7 +762,7 @@ namespace YGDR.Editor.Animation
                             PatchStateNodeMenu._redirectTransitions = null;
                             PatchStateNodeMenu._redirectSM = null;
                             if (dests.Length > 0)
-                                AnimatorLayerOps.RedirectTransitions(sm, transitions, dests);
+                                AnimatorBulkTransitionOps.RedirectTransitions(sm, transitions, dests);
                         },
                         selectedStates);
                 }
@@ -698,7 +770,7 @@ namespace YGDR.Editor.Animation
                 if (PatchStateNodeMenu._replicateTransitions == null)
                 {
                     if (selectedTransitions.Length > 0)
-                        menu.AddItem(new GUIContent("Replicate Transitions"), false,
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), false,
                             static data =>
                             {
                                 var (transitions, sm) = ((AnimatorStateTransition[], AnimatorStateMachine))data;
@@ -713,7 +785,7 @@ namespace YGDR.Editor.Animation
                 }
                 else
                 {
-                    menu.AddItem(new GUIContent("Replicate Transitions"), true,
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
                         static data =>
                         {
                             var newSourceStates = (AnimatorState[])data;
@@ -722,48 +794,37 @@ namespace YGDR.Editor.Animation
                             PatchStateNodeMenu._replicateTransitions = null;
                             PatchStateNodeMenu._replicateSM = null;
                             if (newSourceStates.Length > 0)
-                                AnimatorLayerOps.ReplicateTransitions(sm, transitions, newSourceStates);
+                                AnimatorBulkTransitionOps.ReplicateTransitions(sm, transitions, newSourceStates);
                         },
                         selectedStates);
                 }
 
                 // Always visible
                 menu.AddItem(
-                    new GUIContent("Delete All Transitions in Layer"),
+                    new GUIContent(L10n.Get("context_menu.delete_all_transitions")),
                     false,
-                    static data => AnimatorLayerOps.DeleteAllTransitions((AnimatorStateMachine)data),
+                    static data => AnimatorBulkTransitionOps.DeleteAllTransitions((AnimatorStateMachine)data),
                     activeStateMachine);
 
                 if (selectedTransitions.Length == 0)
                 {
-                menu.AddSeparator("");
+                    menu.AddSeparator("");
 
-                menu.AddItem(new GUIContent("Find Unreachable States"), false,
-                    static data =>
-                    {
-                        var rootSM = PatchStateNodeMenu.ResolveRootStateMachine((AnimatorStateMachine)data);
-                        AnimatorGraphAnalyzer.FindUnreachableStates(rootSM);
-                        EditorWindow.GetWindow(AnimatorEditorInit.AnimatorControllerToolType)?.Repaint();
-                    }, activeStateMachine);
-
-                menu.AddItem(new GUIContent("Find Terminal States"), false,
-                    static data =>
-                    {
-                        var rootSM = PatchStateNodeMenu.ResolveRootStateMachine((AnimatorStateMachine)data);
-                        AnimatorGraphAnalyzer.FindTerminalStates(rootSM);
-                        EditorWindow.GetWindow(AnimatorEditorInit.AnimatorControllerToolType)?.Repaint();
-                    }, activeStateMachine);
-
-                if (AnimatorGraphAnalyzer.HighlightedStates.Count > 0
-                    || AnimatorGraphAnalyzer.HighlightedTransitions.Count > 0
-                    || AnimatorGraphAnalyzer.HighlightedSubStateMachines.Count > 0)
-                {
-                    menu.AddItem(new GUIContent("Clear Analysis Highlights"), false,
-                        static _ =>
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.find_unreachable")), false,
+                        static data =>
                         {
-                            AnimatorGraphAnalyzer.ClearResults();
+                            var rootSM = PatchStateNodeMenu.ResolveRootStateMachine((AnimatorStateMachine)data);
+                            AnimatorGraphAnalyzer.FindUnreachableStates(rootSM);
                             EditorWindow.GetWindow(AnimatorEditorInit.AnimatorControllerToolType)?.Repaint();
-                        }, null);
+                        }, activeStateMachine);
+
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.find_terminal")), false,
+                        static data =>
+                        {
+                            var rootSM = PatchStateNodeMenu.ResolveRootStateMachine((AnimatorStateMachine)data);
+                            AnimatorGraphAnalyzer.FindTerminalStates(rootSM);
+                            EditorWindow.GetWindow(AnimatorEditorInit.AnimatorControllerToolType)?.Repaint();
+                        }, activeStateMachine);
                 }
 
                 menu.AddSeparator("");
@@ -776,7 +837,7 @@ namespace YGDR.Editor.Animation
                     .Where(sm => sm != activeStateMachine)
                     .ToArray();
                 var capturedSpecialNodePositions = FrameInteractionPatch.CaptureSpecialNodePositions();
-                menu.AddItem(new GUIContent("Create Frame"), false, () =>
+                menu.AddItem(new GUIContent(L10n.Get("context_menu.create_frame")), false, () =>
                 {
                     var getActiveSM = AccessTools.Method(capturedGraphGUI.GetType(), "get_activeStateMachine");
                     var sm = getActiveSM?.Invoke(capturedGraphGUI, null) as AnimatorStateMachine;
@@ -818,8 +879,7 @@ namespace YGDR.Editor.Animation
                 if (capturedController != null)
                 {
                     var capturedFrameData = FrameLayoutData.GetOrCreate(capturedController);
-                    var capturedRootLayerSM = FrameRenderer.LastRootLayerSM;
-                    menu.AddItem(new GUIContent("Delete All Frames"), false, () =>
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.delete_all_frames")), false, () =>
                     {
                         var capturedActiveSM = FrameRenderer.LastActiveSM;
                         var framesToRemove = capturedFrameData.frames
@@ -835,7 +895,44 @@ namespace YGDR.Editor.Animation
                         EditorUtility.SetDirty(capturedFrameData);
                     });
                 }
-                } // end graph tools block
+
+                var colorTagSettings = AnimatorDefaultSettings.Load();
+                if (colorTagSettings.colorTags.Count > 0 && selectedTransitions.Length > 0)
+                {
+                    menu.AddSeparator("");
+                    var capturedTagTransitions = selectedTransitions;
+                    foreach (var colorTag in colorTagSettings.colorTags)
+                    {
+                        var capturedTagName = colorTag.tagName;
+                        bool allChecked = capturedTagTransitions.All(transition => transition.name == capturedTagName);
+                        menu.AddItem(
+                            new GUIContent($"{L10n.Get("context_menu.tag")}/{capturedTagName}"),
+                            allChecked,
+                            static data =>
+                            {
+                                var (transitions, tagName, wasChecked) = ((AnimatorStateTransition[], string, bool))data;
+                                Undo.RecordObjects(transitions, "Apply Tag");
+                                foreach (var transition in transitions)
+                                    transition.name = wasChecked ? "" : tagName;
+                                foreach (var transition in transitions)
+                                    EditorUtility.SetDirty(transition);
+                            },
+                            (capturedTagTransitions, capturedTagName, allChecked));
+                    }
+                    menu.AddItem(
+                        new GUIContent($"{L10n.Get("context_menu.tag")}/{L10n.Get("context_menu.remove_tags")}"),
+                        false,
+                        static data =>
+                        {
+                            var transitions = (AnimatorStateTransition[])data;
+                            Undo.RecordObjects(transitions, "Remove Tag");
+                            foreach (var transition in transitions)
+                                transition.name = "";
+                            foreach (var transition in transitions)
+                                EditorUtility.SetDirty(transition);
+                        },
+                        capturedTagTransitions);
+                }
             }
             catch (Exception e)
             {

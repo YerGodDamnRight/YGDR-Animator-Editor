@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Linq;
@@ -5,7 +24,9 @@ using System.Reflection;
 using HarmonyLib;
 using UnityEditor;
 using UnityEngine;
+#if VRC_SDK_VRCSDK3
 using VRC.SDK3.Avatars.Components;
+#endif
 
 namespace YGDR.Editor.Animation
 {
@@ -58,8 +79,14 @@ namespace YGDR.Editor.Animation
         [HarmonyPostfix]
         static void Postfix(AnimationWindow __instance, AnimationClip animationClip)
         {
+            if (animationClip != null && Selection.objects.Contains(animationClip)) return;
+
             var animatorGameObject = GetOrFindAnimatorGameObject();
             if (animatorGameObject == null) return;
+
+            var activeRootGameObject = Traverse.Create(__instance).Property("state").Property("activeRootGameObject").GetValue<GameObject>();
+            if (activeRootGameObject == animatorGameObject) return;
+
             try
             {
                 _editGameObjectArgs[0] = animatorGameObject; EditGameObjectMethod?.Invoke(__instance, _editGameObjectArgs);
@@ -73,11 +100,17 @@ namespace YGDR.Editor.Animation
 
         static GameObject GetOrFindAnimatorGameObject()
         {
-            if (PatchStateNodeClipSync.CachedAnimatorGameObject != null)
-                return PatchStateNodeClipSync.CachedAnimatorGameObject;
-
             var openController = WindowPatchReflection.GetOpenController();
             if (openController == null) return null;
+
+            var cachedAnimatorGameObject = PatchStateNodeClipSync.CachedAnimatorGameObject;
+            if (cachedAnimatorGameObject != null)
+            {
+                var cachedAnimator = cachedAnimatorGameObject.GetComponentInParent<Animator>(true);
+                if (cachedAnimator != null && cachedAnimator.runtimeAnimatorController == openController)
+                    return cachedAnimatorGameObject;
+                PatchStateNodeClipSync.CachedAnimatorGameObject = null;
+            }
 
             foreach (var animator in UnityEngine.Object.FindObjectsOfType<Animator>(true))
             {
@@ -169,10 +202,14 @@ namespace YGDR.Editor.Animation
             if ((animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController) != null) return true;
             var activeController = WindowPatchReflection.GetOpenController();
             if (activeController == null) return false;
+#if VRC_SDK_VRCSDK3
             var descriptor = gameObject.GetComponentInParent<VRCAvatarDescriptor>(true);
             if (descriptor == null) return false;
             return descriptor.baseAnimationLayers.Concat(descriptor.specialAnimationLayers)
                 .Any(layer => layer.animatorController as UnityEditor.Animations.AnimatorController == activeController);
+#else
+            return false;
+#endif
         }
 
         static string GetRelativePath(Transform root, Transform target)

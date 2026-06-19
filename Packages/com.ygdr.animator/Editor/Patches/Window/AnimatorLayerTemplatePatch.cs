@@ -1,3 +1,22 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
@@ -86,10 +105,17 @@ namespace YGDR.Editor.Animation
 
                 var menu = new GenericMenu();
 
-                menu.AddItem(new GUIContent("New Layer"), false, () =>
+                menu.AddItem(new GUIContent(L10n.Get("layer_template.new_layer")), false, () =>
                 {
                     WindowPatchReflection.AddNewLayerMethod.Invoke(animatorControllerTool, null);
                     UpdateListAndBeginRename(animatorControllerTool, layerControllerView);
+                });
+
+                menu.AddItem(new GUIContent(L10n.Get("toggle.menu_item")), false, () =>
+                {
+                    var capturedController = WindowPatchReflection.GetOpenController();
+                    if (capturedController != null)
+                        AnimatorGameObjectToggleWindow.Open(capturedController);
                 });
 
                 menu.AddSeparator("");
@@ -100,7 +126,7 @@ namespace YGDR.Editor.Animation
 
                 if (packageTemplates.Count == 0 && userTemplates.Count == 0)
                 {
-                    menu.AddDisabledItem(new GUIContent("(no templates)"));
+                    menu.AddDisabledItem(new GUIContent(L10n.Get("layer_template.no_templates")));
                 }
                 else
                 {
@@ -128,11 +154,12 @@ namespace YGDR.Editor.Animation
                             string capturedDir  = System.IO.Path.GetDirectoryName(
                                 AssetDatabase.GetAssetPath(templateController)).Replace('\\', '/');
                             string capturedName = templateName;
-                            menu.AddItem(new GUIContent($"Delete User Template/{templateName.Replace('.', '/')}"), false, () =>
+                            menu.AddItem(new GUIContent($"{L10n.Get("layer_template.delete_template")}/{templateName.Replace('.', '/')}"), false, () =>
                             {
-                                if (EditorUtility.DisplayDialog("Delete Template",
-                                    $"Delete '{capturedName}' and all its clips? This cannot be undone.",
-                                    "Delete", "Cancel"))
+                                if (EditorUtility.DisplayDialog(L10n.Get("layer_template.delete_confirm_title"),
+                                    string.Format(L10n.Get("layer_template.delete_confirm_body"), capturedName),
+                                    L10n.Get("layer_template.delete_confirm_ok"),
+                                    L10n.Get("layer_template.delete_confirm_cancel")))
                                     AssetDatabase.DeleteAsset(capturedDir);
                             });
                         }
@@ -172,12 +199,18 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        internal const string UserTemplatesPath = "Assets/YGDR Animator/User Templates";
+        internal const string UserLayerTemplatesPath     = "Assets/YGDR Animator/User Templates/Layer Templates";
+        internal const string UserBlendTreeTemplatesPath = "Assets/YGDR Animator/User Templates/Blend Tree Templates";
 
         internal static List<(string name, AnimatorController controller, bool isUser)> _templateCache;
+        internal static List<(string name, BlendTree blendTree)> _blendTreeTemplateCache;
 
         [InitializeOnLoadMethod]
-        static void ClearTemplateCache() => _templateCache = null;
+        static void ClearTemplateCache()
+        {
+            _templateCache = null;
+            _blendTreeTemplateCache = null;
+        }
 
         static List<(string name, AnimatorController controller, bool isUser)> LoadTemplateControllers()
         {
@@ -195,9 +228,9 @@ namespace YGDR.Editor.Animation
                     result.Add((controller.name, controller, false));
             }
 
-            if (AssetDatabase.IsValidFolder(UserTemplatesPath))
+            if (AssetDatabase.IsValidFolder(UserLayerTemplatesPath))
             {
-                var userGuids = AssetDatabase.FindAssets("t:AnimatorController", new[] { UserTemplatesPath });
+                var userGuids = AssetDatabase.FindAssets("t:AnimatorController", new[] { UserLayerTemplatesPath });
                 foreach (var guid in userGuids)
                 {
                     var path = AssetDatabase.GUIDToAssetPath(guid);
@@ -209,6 +242,27 @@ namespace YGDR.Editor.Animation
 
             _templateCache = result;
             return _templateCache;
+        }
+
+        internal static List<(string name, BlendTree blendTree)> LoadBlendTreeTemplateAssets()
+        {
+            if (_blendTreeTemplateCache != null) return _blendTreeTemplateCache;
+
+            var result = new List<(string, BlendTree)>();
+            if (AssetDatabase.IsValidFolder(UserBlendTreeTemplatesPath))
+            {
+                var guids = AssetDatabase.FindAssets("t:BlendTree", new[] { UserBlendTreeTemplatesPath });
+                foreach (var guid in guids)
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(guid);
+                    var blendTree = AssetDatabase.LoadAssetAtPath<BlendTree>(path);
+                    if (blendTree != null && AssetDatabase.IsMainAsset(blendTree))
+                        result.Add((blendTree.name, blendTree));
+                }
+            }
+
+            _blendTreeTemplateCache = result;
+            return _blendTreeTemplateCache;
         }
 
     }
@@ -247,9 +301,10 @@ namespace YGDR.Editor.Animation
 
     internal class AnimatorTemplateParameterWindow : EditorWindow
     {
+        static AnimatorTemplateParameterWindow s_activeWindow;
+
         AnimatorController _templateController;
         object _targetLayerView;
-        bool _renameParameters;
         string[] _renamedParameterNames;
         string[] _cachedParamLabels;
         Vector2 _scrollPosition;
@@ -263,6 +318,15 @@ namespace YGDR.Editor.Animation
         string             _templateName;
         AnimatorControllerParameter[] _createModeParams;
 
+        // Blend tree mode (create or import)
+        bool               _isBlendTreeMode;
+        BlendTree          _sourceBlendTree;
+        BlendTree          _templateBlendTree;
+        BlendTree          _targetBlendTree;
+        AnimatorController _targetControllerForBT;
+        AnimatorControllerParameter[] _blendTreeTemplateParams;
+        string             _importedBlendTreeName;
+
         static Color s_hoverColor;
         static bool s_hoverColorValid;
 
@@ -272,16 +336,6 @@ namespace YGDR.Editor.Animation
             alignment = TextAnchor.MiddleLeft,
             fontSize  = 11,
             padding   = new RectOffset(4, 4, 0, 0),
-            normal    = { textColor = Color.white }
-        };
-
-        static GUIStyle s_headerBtnLabelStyle;
-        static GUIStyle HeaderBtnLabelStyle => s_headerBtnLabelStyle ??= new GUIStyle(GUIStyle.none)
-        {
-            alignment = TextAnchor.MiddleCenter,
-            fontStyle = FontStyle.Bold,
-            fontSize  = 11,
-            padding   = new RectOffset(8, 8, 0, 0),
             normal    = { textColor = Color.white }
         };
 
@@ -296,10 +350,9 @@ namespace YGDR.Editor.Animation
 
         internal static void InvalidateStyles()
         {
-            s_headerBtnLabelStyle = null;
-            s_confirmLabelStyle   = null;
-            s_columnHeaderStyle   = null;
-            s_hoverColorValid     = false;
+            s_confirmLabelStyle = null;
+            s_columnHeaderStyle = null;
+            s_hoverColorValid   = false;
         }
 
         static Color GetHoverColor()
@@ -311,52 +364,111 @@ namespace YGDR.Editor.Animation
             return s_hoverColor;
         }
 
+        static AnimatorTemplateParameterWindow GetOrCreate()
+        {
+            s_activeWindow = GetWindow<AnimatorTemplateParameterWindow>("Template");
+            s_activeWindow.minSize = new Vector2(400, 280);
+            s_activeWindow.wantsMouseMove = true;
+            return s_activeWindow;
+        }
+
         internal static void OpenCreate(AnimatorController controller, int layerIndex)
         {
-            var window = CreateInstance<AnimatorTemplateParameterWindow>();
-            window.titleContent       = new GUIContent("Create Template");
-            window.minSize            = new Vector2(400, 280);
+            var window = GetOrCreate();
+            window.titleContent       = new GUIContent(L10n.Get("layer_template.create_template"));
             window._isCreateMode      = true;
+            window._isBlendTreeMode   = false;
             window._sourceController  = controller;
             window._sourceLayerIndex  = layerIndex;
             window._templateName      = controller.layers[layerIndex].name;
+            window._scrollPosition    = Vector2.zero;
 
-            var qualifiedNames    = CollectLayerParams(controller, layerIndex);
-            var parameters        = controller.parameters.Where(p => qualifiedNames.Contains(p.name)).ToArray();
+            var qualifiedNames         = CollectLayerParams(controller, layerIndex);
+            var parameters             = controller.parameters.Where(p => qualifiedNames.Contains(p.name)).ToArray();
             window._createModeParams       = parameters;
             window._renamedParameterNames  = parameters.Select(p => p.name).ToArray();
             window._cachedParamLabels      = BuildParamLabels(parameters);
-            window.wantsMouseMove          = true;
-            window.ShowUtility();
+            window.Focus();
         }
 
         internal static void Open(AnimatorController templateController, object targetLayerView)
         {
-            var window = CreateInstance<AnimatorTemplateParameterWindow>();
-            window.titleContent = new GUIContent("Import Template");
-            window.minSize = new Vector2(400, 280);
+            var window = GetOrCreate();
+            window.titleContent        = new GUIContent(L10n.Get("layer_template.import_template"));
+            window._isCreateMode       = false;
+            window._isBlendTreeMode    = false;
             window._templateController = templateController;
-            window._targetLayerView = targetLayerView;
-            window._renameParameters = false;
-            var parameters = templateController.parameters;
-            window._renamedParameterNames = parameters.Select(parameter => parameter.name).ToArray();
+            window._targetLayerView    = targetLayerView;
+            window._scrollPosition     = Vector2.zero;
+
+            var parameters                = templateController.parameters;
+            window._renamedParameterNames = parameters.Select(p => p.name).ToArray();
             window._cachedParamLabels     = BuildParamLabels(parameters);
-            window.wantsMouseMove = true;
+
             var targetController = Traverse.Create(targetLayerView)
                 .Field("m_Host").Property("animatorController").GetValue<AnimatorController>();
             window._targetControllerPath = targetController != null
                 ? AssetDatabase.GetAssetPath(targetController) : "";
             window._importedLayerName = templateController.layers.Length > 0
                 ? templateController.layers[0].name : "";
-            window.ShowUtility();
+            window.Focus();
         }
+
+        internal static void OpenCreateBlendTree(BlendTree sourceBlendTree, AnimatorController sourceController)
+        {
+            var window = GetOrCreate();
+            window.titleContent     = new GUIContent(L10n.Get("layer_template.create_blendtree"));
+            window._isCreateMode    = true;
+            window._isBlendTreeMode = true;
+            window._sourceBlendTree = sourceBlendTree;
+            window._templateName    = sourceBlendTree.name;
+            window._scrollPosition  = Vector2.zero;
+
+            var paramNames = new HashSet<string>();
+            CollectMotionParamNames(sourceBlendTree, paramNames);
+            paramNames.Remove("");
+            var parameters = sourceController != null
+                ? sourceController.parameters.Where(p => paramNames.Contains(p.name)).ToArray()
+                : paramNames.Select(name => new AnimatorControllerParameter { name = name }).ToArray();
+
+            window._createModeParams      = parameters;
+            window._renamedParameterNames = parameters.Select(p => p.name).ToArray();
+            window._cachedParamLabels     = BuildParamLabels(parameters);
+            window.Focus();
+        }
+
+        internal static void OpenImportBlendTree(BlendTree templateBlendTree, BlendTree targetBlendTree, AnimatorController targetController)
+        {
+            var window = GetOrCreate();
+            window.titleContent           = new GUIContent(L10n.Get("layer_template.import_blendtree"));
+            window._isCreateMode          = false;
+            window._isBlendTreeMode       = true;
+            window._templateBlendTree     = templateBlendTree;
+            window._targetBlendTree       = targetBlendTree;
+            window._targetControllerForBT = targetController;
+            window._importedBlendTreeName = templateBlendTree.name;
+            window._scrollPosition        = Vector2.zero;
+
+            var paramNames = new HashSet<string>();
+            CollectMotionParamNames(templateBlendTree, paramNames);
+            paramNames.Remove("");
+            var parameters = paramNames
+                .Select(name => new AnimatorControllerParameter { name = name, type = AnimatorControllerParameterType.Float })
+                .ToArray();
+
+            window._blendTreeTemplateParams   = parameters;
+            window._renamedParameterNames     = parameters.Select(p => p.name).ToArray();
+            window._cachedParamLabels         = BuildParamLabels(parameters);
+            window.Focus();
+        }
+
+        void OnDestroy() => s_activeWindow = null;
 
         void OnGUI()
         {
             try
             {
                 if (Event.current.type == EventType.MouseMove) Repaint();
-                DrawToggleHeader();
                 DrawParameterList();
             }
             catch (ExitGUIException) { throw; }
@@ -366,27 +478,13 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        void DrawToggleHeader()
-        {
-            var headerRect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
-            if (Event.current.type == EventType.Repaint)
-            {
-                bool hovered = headerRect.Contains(Event.current.mousePosition);
-                EditorGUI.DrawRect(new Rect(0, headerRect.y, EditorGUIUtility.currentViewWidth, headerRect.height),
-                    hovered ? GetHoverColor() : AnimationEditorWindow.Styles.AccentColor);
-                string label = _renameParameters ? "  ✓  Rename Parameters" : "     Rename Parameters";
-                GUI.Label(headerRect, label, HeaderBtnLabelStyle);
-            }
-            if (GUI.Button(headerRect, GUIContent.none, GUIStyle.none))
-                _renameParameters = !_renameParameters;
-            EditorGUIUtility.AddCursorRect(headerRect, MouseCursor.Link);
-        }
-
         void DrawParameterList()
         {
             var parameters = _isCreateMode
                 ? (_createModeParams ?? System.Array.Empty<AnimatorControllerParameter>())
-                : (_templateController != null ? _templateController.parameters : System.Array.Empty<AnimatorControllerParameter>());
+                : _isBlendTreeMode
+                    ? (_blendTreeTemplateParams ?? System.Array.Empty<AnimatorControllerParameter>())
+                    : (_templateController != null ? _templateController.parameters : System.Array.Empty<AnimatorControllerParameter>());
 
             GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
             EditorGUILayout.BeginHorizontal();
@@ -424,13 +522,13 @@ namespace YGDR.Editor.Animation
                 EditorGUI.DrawRect(new Rect(rect.x + halfWidth + middleGap, rect.y, halfWidth, columnHeaderHeight), AnimationEditorWindow.Styles.AccentColor);
             }
 
-            GUI.Label(new Rect(rect.x + 4f,                         rect.y, halfWidth - 4f, columnHeaderHeight), "Parameter",                              ColumnHeaderStyle);
-            GUI.Label(new Rect(rect.x + halfWidth + middleGap + 4f, rect.y, halfWidth - 4f, columnHeaderHeight), _isCreateMode ? "Export As" : "Import As", ColumnHeaderStyle);
+            GUI.Label(new Rect(rect.x + 4f,                         rect.y, halfWidth - 4f, columnHeaderHeight), L10n.Get("layer_template.parameter"),                                                          ColumnHeaderStyle);
+            GUI.Label(new Rect(rect.x + halfWidth + middleGap + 4f, rect.y, halfWidth - 4f, columnHeaderHeight), _isCreateMode ? L10n.Get("layer_template.export_as") : L10n.Get("layer_template.import_as"), ColumnHeaderStyle);
 
             float rowY = rect.y + columnHeaderHeight + rowPad;
             if (parameters.Length == 0)
             {
-                GUI.Label(new Rect(rect.x, rowY, halfWidth, rowHeight), "No parameters in template.", AnimationEditorWindow.Styles.EmptyLabel);
+                GUI.Label(new Rect(rect.x, rowY, halfWidth, rowHeight), L10n.Get("layer_template.no_params"), AnimationEditorWindow.Styles.EmptyLabel);
             }
             else
             {
@@ -454,10 +552,9 @@ namespace YGDR.Editor.Animation
                 _cachedParamLabels[rowIndex],
                 AnimationEditorWindow.Styles.FindUsesHeader);
 
-            using (new EditorGUI.DisabledScope(!_renameParameters))
-                _renamedParameterNames[rowIndex] = EditorGUI.TextField(
-                    new Rect(rect.x + halfWidth + middleGap + 2f, rowY + 1f, halfWidth - 4f, rowHeight - 2f),
-                    _renamedParameterNames[rowIndex]);
+            _renamedParameterNames[rowIndex] = EditorGUI.TextField(
+                new Rect(rect.x + halfWidth + middleGap + 2f, rowY + 1f, halfWidth - 4f, rowHeight - 2f),
+                _renamedParameterNames[rowIndex]);
         }
 
         void DrawConfirmFooter()
@@ -465,8 +562,19 @@ namespace YGDR.Editor.Animation
             if (_isCreateMode)
             {
                 EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField("Template Name", EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.LabelField(L10n.Get("layer_template.template_name"), EditorStyles.centeredGreyMiniLabel);
                 _templateName = EditorGUILayout.TextField(_templateName);
+            }
+            else if (_isBlendTreeMode && _targetControllerForBT != null)
+            {
+                EditorGUILayout.Space(4f);
+                string targetDir = System.IO.Path.GetDirectoryName(
+                    AssetDatabase.GetAssetPath(_targetControllerForBT)).Replace('\\', '/');
+                if (!string.IsNullOrEmpty(targetDir))
+                    EditorGUILayout.LabelField($"Clips copied to {targetDir}", EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.Space(4f);
+                EditorGUILayout.LabelField(L10n.Get("layer_template.blend_tree_name"), EditorStyles.centeredGreyMiniLabel);
+                _importedBlendTreeName = EditorGUILayout.TextField(_importedBlendTreeName);
             }
             else if (!string.IsNullOrEmpty(_targetControllerPath))
             {
@@ -475,7 +583,7 @@ namespace YGDR.Editor.Animation
                     $"Template clips copied to {System.IO.Path.GetDirectoryName(_targetControllerPath)}",
                     EditorStyles.centeredGreyMiniLabel);
                 EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField("Layer Name", EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.LabelField(L10n.Get("layer_template.layer_name"), EditorStyles.centeredGreyMiniLabel);
                 _importedLayerName = EditorGUILayout.TextField(_importedLayerName);
             }
 
@@ -494,7 +602,7 @@ namespace YGDR.Editor.Animation
                 {
                     EditorGUI.DrawRect(btnRect, btnRect.Contains(Event.current.mousePosition)
                         ? GetHoverColor() : AnimationEditorWindow.Styles.AccentColor);
-                    GUI.Label(btnRect, _isCreateMode ? "Create Template" : "Confirm", ConfirmLabelStyle);
+                    GUI.Label(btnRect, _isCreateMode ? L10n.Get("layer_template.create_template") : L10n.Get("layer_template.confirm"), ConfirmLabelStyle);
                 }
                 if (GUI.Button(btnRect, GUIContent.none, GUIStyle.none))
                 {
@@ -529,8 +637,9 @@ namespace YGDR.Editor.Animation
         {
             try
             {
+                if (_isBlendTreeMode) { ConfirmCreateBlendTree(); return; }
                 string safeName    = _templateName.Trim().Replace('/', '.');
-                string templateDir = $"{PatchLayerToolbar.UserTemplatesPath}/{safeName}";
+                string templateDir = $"{PatchLayerToolbar.UserLayerTemplatesPath}/{safeName}";
                 EnsureAssetFolder(templateDir);
 
                 string sourcePath = AssetDatabase.GetAssetPath(_sourceController);
@@ -555,7 +664,7 @@ namespace YGDR.Editor.Animation
                     if (!qualifiedNames.Contains(parameter.name))
                         templateController.RemoveParameter(parameter);
 
-                if (_renameParameters && _createModeParams != null)
+                if (_createModeParams != null)
                 {
                     for (int i = 0; i < _createModeParams.Length && i < _renamedParameterNames.Length; i++)
                     {
@@ -583,6 +692,205 @@ namespace YGDR.Editor.Animation
             catch (Exception e)
             {
                 Debug.LogError($"[AnimatorTools] AnimatorTemplateParameterWindow.ConfirmCreate: {e}");
+            }
+        }
+
+        void ConfirmCreateBlendTree()
+        {
+            try
+            {
+                if (_sourceBlendTree == null) return;
+
+                string safeName    = _templateName.Trim().Replace('/', '.');
+                string templateDir = $"{PatchLayerToolbar.UserBlendTreeTemplatesPath}/{safeName}";
+                EnsureAssetFolder(templateDir);
+
+                var clipCache  = new Dictionary<string, AnimationClip>();
+                var copiedRoot = DeepCopyBlendTree(_sourceBlendTree, templateDir, clipCache);
+                copiedRoot.name = safeName;
+
+                if (_createModeParams != null)
+                {
+                    for (int i = 0; i < _createModeParams.Length && i < _renamedParameterNames.Length; i++)
+                    {
+                        string oldName = _createModeParams[i].name;
+                        string newName = _renamedParameterNames[i];
+                        if (string.IsNullOrEmpty(newName) || oldName == newName) continue;
+                        RenameInBlendTreeDirect(copiedRoot, oldName, newName);
+                    }
+                }
+
+                string assetPath = AssetDatabase.GenerateUniqueAssetPath($"{templateDir}/{safeName}.asset");
+                AssetDatabase.CreateAsset(copiedRoot, assetPath);
+                foreach (var subTree in CollectSubBlendTrees(copiedRoot))
+                    AssetDatabase.AddObjectToAsset(subTree, assetPath);
+
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[AnimatorTools] AnimatorTemplateParameterWindow.ConfirmCreateBlendTree: {e}");
+            }
+        }
+
+        void ConfirmImportBlendTree()
+        {
+            if (_templateBlendTree == null || _targetBlendTree == null || _targetControllerForBT == null) return;
+
+            try
+            {
+                string controllerPath = AssetDatabase.GetAssetPath(_targetControllerForBT);
+                string controllerDir  = System.IO.Path.GetDirectoryName(controllerPath).Replace('\\', '/');
+
+                var clipCache  = new Dictionary<string, AnimationClip>();
+                var copiedRoot = DeepCopyBlendTree(_templateBlendTree, controllerDir, clipCache);
+
+                if (!string.IsNullOrWhiteSpace(_importedBlendTreeName))
+                    copiedRoot.name = _importedBlendTreeName.Trim();
+
+                if (_blendTreeTemplateParams != null)
+                {
+                    for (int i = 0; i < _blendTreeTemplateParams.Length && i < _renamedParameterNames.Length; i++)
+                    {
+                        string oldName = _blendTreeTemplateParams[i].name;
+                        string newName = _renamedParameterNames[i];
+                        if (string.IsNullOrEmpty(newName) || oldName == newName) continue;
+                        RenameInBlendTreeDirect(copiedRoot, oldName, newName);
+                    }
+                }
+
+                var subTrees = CollectSubBlendTrees(copiedRoot).ToList();
+                copiedRoot.hideFlags = HideFlags.HideInHierarchy;
+                foreach (var subTree in subTrees)
+                    subTree.hideFlags = HideFlags.HideInHierarchy;
+
+                Undo.SetCurrentGroupName("Import Blend Tree Template");
+                int undoGroup = Undo.GetCurrentGroup();
+
+                Undo.RegisterCreatedObjectUndo(copiedRoot, "Import Blend Tree Template");
+                AssetDatabase.AddObjectToAsset(copiedRoot, _targetControllerForBT);
+                foreach (var subTree in subTrees)
+                {
+                    Undo.RegisterCreatedObjectUndo(subTree, "Import Blend Tree Template");
+                    AssetDatabase.AddObjectToAsset(subTree, _targetControllerForBT);
+                }
+
+                AddMissingBlendTreeParamsToController(copiedRoot, _targetControllerForBT);
+
+                Undo.RecordObject(_targetBlendTree, "Import Blend Tree Template");
+                _targetBlendTree.children = _targetBlendTree.children
+                    .Append(new ChildMotion { motion = copiedRoot, timeScale = 1f })
+                    .ToArray();
+                EditorUtility.SetDirty(_targetBlendTree);
+                EditorUtility.SetDirty(_targetControllerForBT);
+
+                Undo.CollapseUndoOperations(undoGroup);
+                AssetDatabase.SaveAssets();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[AnimatorTools] AnimatorTemplateParameterWindow.ConfirmImportBlendTree: {e}");
+            }
+        }
+
+        static BlendTree DeepCopyBlendTree(BlendTree source, string destDir, Dictionary<string, AnimationClip> clipCache)
+        {
+            var copy = new BlendTree
+            {
+                name                   = source.name,
+                blendType              = source.blendType,
+                blendParameter         = source.blendParameter,
+                blendParameterY        = source.blendParameterY,
+                minThreshold           = source.minThreshold,
+                maxThreshold           = source.maxThreshold,
+                useAutomaticThresholds = source.useAutomaticThresholds
+            };
+
+            var children    = source.children;
+            var newChildren = new ChildMotion[children.Length];
+            for (int i = 0; i < children.Length; i++)
+            {
+                Motion newMotion = children[i].motion;
+                if (children[i].motion is BlendTree childBT)
+                    newMotion = DeepCopyBlendTree(childBT, destDir, clipCache);
+                else if (children[i].motion is AnimationClip clip && AssetDatabase.IsMainAsset(clip))
+                {
+                    var copied = CopyClipToDir(clip, destDir, clipCache);
+                    if (copied != null) newMotion = copied;
+                }
+                newChildren[i] = new ChildMotion
+                {
+                    motion               = newMotion,
+                    threshold            = children[i].threshold,
+                    position             = children[i].position,
+                    timeScale            = children[i].timeScale,
+                    cycleOffset          = children[i].cycleOffset,
+                    directBlendParameter = children[i].directBlendParameter,
+                    mirror               = children[i].mirror
+                };
+            }
+            copy.children = newChildren;
+            return copy;
+        }
+
+        static IEnumerable<BlendTree> CollectSubBlendTrees(BlendTree root)
+        {
+            foreach (var child in root.children)
+            {
+                if (child.motion is BlendTree subTree)
+                {
+                    yield return subTree;
+                    foreach (var nested in CollectSubBlendTrees(subTree))
+                        yield return nested;
+                }
+            }
+        }
+
+        static void RenameInBlendTreeDirect(BlendTree blendTree, string oldName, string newName)
+        {
+            if (blendTree.blendParameter  == oldName) blendTree.blendParameter  = newName;
+            if (blendTree.blendParameterY == oldName) blendTree.blendParameterY = newName;
+
+            var children = blendTree.children;
+            bool modified = false;
+            for (int i = 0; i < children.Length; i++)
+            {
+                if (children[i].directBlendParameter == oldName)
+                {
+                    var child = children[i];
+                    children[i] = new ChildMotion
+                    {
+                        motion               = child.motion,
+                        threshold            = child.threshold,
+                        position             = child.position,
+                        timeScale            = child.timeScale,
+                        cycleOffset          = child.cycleOffset,
+                        directBlendParameter = newName,
+                        mirror               = child.mirror
+                    };
+                    modified = true;
+                }
+                if (children[i].motion is BlendTree childBT)
+                    RenameInBlendTreeDirect(childBT, oldName, newName);
+            }
+            if (modified) blendTree.children = children;
+        }
+
+        static void AddMissingBlendTreeParamsToController(BlendTree blendTree, AnimatorController controller)
+        {
+            var paramNames = new HashSet<string>();
+            CollectMotionParamNames(blendTree, paramNames);
+            paramNames.Remove("");
+
+            var existingNames = new HashSet<string>(controller.parameters.Select(p => p.name));
+            bool recorded = false;
+            foreach (var name in paramNames)
+            {
+                if (existingNames.Contains(name)) continue;
+                if (!recorded) { Undo.RecordObject(controller, "Add Blend Tree Template Parameters"); recorded = true; }
+                controller.AddParameter(name, AnimatorControllerParameterType.Float);
+                existingNames.Add(name);
             }
         }
 
@@ -683,8 +991,29 @@ namespace YGDR.Editor.Animation
             if (modified) { blendTree.children = children; EditorUtility.SetDirty(blendTree); }
         }
 
+        static bool IsEmptyClip(AnimationClip clip) =>
+            AnimationUtility.GetCurveBindings(clip).Length == 0 &&
+            AnimationUtility.GetObjectReferenceCurveBindings(clip).Length == 0 &&
+            clip.events.Length == 0;
+
+        static AnimationClip GetOrCreateBufferClip(string destDir, Dictionary<string, AnimationClip> clipCache)
+        {
+            const string key = "__buffer__";
+            if (clipCache.TryGetValue(key, out var cached)) return cached;
+            string bufferPath = $"{destDir}/BufferClip.anim";
+            var existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(bufferPath);
+            if (existing == null)
+            {
+                existing = new AnimationClip();
+                AssetDatabase.CreateAsset(existing, bufferPath);
+            }
+            clipCache[key] = existing;
+            return existing;
+        }
+
         static AnimationClip CopyClipToDir(AnimationClip clip, string destDir, Dictionary<string, AnimationClip> clipCache)
         {
+            if (IsEmptyClip(clip)) return GetOrCreateBufferClip(destDir, clipCache);
             string sourcePath = AssetDatabase.GetAssetPath(clip);
             if (string.IsNullOrEmpty(sourcePath)) return null;
             if (clipCache.TryGetValue(sourcePath, out var cached)) return cached;
@@ -699,7 +1028,8 @@ namespace YGDR.Editor.Animation
         {
             try
             {
-            ConfirmImportImpl();
+                if (_isBlendTreeMode) { ConfirmImportBlendTree(); return; }
+                ConfirmImportImpl();
             }
             catch (Exception e)
             {
@@ -738,31 +1068,28 @@ namespace YGDR.Editor.Animation
             CreateLocalClipsForNewLayers(targetController, newLayers);
             SyncClipAAPParams(targetController, _templateController, newLayers);
 
-            if (_renameParameters)
+            var templateParameters = _templateController.parameters;
+            for (int i = 0; i < templateParameters.Length && i < _renamedParameterNames.Length; i++)
             {
-                var templateParameters = _templateController.parameters;
-                for (int i = 0; i < templateParameters.Length && i < _renamedParameterNames.Length; i++)
+                string oldName = templateParameters[i].name;
+                string newName = _renamedParameterNames[i];
+                if (string.IsNullOrEmpty(newName) || oldName == newName) continue;
+
+                foreach (var newLayer in newLayers)
+                    UpdateParamRefsInSM(newLayer.stateMachine, oldName, newName);
+
+                bool wasNewlyAdded = !existingParamNames.Contains(oldName)
+                    && targetController.parameters.Any(parameter => parameter.name == oldName);
+
+                if (wasNewlyAdded)
                 {
-                    string oldName = templateParameters[i].name;
-                    string newName = _renamedParameterNames[i];
-                    if (string.IsNullOrEmpty(newName) || oldName == newName) continue;
+                    Undo.RecordObject(targetController, "Rename Template Parameter");
+                    var paramToRemove = System.Array.Find(targetController.parameters,
+                        parameter => parameter.name == oldName);
+                    targetController.RemoveParameter(paramToRemove);
 
-                    foreach (var newLayer in newLayers)
-                        UpdateParamRefsInSM(newLayer.stateMachine, oldName, newName);
-
-                    bool wasNewlyAdded = !existingParamNames.Contains(oldName)
-                        && targetController.parameters.Any(parameter => parameter.name == oldName);
-
-                    if (wasNewlyAdded)
-                    {
-                        Undo.RecordObject(targetController, "Rename Template Parameter");
-                        var paramToRemove = System.Array.Find(targetController.parameters,
-                            parameter => parameter.name == oldName);
-                        targetController.RemoveParameter(paramToRemove);
-
-                        if (!targetController.parameters.Any(parameter => parameter.name == newName))
-                            targetController.AddParameter(newName, templateParameters[i].type);
-                    }
+                    if (!targetController.parameters.Any(parameter => parameter.name == newName))
+                        targetController.AddParameter(newName, templateParameters[i].type);
                 }
             }
 
@@ -834,6 +1161,7 @@ namespace YGDR.Editor.Animation
         static AnimationClip CopyClipToControllerDir(AnimationClip sourceClip, string controllerDir,
             string controllerName, Dictionary<string, AnimationClip> clipCache)
         {
+            if (IsEmptyClip(sourceClip)) return GetOrCreateBufferClip(controllerDir, clipCache);
             string sourcePath = AssetDatabase.GetAssetPath(sourceClip);
             if (string.IsNullOrEmpty(sourcePath)) return null;
 
@@ -1029,10 +1357,12 @@ namespace YGDR.Editor.Animation
             foreach (var asset in importedAssets.Concat(deletedAssets).Concat(movedAssets))
             {
                 string normalizedPath = asset.Replace('\\', '/');
-                if (normalizedPath.StartsWith(PatchLayerToolbar.UserTemplatesPath) ||
+                if (normalizedPath.StartsWith(PatchLayerToolbar.UserLayerTemplatesPath) ||
+                    normalizedPath.StartsWith(PatchLayerToolbar.UserBlendTreeTemplatesPath) ||
                     normalizedPath.StartsWith("Packages/com.ygdr.animator/Templates"))
                 {
                     PatchLayerToolbar._templateCache = null;
+                    PatchLayerToolbar._blendTreeTemplateCache = null;
                     return;
                 }
             }

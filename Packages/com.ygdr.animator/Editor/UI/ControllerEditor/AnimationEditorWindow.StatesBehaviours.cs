@@ -1,4 +1,23 @@
-#if UNITY_EDITOR
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
+#if UNITY_EDITOR && VRC_SDK_VRCSDK3
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,15 +41,15 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Parameter Drivers", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.param_driver"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
                 bool hasAnyParams = _selectedStates.Any(state => { var driver = GetDriverForState(state); return driver != null && driver.parameters.Count > 0; });
-                if (!hasAnyParams && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!hasAnyParams && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     AddDriverParam();
                     anyHave = true;
                 }
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemoveDriverFromAll();
                     anyHave = false;
@@ -51,7 +70,7 @@ namespace YGDR.Editor.Animation
                 {
                     bool multiDrivers = drivers.Length > 1;
                     var firstDriver = drivers[0];
-                    EditorGUILayout.LabelField("Debug String", GUILayout.Width(80));
+                    EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(80));
                     EditorGUI.showMixedValue = multiDrivers && drivers.Any(driver => driver.debugString != firstDriver.debugString);
                     EditorGUI.BeginChangeCheck();
                     string newDebugString = EditorGUILayout.TextField(firstDriver.debugString ?? "");
@@ -72,25 +91,40 @@ namespace YGDR.Editor.Animation
             }
 
             var sharedParams = GetSharedDriverParams();
-            float rowHeight = EditorGUIUtility.singleLineHeight;
 
             if (sharedParams.Count == 0)
-                EditorGUILayout.LabelField("List is Empty", Styles.EmptyLabel);
+                EditorGUILayout.LabelField(L10n.Get("vrc.list_empty"), Styles.EmptyLabel);
             else
             {
-                if (_driverParamListData == null || _driverParamListData.Count != sharedParams.Count)
-                    _driverParamListData = new List<VRC_AvatarParameterDriver.Parameter>(sharedParams.Select(entry => entry.param));
-                else
-                    for (int i = 0; i < sharedParams.Count; i++)
-                        _driverParamListData[i] = sharedParams[i].param;
+                if (Event.current.type == EventType.Layout)
+                {
+                    if (_driverParamListData == null || _driverParamListData.Count != sharedParams.Count)
+                    {
+                        _driverParamListData = new List<VRC_AvatarParameterDriver.Parameter>(sharedParams.Select(entry => entry.param));
+                        _driverParamReorderList = null;
+                    }
+                    else
+                        for (int i = 0; i < sharedParams.Count; i++)
+                            _driverParamListData[i] = sharedParams[i].param;
+                    _stableElementHeights = sharedParams.Select(entry => ComputeDriverParamHeight(entry.param)).ToArray();
+                }
 
                 if (_driverParamReorderList == null)
                 {
                     _driverParamReorderList = new ReorderableList(_driverParamListData, typeof(VRC_AvatarParameterDriver.Parameter), true, false, false, false)
                     {
-                        elementHeight = rowHeight,
                         showDefaultBackground = false,
                         footerHeight = 0f,
+                    };
+                    _driverParamReorderList.elementHeightCallback = index =>
+                        _stableElementHeights != null && index < _stableElementHeights.Length
+                            ? _stableElementHeights[index]
+                            : EditorGUIUtility.singleLineHeight;
+
+                    _driverParamReorderList.drawElementBackgroundCallback = (rect, index, isActive, isFocused) =>
+                    {
+                        if (Event.current.type == EventType.Repaint)
+                            EditorGUI.DrawRect(rect, index % 2 == 0 ? Styles.SecondaryColor : Styles.RowAltColor);
                     };
 
                     _driverParamReorderList.drawElementCallback = (rect, index, isActive, isFocused) =>
@@ -111,7 +145,22 @@ namespace YGDR.Editor.Animation
                                 if (p.name == param.name) return DriverParamsMatch(p, param);
                             return false;
                         }));
-                        DrawDriverParamRowRect(new Rect(rect.x, rect.y + 1f, rect.width, rect.height - 2f), new DriverParamEntry(param, index, hasMixedValues, hasMixedTypes));
+                        bool mixedSourceMin = false, mixedSourceMax = false, mixedDestMin = false, mixedDestMax = false;
+                        if (localMulti && param.type == VRC_AvatarParameterDriver.ChangeType.Copy && param.convertRange)
+                        {
+                            foreach (var localState in localStates)
+                            {
+                                var stateDriver = GetDriverForState(localState);
+                                if (stateDriver == null) continue;
+                                var stateParam = stateDriver.parameters.FirstOrDefault(p => p.name == param.name);
+                                if (stateParam == null) continue;
+                                if (!Mathf.Approximately(stateParam.sourceMin, param.sourceMin)) mixedSourceMin = true;
+                                if (!Mathf.Approximately(stateParam.sourceMax, param.sourceMax)) mixedSourceMax = true;
+                                if (!Mathf.Approximately(stateParam.destMin,   param.destMin))   mixedDestMin   = true;
+                                if (!Mathf.Approximately(stateParam.destMax,   param.destMax))   mixedDestMax   = true;
+                            }
+                        }
+                        DrawDriverParamRowRect(new Rect(rect.x, rect.y + 1f, rect.width, rect.height - 2f), new DriverParamEntry(param, index, hasMixedValues, hasMixedTypes, mixedSourceMin, mixedSourceMax, mixedDestMin, mixedDestMax));
                     };
 
                     _driverParamReorderList.onReorderCallbackWithDetails = (list, oldIndex, newIndex) =>
@@ -165,7 +214,7 @@ namespace YGDR.Editor.Animation
             GUI.color = localOnly == null ? Color.grey
                       : localOnly.Value   ? new Color(0.4f, 0.9f, 0.4f)
                       :                     new Color(0.9f, 0.4f, 0.4f);
-            if (CursorBtn("Local Only", EditorStyles.miniButton, GUILayout.Width(80), GUILayout.Height(24)))
+            if (CursorBtn(L10n.Get("vrc.local_only"), EditorStyles.miniButton, GUILayout.Width(80), GUILayout.Height(24)))
             {
                 bool newLocalOnly = localOnly != true;
                 foreach (var state in _selectedStates)
@@ -210,8 +259,17 @@ namespace YGDR.Editor.Animation
             internal readonly int index;
             internal readonly bool hasMixedValues;
             internal readonly bool hasMixedTypes;
-            internal DriverParamEntry(VRC_AvatarParameterDriver.Parameter param, int index, bool hasMixedValues, bool hasMixedTypes)
-            { this.param = param; this.index = index; this.hasMixedValues = hasMixedValues; this.hasMixedTypes = hasMixedTypes; }
+            internal readonly bool mixedSourceMin;
+            internal readonly bool mixedSourceMax;
+            internal readonly bool mixedDestMin;
+            internal readonly bool mixedDestMax;
+            internal DriverParamEntry(VRC_AvatarParameterDriver.Parameter param, int index, bool hasMixedValues, bool hasMixedTypes,
+                bool mixedSourceMin = false, bool mixedSourceMax = false, bool mixedDestMin = false, bool mixedDestMax = false)
+            {
+                this.param = param; this.index = index; this.hasMixedValues = hasMixedValues; this.hasMixedTypes = hasMixedTypes;
+                this.mixedSourceMin = mixedSourceMin; this.mixedSourceMax = mixedSourceMax;
+                this.mixedDestMin = mixedDestMin; this.mixedDestMax = mixedDestMax;
+            }
         }
 
         List<DriverParamEntry> GetSharedDriverParams()
@@ -252,34 +310,145 @@ namespace YGDR.Editor.Animation
             return result;
         }
 
-        /* Draws one row of the shared parameter driver list: name dropdown, type popup, value/range/chance field (adapted to param type and ChangeType), and remove button. */
+        /* Draws one row of the shared parameter driver list. Copy type expands to 4–6 rows (source, dest, convertRange, optional min/max). */
         void DrawDriverParamRowRect(Rect row, DriverParamEntry entry)
         {
-            var param = entry.param;
-
-            float nameWidth   = row.width * 0.5f;
-            float typeWidth   = row.width * 0.25f;
-            float removeWidth = 24f;
-            float valueWidth  = row.width - nameWidth - typeWidth - removeWidth;
-
-            float currentX = row.x;
-            var nameRect   = new Rect(currentX, row.y, nameWidth,    row.height); currentX += nameWidth;
-            var typeRect   = new Rect(currentX, row.y, typeWidth,    row.height); currentX += typeWidth;
-            var valRect    = new Rect(currentX, row.y, valueWidth,   row.height); currentX += valueWidth;
-            var removeRect = new Rect(currentX, row.y, removeWidth,  row.height);
-
+            var param         = entry.param;
             var capturedEntry = entry;
-            if (EditorGUI.DropdownButton(nameRect, new GUIContent(string.IsNullOrEmpty(param.name) ? "—" : param.name), FocusType.Keyboard))
-                ShowParameterDropdown(nameRect, param.name, newName =>
-                    ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, name: newName)));
+            float removeWidth    = 24f;
+            float rightOverhang  = 6f;
+            float singleLine     = EditorGUIUtility.singleLineHeight;
 
             var paramType = GetParamType(param.name);
-            bool isBool = paramType == AnimatorControllerParameterType.Bool;
+            bool isBool   = paramType == AnimatorControllerParameterType.Bool;
 
             var changeTypes = isBool
-                ? new[] { VRC_AvatarParameterDriver.ChangeType.Set, VRC_AvatarParameterDriver.ChangeType.Random }
-                : new[] { VRC_AvatarParameterDriver.ChangeType.Set, VRC_AvatarParameterDriver.ChangeType.Add, VRC_AvatarParameterDriver.ChangeType.Random };
-            var changeLabels = isBool ? new[] { "Set", "Random" } : new[] { "Set", "Add", "Random" };
+                ? new[] { VRC_AvatarParameterDriver.ChangeType.Set, VRC_AvatarParameterDriver.ChangeType.Random, VRC_AvatarParameterDriver.ChangeType.Copy }
+                : new[] { VRC_AvatarParameterDriver.ChangeType.Set, VRC_AvatarParameterDriver.ChangeType.Add, VRC_AvatarParameterDriver.ChangeType.Random, VRC_AvatarParameterDriver.ChangeType.Copy };
+            var changeLabels = isBool
+                ? new[] { L10n.Get("vrc.param_driver.set"), L10n.Get("vrc.param_driver.random"), L10n.Get("vrc.param_driver.copy") }
+                : new[] { L10n.Get("vrc.param_driver.set"), L10n.Get("vrc.param_driver.add"), L10n.Get("vrc.param_driver.random"), L10n.Get("vrc.param_driver.copy") };
+
+            if (param.type == VRC_AvatarParameterDriver.ChangeType.Copy)
+            {
+                float labelWidth = row.width * 0.3f;
+                float dropWidth  = row.width - labelWidth - removeWidth;
+
+                // Row 1: Type label + type popup + remove
+                var copyTypeRect   = new Rect(row.x + labelWidth, row.y, dropWidth, singleLine);
+                var copyRemoveRect = new Rect(row.xMax - removeWidth, row.y, removeWidth + rightOverhang, singleLine);
+
+                GUI.Label(new Rect(row.x, row.y, labelWidth, singleLine), L10n.Get("vrc.param_driver.type"), EditorStyles.label);
+
+                int copyTypeIndex = Mathf.Max(0, Array.IndexOf(changeTypes, param.type));
+                EditorGUI.showMixedValue = entry.hasMixedTypes;
+                EditorGUI.BeginChangeCheck();
+                int newCopyTypeIndex = EditorGUI.Popup(copyTypeRect, copyTypeIndex, changeLabels);
+                if (EditorGUI.EndChangeCheck())
+                    ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, type: changeTypes[newCopyTypeIndex]));
+                EditorGUI.showMixedValue = false;
+
+                var previousCopyRemoveBgColor = GUI.backgroundColor;
+                if (entry.index % 2 != 0) GUI.backgroundColor = new Color(0.8f, 0.8f, 0.8f, 1f);
+                if (CursorBtn(copyRemoveRect, "−", Styles.CondBtn))
+                    _removeDriverParamIndex = entry.index;
+                GUI.backgroundColor = previousCopyRemoveBgColor;
+
+                // Row 2: Source dropdown (GenericMenu avoids AdvancedDropdown click-through onto the checkbox below)
+                float sourceRowY = row.y + singleLine;
+                GUI.Label(new Rect(row.x, sourceRowY, labelWidth, singleLine), L10n.Get("vrc.param_driver.source"), EditorStyles.label);
+                var sourceDropRect = new Rect(row.x + labelWidth, sourceRowY, dropWidth, singleLine);
+                if (EditorGUI.DropdownButton(sourceDropRect, new GUIContent(string.IsNullOrEmpty(param.source) ? "—" : param.source), FocusType.Passive))
+                    ShowCopyParamMenu(capturedEntry, isCopySource: true);
+                if (!string.IsNullOrEmpty(param.source))
+                    GUI.Label(sourceDropRect, GetParamType(param.source).ToString(), Styles.MiniLabelRight);
+
+                // Row 3: Destination dropdown (GenericMenu avoids AdvancedDropdown click-through onto the checkbox below)
+                float destRowY = row.y + singleLine * 2f;
+                GUI.Label(new Rect(row.x, destRowY, labelWidth, singleLine), L10n.Get("vrc.param_driver.destination"), EditorStyles.label);
+                var destDropRect = new Rect(row.x + labelWidth, destRowY, dropWidth, singleLine);
+                if (EditorGUI.DropdownButton(destDropRect, new GUIContent(string.IsNullOrEmpty(param.name) ? "—" : param.name), FocusType.Passive))
+                    ShowCopyParamMenu(capturedEntry, isCopySource: false);
+                if (!string.IsNullOrEmpty(param.name))
+                    GUI.Label(destDropRect, GetParamType(param.name).ToString(), Styles.MiniLabelRight);
+
+                // Hint: source→destination type mismatch
+                bool showCopyHint = !string.IsNullOrEmpty(param.source) && GetParamType(param.source) != GetParamType(param.name);
+                float hintOffset  = showCopyHint ? singleLine * 2f : 0f;
+                if (showCopyHint)
+                    EditorGUI.HelpBox(new Rect(row.x, row.y + singleLine * 3f, row.width - removeWidth, singleLine * 2f),
+                        $"Value will be converted to {GetParamType(param.name)}", MessageType.Info);
+
+                // Row 4: Convert Range checkbox
+                float checkRowY = row.y + singleLine * 3f + hintOffset;
+                GUI.Label(new Rect(row.x, checkRowY, labelWidth, singleLine), L10n.Get("vrc.param_driver.convert_range"), EditorStyles.label);
+                EditorGUI.BeginChangeCheck();
+                bool newConvertRange = EditorGUI.Toggle(new Rect(row.x + labelWidth, checkRowY, singleLine, singleLine), param.convertRange);
+                if (EditorGUI.EndChangeCheck())
+                    ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, convertRange: newConvertRange));
+
+                if (param.convertRange)
+                {
+                    float rangeIndent      = 12f;
+                    float minMaxLabelWidth = 26f;
+                    float rangeFieldWidth  = (dropWidth - minMaxLabelWidth * 2f) * 0.5f;
+                    float controlStartX    = row.x + labelWidth;
+
+                    // Row 5: Source (indented) | Min [field] Max [field]
+                    float srcRowY = row.y + singleLine * 4f + hintOffset;
+                    GUI.Label(new Rect(row.x + rangeIndent, srcRowY, labelWidth - rangeIndent, singleLine), L10n.Get("vrc.param_driver.source"), EditorStyles.label);
+                    float srcX = controlStartX;
+                    GUI.Label(new Rect(srcX, srcRowY, minMaxLabelWidth, singleLine), L10n.Get("vrc.param_driver.min"), EditorStyles.label);
+                    srcX += minMaxLabelWidth;
+                    EditorGUI.showMixedValue = entry.mixedSourceMin;
+                    EditorGUI.BeginChangeCheck();
+                    float newSrcMin = EditorGUI.FloatField(new Rect(srcX, srcRowY, rangeFieldWidth, singleLine), param.sourceMin);
+                    if (EditorGUI.EndChangeCheck())
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, sourceMin: newSrcMin));
+                    EditorGUI.showMixedValue = false;
+                    srcX += rangeFieldWidth;
+                    GUI.Label(new Rect(srcX, srcRowY, minMaxLabelWidth, singleLine), L10n.Get("vrc.param_driver.max"), EditorStyles.label);
+                    srcX += minMaxLabelWidth;
+                    EditorGUI.showMixedValue = entry.mixedSourceMax;
+                    EditorGUI.BeginChangeCheck();
+                    float newSrcMax = EditorGUI.FloatField(new Rect(srcX, srcRowY, rangeFieldWidth, singleLine), param.sourceMax);
+                    if (EditorGUI.EndChangeCheck())
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, sourceMax: newSrcMax));
+                    EditorGUI.showMixedValue = false;
+
+                    // Row 6: Destination (indented) | Min [field] Max [field]
+                    float dstRowY = row.y + singleLine * 5f + hintOffset;
+                    GUI.Label(new Rect(row.x + rangeIndent, dstRowY, labelWidth - rangeIndent, singleLine), L10n.Get("vrc.param_driver.destination"), EditorStyles.label);
+                    float dstX = controlStartX;
+                    GUI.Label(new Rect(dstX, dstRowY, minMaxLabelWidth, singleLine), L10n.Get("vrc.param_driver.min"), EditorStyles.label);
+                    dstX += minMaxLabelWidth;
+                    EditorGUI.showMixedValue = entry.mixedDestMin;
+                    EditorGUI.BeginChangeCheck();
+                    float newDstMin = EditorGUI.FloatField(new Rect(dstX, dstRowY, rangeFieldWidth, singleLine), param.destMin);
+                    if (EditorGUI.EndChangeCheck())
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, destMin: newDstMin));
+                    EditorGUI.showMixedValue = false;
+                    dstX += rangeFieldWidth;
+                    GUI.Label(new Rect(dstX, dstRowY, minMaxLabelWidth, singleLine), L10n.Get("vrc.param_driver.max"), EditorStyles.label);
+                    dstX += minMaxLabelWidth;
+                    EditorGUI.showMixedValue = entry.mixedDestMax;
+                    EditorGUI.BeginChangeCheck();
+                    float newDstMax = EditorGUI.FloatField(new Rect(dstX, dstRowY, rangeFieldWidth, singleLine), param.destMax);
+                    if (EditorGUI.EndChangeCheck())
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, destMax: newDstMax));
+                    EditorGUI.showMixedValue = false;
+                }
+                return;
+            }
+
+            // Non-Copy: 3 rows — Mode | Parameter | Threshold
+            float nonCopyLabelWidth   = row.width * 0.3f;
+            float nonCopyControlWidth = row.width - nonCopyLabelWidth - removeWidth;
+
+            // Row 1: Mode label | type popup | remove
+            GUI.Label(new Rect(row.x, row.y, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.type"), EditorStyles.label);
+            var typeRect   = new Rect(row.x + nonCopyLabelWidth, row.y, nonCopyControlWidth, singleLine);
+            var removeRect = new Rect(row.xMax - removeWidth, row.y, removeWidth + rightOverhang, singleLine);
 
             int typeIndex = Mathf.Max(0, Array.IndexOf(changeTypes, param.type));
             EditorGUI.showMixedValue = entry.hasMixedTypes;
@@ -289,55 +458,96 @@ namespace YGDR.Editor.Animation
                 ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, type: changeTypes[newTypeIndex]));
             EditorGUI.showMixedValue = false;
 
+            var previousBackgroundColor = GUI.backgroundColor;
+            if (entry.index % 2 != 0) GUI.backgroundColor = new Color(0.8f, 0.8f, 0.8f, 1f);
+            if (CursorBtn(removeRect, "−", Styles.CondBtn))
+                _removeDriverParamIndex = entry.index;
+            GUI.backgroundColor = previousBackgroundColor;
+
+            // Row 2: Parameter label | parameter dropdown
+            float paramRowY  = row.y + singleLine;
+            float paramDropWidth = row.width - nonCopyLabelWidth - removeWidth;
+            GUI.Label(new Rect(row.x, paramRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.destination"), EditorStyles.label);
+            var nameRect = new Rect(row.x + nonCopyLabelWidth, paramRowY, paramDropWidth, singleLine);
+            if (EditorGUI.DropdownButton(nameRect, new GUIContent(string.IsNullOrEmpty(param.name) ? "—" : param.name), FocusType.Passive))
+            {
+                var nameMenu = new GenericMenu();
+                foreach (var controllerParameter in _controller.parameters)
+                {
+                    var capturedName = controllerParameter.name;
+                    nameMenu.AddItem(new GUIContent(capturedName), capturedName == param.name, () =>
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, name: capturedName)));
+                }
+                nameMenu.ShowAsContext();
+            }
+            if (!string.IsNullOrEmpty(param.name) && Event.current.type == EventType.Repaint && AnimatorDefaultSettings.Load().showParamTypeIcons)
+                GUI.Label(nameRect, paramType.ToString(), Styles.MiniLabelRight);
+
+            // Row 3: threshold label + control (adapts to type and parameter kind)
+            float thresholdRowY  = row.y + singleLine * 2f;
+            float thresholdWidth = row.width - nonCopyLabelWidth - removeWidth;
+            var   thresholdRect  = new Rect(row.x + nonCopyLabelWidth, thresholdRowY, thresholdWidth, singleLine);
+
             EditorGUI.showMixedValue = entry.hasMixedValues;
             if (isBool && param.type == VRC_AvatarParameterDriver.ChangeType.Set)
             {
-                float toggleWidth = EditorGUIUtility.singleLineHeight;
-                var toggleRect = new Rect(valRect.x + (valRect.width - toggleWidth) * 0.5f, valRect.y, toggleWidth, valRect.height);
+                GUI.Label(new Rect(row.x, thresholdRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.value"), EditorStyles.label);
+                float toggleWidth = singleLine;
                 EditorGUI.BeginChangeCheck();
-                bool newBoolValue = EditorGUI.Toggle(toggleRect, param.value >= 0.5f);
+                bool newBoolValue = EditorGUI.Toggle(new Rect(thresholdRect.x, thresholdRowY, toggleWidth, singleLine), param.value >= 0.5f);
                 if (EditorGUI.EndChangeCheck())
                     ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, value: newBoolValue ? 1f : 0f));
             }
             else if (isBool && param.type == VRC_AvatarParameterDriver.ChangeType.Random)
             {
-                float labelWidth = 44f;
-                GUI.Label(new Rect(valRect.x, valRect.y, labelWidth, valRect.height), "Chance", EditorStyles.miniLabel);
+                GUI.Label(new Rect(row.x, thresholdRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.chance"), EditorStyles.label);
                 EditorGUI.BeginChangeCheck();
-                float newChance = EditorGUI.Slider(new Rect(valRect.x + labelWidth, valRect.y, valRect.width - labelWidth, valRect.height), param.chance, 0f, 1f);
+                float newChance = EditorGUI.Slider(thresholdRect, param.chance, 0f, 1f);
                 if (EditorGUI.EndChangeCheck())
                     ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, chance: newChance));
             }
             else if (param.type == VRC_AvatarParameterDriver.ChangeType.Random)
             {
-                float labelWidth = 26f;
-                float fieldWidth = (valueWidth - labelWidth * 2f) * 0.5f;
-                float valueX = valRect.x;
-                GUI.Label(new Rect(valueX, valRect.y, labelWidth, valRect.height), "Min", EditorStyles.miniLabel);
-                valueX += labelWidth;
+                GUI.Label(new Rect(row.x, thresholdRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.min_value"), EditorStyles.label);
                 EditorGUI.BeginChangeCheck();
-                float newMin = EditorGUI.FloatField(new Rect(valueX, valRect.y, fieldWidth, valRect.height), param.valueMin);
+                float newMin = EditorGUI.FloatField(thresholdRect, param.valueMin);
                 if (EditorGUI.EndChangeCheck())
                     ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, valueMin: newMin));
-                valueX += fieldWidth;
-                GUI.Label(new Rect(valueX, valRect.y, labelWidth, valRect.height), "Max", EditorStyles.miniLabel);
-                valueX += labelWidth;
+
+                float maxRowY = row.y + singleLine * 3f;
+                GUI.Label(new Rect(row.x, maxRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.max_value"), EditorStyles.label);
                 EditorGUI.BeginChangeCheck();
-                float newMax = EditorGUI.FloatField(new Rect(valueX, valRect.y, fieldWidth, valRect.height), param.valueMax);
+                float newMax = EditorGUI.FloatField(new Rect(row.x + nonCopyLabelWidth, maxRowY, thresholdWidth, singleLine), param.valueMax);
                 if (EditorGUI.EndChangeCheck())
                     ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, valueMax: newMax));
+
+                float extraRowY = row.y + singleLine * 4f;
+                if (paramType == AnimatorControllerParameterType.Int)
+                {
+                    GUI.Label(new Rect(row.x, extraRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.prevent_repeats"), EditorStyles.label);
+                    EditorGUI.BeginChangeCheck();
+                    bool newPreventRepeats = EditorGUI.Toggle(new Rect(row.x + nonCopyLabelWidth, extraRowY, singleLine, singleLine), param.preventRepeats);
+                    if (EditorGUI.EndChangeCheck())
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, preventRepeats: newPreventRepeats));
+                }
+                else
+                {
+                    GUI.Label(new Rect(row.x, extraRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.chance"), EditorStyles.label);
+                    EditorGUI.BeginChangeCheck();
+                    float newChance = EditorGUI.Slider(new Rect(row.x + nonCopyLabelWidth, extraRowY, thresholdWidth, singleLine), param.chance, 0f, 1f);
+                    if (EditorGUI.EndChangeCheck())
+                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, chance: newChance));
+                }
             }
             else
             {
+                GUI.Label(new Rect(row.x, thresholdRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.value"), EditorStyles.label);
                 EditorGUI.BeginChangeCheck();
-                float newValue = EditorGUI.FloatField(valRect, param.value);
+                float newValue = EditorGUI.FloatField(thresholdRect, param.value);
                 if (EditorGUI.EndChangeCheck())
                     ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, value: newValue));
             }
             EditorGUI.showMixedValue = false;
-
-            if (CursorBtn(removeRect, "−", Styles.CondBtn))
-                _removeDriverParamIndex = entry.index;
         }
 
         /* Returns a shallow copy of original with any provided fields overridden. Used to produce immutable replacements for driver parameter rows. */
@@ -348,28 +558,50 @@ namespace YGDR.Editor.Animation
             float? value = null,
             float? valueMin = null,
             float? valueMax = null,
-            float? chance = null)
+            float? chance = null,
+            string source = null,
+            bool? convertRange = null,
+            float? sourceMin = null,
+            float? sourceMax = null,
+            float? destMin = null,
+            float? destMax = null,
+            bool? preventRepeats = null)
         => new VRC_AvatarParameterDriver.Parameter
         {
-            name     = name     ?? original.name,
-            type     = type     ?? original.type,
-            value    = value    ?? original.value,
-            valueMin = valueMin ?? original.valueMin,
-            valueMax = valueMax ?? original.valueMax,
-            chance   = chance   ?? original.chance
+            name           = name           ?? original.name,
+            type           = type           ?? original.type,
+            value          = value          ?? original.value,
+            valueMin       = valueMin       ?? original.valueMin,
+            valueMax       = valueMax       ?? original.valueMax,
+            chance         = chance         ?? original.chance,
+            source         = source         ?? original.source,
+            convertRange   = convertRange   ?? original.convertRange,
+            sourceMin      = sourceMin      ?? original.sourceMin,
+            sourceMax      = sourceMax      ?? original.sourceMax,
+            destMin        = destMin        ?? original.destMin,
+            destMax        = destMax        ?? original.destMax,
+            preventRepeats = preventRepeats ?? original.preventRepeats
         };
 
-        static VRC_AvatarParameterDriver.Parameter DeepCloneParam(
-            VRC_AvatarParameterDriver.Parameter original)
-        => new VRC_AvatarParameterDriver.Parameter
+void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
         {
-            name     = original.name,
-            type     = original.type,
-            value    = original.value,
-            valueMin = original.valueMin,
-            valueMax = original.valueMax,
-            chance   = original.chance
-        };
+            if (_controller == null || _controller.parameters.Length == 0) return;
+            string current = isCopySource ? entry.param.source : entry.param.name;
+            var menu = new GenericMenu();
+            foreach (var controllerParameter in _controller.parameters)
+            {
+                var capturedName = controllerParameter.name;
+                bool isSelected  = capturedName == current;
+                menu.AddItem(new GUIContent(capturedName), isSelected, () =>
+                {
+                    var updated = isCopySource
+                        ? CloneParam(entry.param, source: capturedName)
+                        : CloneParam(entry.param, name: capturedName);
+                    ReplaceDriverParam(entry, updated);
+                });
+            }
+            menu.ShowAsContext();
+        }
 
         void ReplaceDriverParam(
             DriverParamEntry entry,
@@ -386,10 +618,33 @@ namespace YGDR.Editor.Animation
                     continue;
 
                 Undo.RecordObject(driver, "Edit Driver Parameter");
-                driver.parameters[parameterIndex] = DeepCloneParam(replacement);
+                driver.parameters[parameterIndex] = MergeParam(driver.parameters[parameterIndex], entry.param, replacement);
+                _suppressExternalRepaint = true;
                 EditorUtility.SetDirty(driver);
             }
+            _driverParamReorderList = null;
         }
+
+        static VRC_AvatarParameterDriver.Parameter MergeParam(
+            VRC_AvatarParameterDriver.Parameter existing,
+            VRC_AvatarParameterDriver.Parameter original,
+            VRC_AvatarParameterDriver.Parameter replacement)
+        => new VRC_AvatarParameterDriver.Parameter
+        {
+            name         = replacement.name         != original.name         ? replacement.name         : existing.name,
+            type         = replacement.type         != original.type         ? replacement.type         : existing.type,
+            value        = replacement.value        != original.value        ? replacement.value        : existing.value,
+            valueMin     = replacement.valueMin     != original.valueMin     ? replacement.valueMin     : existing.valueMin,
+            valueMax     = replacement.valueMax     != original.valueMax     ? replacement.valueMax     : existing.valueMax,
+            chance       = replacement.chance       != original.chance       ? replacement.chance       : existing.chance,
+            source       = replacement.source       != original.source       ? replacement.source       : existing.source,
+            convertRange = replacement.convertRange != original.convertRange ? replacement.convertRange : existing.convertRange,
+            sourceMin    = replacement.sourceMin    != original.sourceMin    ? replacement.sourceMin    : existing.sourceMin,
+            sourceMax    = replacement.sourceMax    != original.sourceMax    ? replacement.sourceMax    : existing.sourceMax,
+            destMin      = replacement.destMin      != original.destMin      ? replacement.destMin      : existing.destMin,
+            destMax        = replacement.destMax        != original.destMax        ? replacement.destMax        : existing.destMax,
+            preventRepeats = replacement.preventRepeats != original.preventRepeats ? replacement.preventRepeats : existing.preventRepeats,
+        };
 
         /* Removes entry's parameter from every selected state's driver, destroying the driver component entirely if its list becomes empty. */
         void RemoveDriverParam(DriverParamEntry entry)
@@ -524,15 +779,25 @@ namespace YGDR.Editor.Animation
             return -1;
         }
 
-        /* Returns true if a and b share the same name, type, and value fields (uses min/max/chance for Random type). */
+        /* Returns true if a and b share the same name, type, and value fields (uses min/max/chance for Random, source for Copy). */
         static bool DriverParamsMatch(VRC_AvatarParameterDriver.Parameter a, VRC_AvatarParameterDriver.Parameter b)
         {
             if (a.name != b.name || a.type != b.type) return false;
-            return b.type == VRC_AvatarParameterDriver.ChangeType.Random
-                ? Mathf.Approximately(a.valueMin, b.valueMin) &&
-                  Mathf.Approximately(a.valueMax, b.valueMax) &&
-                  Mathf.Approximately(a.chance,   b.chance)
-                : Mathf.Approximately(a.value, b.value);
+            return b.type switch
+            {
+                VRC_AvatarParameterDriver.ChangeType.Random => Mathf.Approximately(a.valueMin, b.valueMin) &&
+                                                               Mathf.Approximately(a.valueMax, b.valueMax) &&
+                                                               Mathf.Approximately(a.chance,   b.chance)   &&
+                                                               a.preventRepeats == b.preventRepeats,
+                VRC_AvatarParameterDriver.ChangeType.Copy   => a.source == b.source &&
+                                                               a.convertRange == b.convertRange &&
+                                                               (!a.convertRange || (
+                                                                   Mathf.Approximately(a.sourceMin, b.sourceMin) &&
+                                                                   Mathf.Approximately(a.sourceMax, b.sourceMax) &&
+                                                                   Mathf.Approximately(a.destMin,   b.destMin)   &&
+                                                                   Mathf.Approximately(a.destMax,   b.destMax))),
+                _                                           => Mathf.Approximately(a.value, b.value)
+            };
         }
 
         static VRCAvatarParameterDriver GetDriverForState(AnimatorState state)
@@ -558,7 +823,21 @@ namespace YGDR.Editor.Animation
 
         ReorderableList _driverParamReorderList;
         List<VRC_AvatarParameterDriver.Parameter> _driverParamListData;
+        float[] _stableElementHeights;
         int _removeDriverParamIndex = -1;
+
+        float ComputeDriverParamHeight(VRC_AvatarParameterDriver.Parameter p)
+        {
+            float singleLine = EditorGUIUtility.singleLineHeight;
+            if (p.type != VRC_AvatarParameterDriver.ChangeType.Copy)
+            {
+                bool isRandomNonBool = p.type == VRC_AvatarParameterDriver.ChangeType.Random &&
+                                      GetParamType(p.name) != AnimatorControllerParameterType.Bool;
+                return singleLine * (isRandomNonBool ? 5f : 3f);
+            }
+            float copyLines = !string.IsNullOrEmpty(p.source) && GetParamType(p.source) != GetParamType(p.name) ? 6f : 4f;
+            return p.convertRange ? singleLine * (copyLines + 2f) : singleLine * copyLines;
+        }
 
         void DrawVRCPlayAudioSection()
         {
@@ -567,12 +846,12 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Play Audio", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.audio"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                     foreach (var state in _selectedStates)
                         GetOrCreateAudio(state);
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemoveAudioFromAll();
                     anyHave = false;
@@ -636,7 +915,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("AudioSource", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.source"), GUILayout.Width(110));
                 EditorGUI.BeginChangeCheck();
                 var droppedSource = (AudioSource)EditorGUILayout.ObjectField(null, typeof(AudioSource), true);
                 if (EditorGUI.EndChangeCheck() && droppedSource != null)
@@ -652,7 +931,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Source Path", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.source_path"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).SourcePath != first.SourcePath);
                 EditorGUI.BeginChangeCheck();
                 string newPath = EditorGUILayout.TextField(first.SourcePath ?? "");
@@ -665,15 +944,17 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Playback Order", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.playback_order"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).PlaybackOrder != first.PlaybackOrder);
                 EditorGUI.BeginChangeCheck();
-                var newOrder = (VRCAnimatorPlayAudio.Order)EditorGUILayout.EnumPopup(first.PlaybackOrder);
+                var orderLabels = new[] { L10n.Get("vrc.audio.order.random"), L10n.Get("vrc.audio.order.unique"), L10n.Get("vrc.audio.order.roundabout"), L10n.Get("vrc.audio.order.parameter") };
+                var newOrder = (VRCAnimatorPlayAudio.Order)EditorGUILayout.Popup((int)first.PlaybackOrder, orderLabels);
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Playback Order", audio => audio.PlaybackOrder = newOrder);
                 EditorGUI.showMixedValue = false;
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).ClipsApplySettings != first.ClipsApplySettings);
                 EditorGUI.BeginChangeCheck();
-                var newClipsApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.EnumPopup(first.ClipsApplySettings, GUILayout.Width(130));
+                var applyLabels = new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") };
+                var newClipsApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.ClipsApplySettings, applyLabels, GUILayout.Width(130));
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Clips Apply Settings", audio => audio.ClipsApplySettings = newClipsApply);
                 EditorGUI.showMixedValue = false;
             }
@@ -683,7 +964,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Parameter Name", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.param_name"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).ParameterName != first.ParameterName);
                 EditorGUI.BeginChangeCheck();
                 string newParam = DrawIntParamDropdown(first.ParameterName ?? "");
@@ -696,14 +977,14 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Volume", GUILayout.Width(55));
-                EditorGUILayout.LabelField("Min", EditorStyles.miniLabel, GUILayout.Width(25));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.volume"), GUILayout.Width(95));
+                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.min"), EditorStyles.label, GUILayout.Width(35));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Volume.x, first.Volume.x));
                 EditorGUI.BeginChangeCheck();
                 float newVolMin = Mathf.Clamp(EditorGUILayout.FloatField(first.Volume.x), 0f, 1f);
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Volume Min", audio => audio.Volume = new Vector2(newVolMin, audio.Volume.y));
                 EditorGUI.showMixedValue = false;
-                EditorGUILayout.LabelField("Max", EditorStyles.miniLabel, GUILayout.Width(25));
+                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.max"), EditorStyles.label, GUILayout.Width(35));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Volume.y, first.Volume.y));
                 EditorGUI.BeginChangeCheck();
                 float newVolMax = Mathf.Clamp(EditorGUILayout.FloatField(first.Volume.y), 0f, 1f);
@@ -711,7 +992,7 @@ namespace YGDR.Editor.Animation
                 EditorGUI.showMixedValue = false;
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).VolumeApplySettings != first.VolumeApplySettings);
                 EditorGUI.BeginChangeCheck();
-                var newVolApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.EnumPopup(first.VolumeApplySettings, GUILayout.Width(130));
+                var newVolApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.VolumeApplySettings, new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") }, GUILayout.Width(130));
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Volume Apply Settings", audio => audio.VolumeApplySettings = newVolApply);
                 EditorGUI.showMixedValue = false;
             }
@@ -721,14 +1002,14 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Pitch", GUILayout.Width(55));
-                EditorGUILayout.LabelField("Min", EditorStyles.miniLabel, GUILayout.Width(25));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.pitch"), GUILayout.Width(95));
+                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.min"), EditorStyles.label, GUILayout.Width(35));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Pitch.x, first.Pitch.x));
                 EditorGUI.BeginChangeCheck();
                 float newPitchMin = Mathf.Clamp(EditorGUILayout.FloatField(first.Pitch.x), -3f, 3f);
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Pitch Min", audio => audio.Pitch = new Vector2(newPitchMin, audio.Pitch.y));
                 EditorGUI.showMixedValue = false;
-                EditorGUILayout.LabelField("Max", EditorStyles.miniLabel, GUILayout.Width(25));
+                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.max"), EditorStyles.label, GUILayout.Width(35));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Pitch.y, first.Pitch.y));
                 EditorGUI.BeginChangeCheck();
                 float newPitchMax = Mathf.Clamp(EditorGUILayout.FloatField(first.Pitch.y), -3f, 3f);
@@ -736,7 +1017,7 @@ namespace YGDR.Editor.Animation
                 EditorGUI.showMixedValue = false;
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).PitchApplySettings != first.PitchApplySettings);
                 EditorGUI.BeginChangeCheck();
-                var newPitchApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.EnumPopup(first.PitchApplySettings, GUILayout.Width(130));
+                var newPitchApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.PitchApplySettings, new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") }, GUILayout.Width(130));
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Pitch Apply Settings", audio => audio.PitchApplySettings = newPitchApply);
                 EditorGUI.showMixedValue = false;
             }
@@ -746,7 +1027,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Loop", GUILayout.Width(55));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.loop"), GUILayout.Width(55));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).Loop != first.Loop);
                 EditorGUI.BeginChangeCheck();
                 bool newLoop = EditorGUILayout.Toggle(first.Loop, GUILayout.Width(16));
@@ -755,7 +1036,7 @@ namespace YGDR.Editor.Animation
                 GUILayout.FlexibleSpace();
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).LoopApplySettings != first.LoopApplySettings);
                 EditorGUI.BeginChangeCheck();
-                var newLoopApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.EnumPopup(first.LoopApplySettings, GUILayout.Width(130));
+                var newLoopApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.LoopApplySettings, new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") }, GUILayout.Width(130));
                 if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Loop Apply Settings", audio => audio.LoopApplySettings = newLoopApply);
                 EditorGUI.showMixedValue = false;
             }
@@ -766,8 +1047,8 @@ namespace YGDR.Editor.Animation
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(114);
-                GUILayout.Label("Stop", EditorStyles.miniLabel, GUILayout.Width(40));
-                GUILayout.Label("Play", EditorStyles.miniLabel, GUILayout.Width(40));
+                GUILayout.Label(L10n.Get("vrc.audio.stop"), EditorStyles.label, GUILayout.Width(40));
+                GUILayout.Label(L10n.Get("vrc.audio.play"), EditorStyles.label, GUILayout.Width(40));
             }
         }
 
@@ -775,7 +1056,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("On Enter", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.on_enter"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).StopOnEnter != first.StopOnEnter);
                 EditorGUI.BeginChangeCheck();
                 bool newStopEnter = EditorGUILayout.Toggle(first.StopOnEnter, GUILayout.Width(40));
@@ -793,7 +1074,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("On Exit", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.on_exit"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).StopOnExit != first.StopOnExit);
                 EditorGUI.BeginChangeCheck();
                 bool newStopExit = EditorGUILayout.Toggle(first.StopOnExit, GUILayout.Width(40));
@@ -811,7 +1092,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Play On Enter Delay In Seconds", GUILayout.Width(220));
+                EditorGUILayout.LabelField(L10n.Get("vrc.audio.delay"), GUILayout.Width(220));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).DelayInSeconds, first.DelayInSeconds));
                 EditorGUI.BeginChangeCheck();
                 float newDelay = Mathf.Clamp(EditorGUILayout.FloatField(first.DelayInSeconds), 0f, 60f);
@@ -837,7 +1118,7 @@ namespace YGDR.Editor.Animation
             var headerRow = EditorGUILayout.GetControlRect(false, rowHeight);
             const float sizeWidth = 40f;
             var foldoutRect = new Rect(headerRow.x, headerRow.y, headerRow.width - sizeWidth - 4f, rowHeight);
-            _clipsExpanded = EditorGUI.Foldout(foldoutRect, _clipsExpanded, "Clips", true, EditorStyles.foldout);
+            _clipsExpanded = EditorGUI.Foldout(foldoutRect, _clipsExpanded, L10n.Get("vrc.audio.clips"), true, EditorStyles.foldout);
             EditorGUIUtility.AddCursorRect(foldoutRect, MouseCursor.Link);
 
             EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => (GetAudioForState(s).Clips?.Length ?? 0) != clips.Length);
@@ -945,7 +1226,7 @@ namespace YGDR.Editor.Animation
                 }
 
                 if (clips.Length == 0)
-                    EditorGUILayout.LabelField("List is Empty", Styles.EmptyLabel);
+                    EditorGUILayout.LabelField(L10n.Get("vrc.list_empty"), Styles.EmptyLabel);
                 else
                     _clipsReorderList.DoLayoutList();
 
@@ -1012,12 +1293,12 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Tracking Control", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.tracking"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                     foreach (var state in _selectedStates)
                         GetOrCreateTracking(state);
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemoveTrackingFromAll();
                     anyHave = false;
@@ -1054,35 +1335,35 @@ namespace YGDR.Editor.Animation
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.Space(114);
-                GUILayout.Label("No Change", EditorStyles.miniLabel, GUILayout.Width(70));
-                GUILayout.Label("Tracking",  EditorStyles.miniLabel, GUILayout.Width(70));
-                GUILayout.Label("Animation", EditorStyles.miniLabel, GUILayout.Width(70));
+                GUILayout.Label(L10n.Get("vrc.tracking.no_change"), EditorStyles.label, GUILayout.Width(70));
+                GUILayout.Label(L10n.Get("vrc.tracking.tracking"),   EditorStyles.label, GUILayout.Width(70));
+                GUILayout.Label(L10n.Get("vrc.tracking.animation"),  EditorStyles.label, GUILayout.Width(70));
             }
 
             // Set All row
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Set All", GUILayout.Width(110));
+                EditorGUILayout.LabelField(L10n.Get("vrc.tracking.set_all"), GUILayout.Width(110));
                 DrawSetAllTrackingRadio(statesWithTracking, VRC_AnimatorTrackingControl.TrackingType.NoChange,  70f);
                 DrawSetAllTrackingRadio(statesWithTracking, VRC_AnimatorTrackingControl.TrackingType.Tracking,  70f);
                 DrawSetAllTrackingRadio(statesWithTracking, VRC_AnimatorTrackingControl.TrackingType.Animation, 70f);
             }
             EditorGUILayout.Space(2f);
 
-            DrawTrackingRow("Head",           statesWithTracking, audio => audio.trackingHead,         (a, v) => a.trackingHead         = v);
-            DrawTrackingRow("Left Hand",      statesWithTracking, audio => audio.trackingLeftHand,      (a, v) => a.trackingLeftHand     = v);
-            DrawTrackingRow("Right Hand",     statesWithTracking, audio => audio.trackingRightHand,     (a, v) => a.trackingRightHand    = v);
-            DrawTrackingRow("Hip",            statesWithTracking, audio => audio.trackingHip,           (a, v) => a.trackingHip          = v);
-            DrawTrackingRow("Left Foot",      statesWithTracking, audio => audio.trackingLeftFoot,      (a, v) => a.trackingLeftFoot     = v);
-            DrawTrackingRow("Right Foot",     statesWithTracking, audio => audio.trackingRightFoot,     (a, v) => a.trackingRightFoot    = v);
-            DrawTrackingRow("Left Fingers",   statesWithTracking, audio => audio.trackingLeftFingers,   (a, v) => a.trackingLeftFingers  = v);
-            DrawTrackingRow("Right Fingers",  statesWithTracking, audio => audio.trackingRightFingers,  (a, v) => a.trackingRightFingers = v);
-            DrawTrackingRow("Eyes & Eyelids", statesWithTracking, audio => audio.trackingEyes,          (a, v) => a.trackingEyes         = v);
-            DrawTrackingRow("Mouth & Jaw",    statesWithTracking, audio => audio.trackingMouth,         (a, v) => a.trackingMouth        = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.head"),          statesWithTracking, audio => audio.trackingHead,         (a, v) => a.trackingHead         = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.left_hand"),     statesWithTracking, audio => audio.trackingLeftHand,      (a, v) => a.trackingLeftHand     = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.right_hand"),    statesWithTracking, audio => audio.trackingRightHand,     (a, v) => a.trackingRightHand    = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.hip"),           statesWithTracking, audio => audio.trackingHip,           (a, v) => a.trackingHip          = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.left_foot"),     statesWithTracking, audio => audio.trackingLeftFoot,      (a, v) => a.trackingLeftFoot     = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.right_foot"),    statesWithTracking, audio => audio.trackingRightFoot,     (a, v) => a.trackingRightFoot    = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.left_fingers"),  statesWithTracking, audio => audio.trackingLeftFingers,   (a, v) => a.trackingLeftFingers  = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.right_fingers"), statesWithTracking, audio => audio.trackingRightFingers,  (a, v) => a.trackingRightFingers = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.eyes_eyelids"),  statesWithTracking, audio => audio.trackingEyes,          (a, v) => a.trackingEyes         = v);
+            DrawTrackingRow(L10n.Get("vrc.tracking.mouth_jaw"),     statesWithTracking, audio => audio.trackingMouth,         (a, v) => a.trackingMouth        = v);
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Debug String", GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithTracking.Any(state => GetTrackingForState(state).debugString != first.debugString);
                 EditorGUI.BeginChangeCheck();
                 string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
@@ -1247,12 +1528,12 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Locomotion Control", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.locomotion"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                     foreach (var state in _selectedStates)
                         GetOrCreateLocomotion(state);
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemoveLocomotionFromAll();
                     anyHave = false;
@@ -1289,8 +1570,8 @@ namespace YGDR.Editor.Animation
             using (new EditorGUILayout.HorizontalScope())
             {
                 bool mixedDisable = multi && statesWithLocomotion.Any(state => GetLocomotionForState(state).disableLocomotion != first.disableLocomotion);
-                EditorGUILayout.LabelField("Locomotion", GUILayout.Width(110));
-                DrawBoolToggleButtons(first.disableLocomotion, mixedDisable, "Disable", "Enable", 60f, isDisabled =>
+                EditorGUILayout.LabelField(L10n.Get("vrc.locomotion.label"), GUILayout.Width(110));
+                DrawBoolToggleButtons(first.disableLocomotion, mixedDisable, L10n.Get("vrc.locomotion.disable"), L10n.Get("vrc.locomotion.enable"), 60f, isDisabled =>
                 {
                     foreach (var state in _selectedStates)
                     {
@@ -1304,7 +1585,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Debug String", GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithLocomotion.Any(state => GetLocomotionForState(state).debugString != first.debugString);
                 EditorGUI.BeginChangeCheck();
                 string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
@@ -1357,12 +1638,12 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Animator Layer Control", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.layer_control"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                     foreach (var state in _selectedStates)
                         GetOrCreateLayerControl(state);
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemoveLayerControlFromAll();
                     anyHave = false;
@@ -1398,7 +1679,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Playable", "Playable layer to affect"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.layer_control.playable"), L10n.Get("vrc.tooltip.playable_layer")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => GetLayerControlForState(state).playable != first.playable);
                 EditorGUI.BeginChangeCheck();
                 var newPlayable = (VRC_AnimatorLayerControl.BlendableLayer)EditorGUILayout.EnumPopup(first.playable);
@@ -1417,7 +1698,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Layer", "Index of sub-layer to affect"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.layer"), L10n.Get("vrc.tooltip.sub_layer_index")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => GetLayerControlForState(state).layer != first.layer);
                 EditorGUI.BeginChangeCheck();
                 int newLayer = Mathf.Max(0, EditorGUILayout.IntField(first.layer));
@@ -1436,7 +1717,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Goal Weight", "Goal weight 0-1"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.goal_weight"), L10n.Get("vrc.tooltip.goal_weight")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(GetLayerControlForState(state).goalWeight, first.goalWeight));
                 EditorGUI.BeginChangeCheck();
                 float newGoalWeight = EditorGUILayout.Slider(first.goalWeight, 0f, 1f);
@@ -1455,7 +1736,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Blend Duration", "Time to reach goal weight, should be less than animation length"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.blend_duration"), L10n.Get("vrc.tooltip.blend_duration_layer")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(GetLayerControlForState(state).blendDuration, first.blendDuration));
                 EditorGUI.BeginChangeCheck();
                 float newBlendDuration = Mathf.Max(0f, EditorGUILayout.FloatField(first.blendDuration));
@@ -1474,7 +1755,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Debug String", "Message for debugging"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => GetLayerControlForState(state).debugString != first.debugString);
                 EditorGUI.BeginChangeCheck();
                 string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
@@ -1527,12 +1808,12 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Playable Layer Control", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.playable_layer"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                     foreach (var state in _selectedStates)
                         GetOrCreatePlayableLayer(state);
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemovePlayableLayerFromAll();
                     anyHave = false;
@@ -1568,7 +1849,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Layer", "Layer to affect"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.layer"), L10n.Get("vrc.tooltip.layer")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => GetPlayableLayerForState(state).layer != first.layer);
                 EditorGUI.BeginChangeCheck();
                 var newLayer = (VRC_PlayableLayerControl.BlendableLayer)EditorGUILayout.EnumPopup(first.layer);
@@ -1587,7 +1868,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Goal Weight", "Goal weight 0-1"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.goal_weight"), L10n.Get("vrc.tooltip.goal_weight")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(GetPlayableLayerForState(state).goalWeight, first.goalWeight));
                 EditorGUI.BeginChangeCheck();
                 float newGoalWeight = EditorGUILayout.Slider(first.goalWeight, 0f, 1f);
@@ -1606,7 +1887,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Blend Duration", "Time to reach goal weight"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.blend_duration"), L10n.Get("vrc.tooltip.blend_duration")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(GetPlayableLayerForState(state).blendDuration, first.blendDuration));
                 EditorGUI.BeginChangeCheck();
                 float newBlendDuration = Mathf.Max(0f, EditorGUILayout.FloatField(first.blendDuration));
@@ -1625,7 +1906,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Debug String", "Message for debugging"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithControl.Any(state => GetPlayableLayerForState(state).debugString != first.debugString);
                 EditorGUI.BeginChangeCheck();
                 string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
@@ -1678,12 +1959,12 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
             {
-                GUILayout.Label("Shared VRC Temporary Pose Space", Styles.BehaviorSectionLabel, GUILayout.Height(24));
+                GUILayout.Label(L10n.Get("vrc.pose_space"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn("Add to All", EditorStyles.miniButton, GUILayout.Width(72), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                     foreach (var state in _selectedStates)
                         GetOrCreatePoseSpace(state);
-                if (anyHave && CursorBtn("Remove All", EditorStyles.miniButton, GUILayout.Width(76), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
                 {
                     RemovePoseSpaceFromAll();
                     anyHave = false;
@@ -1720,8 +2001,8 @@ namespace YGDR.Editor.Animation
             using (new EditorGUILayout.HorizontalScope())
             {
                 bool mixedEnter = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).enterPoseSpace != first.enterPoseSpace);
-                EditorGUILayout.LabelField(new GUIContent("Pose Space", "Enter or exit a pose space based on the avatar's current pose."), GUILayout.Width(110));
-                DrawBoolToggleButtons(first.enterPoseSpace, mixedEnter, "Enter", "Exit", 60f, isEnter =>
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.pose_space.pose_space"), L10n.Get("vrc.tooltip.pose_space")), GUILayout.Width(110));
+                DrawBoolToggleButtons(first.enterPoseSpace, mixedEnter, L10n.Get("vrc.pose_space.enter"), L10n.Get("vrc.pose_space.exit"), 60f, isEnter =>
                 {
                     foreach (var state in _selectedStates)
                     {
@@ -1735,7 +2016,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Fixed Delay", "Is the delay fixed or normalized."), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.pose_space.fixed_delay"), L10n.Get("vrc.tooltip.fixed_delay")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).fixedDelay != first.fixedDelay);
                 EditorGUI.BeginChangeCheck();
                 bool newFixedDelay = EditorGUILayout.Toggle(first.fixedDelay, GUILayout.Width(16));
@@ -1754,7 +2035,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent(first.fixedDelay ? "Delay Time (s)" : "Delay Time (%)", "Delay before applying."), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(first.fixedDelay ? L10n.Get("vrc.pose_space.delay_time_s") : L10n.Get("vrc.pose_space.delay_time_pct"), L10n.Get("vrc.tooltip.delay_time")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithPoseSpace.Any(state => !Mathf.Approximately(GetPoseSpaceForState(state).delayTime, first.delayTime));
                 EditorGUI.BeginChangeCheck();
                 float newDelayTime = EditorGUILayout.FloatField(first.delayTime);
@@ -1773,7 +2054,7 @@ namespace YGDR.Editor.Animation
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(new GUIContent("Debug String", "Message for debugging"), GUILayout.Width(110));
+                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).debugString != first.debugString);
                 EditorGUI.BeginChangeCheck();
                 string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");

@@ -1,4 +1,23 @@
-﻿#if UNITY_EDITOR
+﻿/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
+#if UNITY_EDITOR
 using System;
 using System.Reflection;
 using HarmonyLib;
@@ -93,11 +112,13 @@ namespace YGDR.Editor.Animation
             if (gridSize < 1f) gridSize = 1f;
             for (float currentX = gridRect.xMin - (gridRect.xMin % gridSize); currentX < gridRect.xMax; currentX += gridSize)
             {
+                if (currentX < gridRect.xMin) continue;
                 GL.Vertex3(currentX, gridRect.yMin, 0);
                 GL.Vertex3(currentX, gridRect.yMax, 0);
             }
             for (float currentY = gridRect.yMin - (gridRect.yMin % gridSize); currentY < gridRect.yMax; currentY += gridSize)
             {
+                if (currentY < gridRect.yMin) continue;
                 GL.Vertex3(gridRect.xMin, currentY, 0);
                 GL.Vertex3(gridRect.xMax, currentY, 0);
             }
@@ -107,9 +128,15 @@ namespace YGDR.Editor.Animation
         {
             if (gridSize < 1f) gridSize = 1f;
             for (float currentX = gridRect.xMin - (gridRect.xMin % gridSize); currentX < gridRect.xMax; currentX += gridSize)
+            {
+                if (currentX < gridRect.xMin) continue;
                 EditorGUI.DrawRect(new Rect(currentX, gridRect.yMin, lineWidth, gridRect.height), color);
+            }
             for (float currentY = gridRect.yMin - (gridRect.yMin % gridSize); currentY < gridRect.yMax; currentY += gridSize)
+            {
+                if (currentY < gridRect.yMin) continue;
                 EditorGUI.DrawRect(new Rect(gridRect.xMin, currentY, gridRect.width, lineWidth), color);
+            }
         }
     }
 
