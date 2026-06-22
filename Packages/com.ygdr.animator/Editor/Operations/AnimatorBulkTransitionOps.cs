@@ -146,6 +146,17 @@ namespace YGDR.Editor.Animation
             RebuildAnimatorGraph();
         }
 
+        /* Adds an entry transition from activeSM to every destination state. */
+        internal static void MultiTransitionFromEntry(AnimatorStateMachine activeSM, AnimatorState[] destinationStates)
+        {
+            if (destinationStates == null || destinationStates.Length == 0) return;
+            Undo.RegisterCompleteObjectUndo(activeSM, "Multi Transition");
+            foreach (var destinationState in destinationStates)
+                Undo.RegisterCreatedObjectUndo(activeSM.AddEntryTransition(destinationState), "Multi Transition");
+            EditorUtility.SetDirty(activeSM);
+            RebuildAnimatorGraph();
+        }
+
         /* Adds an exit transition from every source state. */
         internal static void MultiTransitionToExit(AnimatorStateMachine activeSM, AnimatorState[] sourceStates)
         {
@@ -240,6 +251,24 @@ namespace YGDR.Editor.Animation
             RebuildAnimatorGraph();
         }
 
+        /* For each selected entry transition, adds a copy pointing to each new destination state with all conditions preserved. */
+        internal static void RedirectEntryTransitions(AnimatorStateMachine activeSM, AnimatorTransition[] transitions, AnimatorState[] destinationStates)
+        {
+            if (transitions == null || destinationStates == null || destinationStates.Length == 0) return;
+            var validTransitions = transitions.Where(transition => transition != null).ToList();
+            if (validTransitions.Count == 0) return;
+            Undo.RegisterCompleteObjectUndo(activeSM, "Redirect Entry Transitions");
+            foreach (var originalTransition in validTransitions)
+                foreach (var destinationState in destinationStates)
+                {
+                    var newTransition = activeSM.AddEntryTransition(destinationState);
+                    Undo.RegisterCreatedObjectUndo(newTransition, "Redirect Entry Transitions");
+                    AnimatorTransitionOps.CopySettings(newTransition, originalTransition);
+                }
+            EditorUtility.SetDirty(activeSM);
+            RebuildAnimatorGraph();
+        }
+
         internal static void RebuildAnimatorGraph()
         {
             if (AnimatorEditorInit.AnimatorControllerToolType == null) return;
@@ -310,6 +339,69 @@ namespace YGDR.Editor.Animation
                 AnimatorTransitionOps.CopySettings(newTransition, originalTransition);
             }
 
+            EditorUtility.SetDirty(activeSM);
+            RebuildAnimatorGraph();
+        }
+
+        /* Duplicates each selected transition as an Entry transition, copying original destinations and all settings.
+           Exit destinations are skipped — Entry cannot target Exit. */
+        internal static void ReplicateTransitionsFromEntry(AnimatorStateMachine activeSM, AnimatorStateTransition[] transitions)
+        {
+            if (transitions == null) return;
+
+            var validTransitions = transitions
+                .Where(transition => transition != null &&
+                    (transition.destinationState != null || transition.destinationStateMachine != null))
+                .ToList();
+            if (validTransitions.Count == 0) return;
+
+            Undo.RegisterCompleteObjectUndo(new Object[] { activeSM }, "Replicate Transitions");
+
+            foreach (var originalTransition in validTransitions)
+            {
+                AnimatorTransition newTransition;
+                if (originalTransition.destinationStateMachine != null)
+                    newTransition = activeSM.AddEntryTransition(originalTransition.destinationStateMachine);
+                else
+                    newTransition = activeSM.AddEntryTransition(originalTransition.destinationState);
+
+                Undo.RegisterCreatedObjectUndo(newTransition, "Replicate Transitions");
+                AnimatorTransitionOps.CopySettings(newTransition, originalTransition);
+            }
+
+            EditorUtility.SetDirty(activeSM);
+            RebuildAnimatorGraph();
+        }
+
+        /* For each entry transition template, creates a matching state→destination transition on each new source state,
+           copying conditions. Entry→X templates become StateA→X, StateB→X, etc. */
+        internal static void ReplicateTransitionsFromEntryTransitions(AnimatorStateMachine activeSM, AnimatorTransition[] templates, AnimatorState[] newSources)
+        {
+            if (templates == null || newSources == null || newSources.Length == 0) return;
+
+            var validTemplates = templates
+                .Where(template => template != null &&
+                    (template.destinationState != null || template.destinationStateMachine != null))
+                .ToList();
+            if (validTemplates.Count == 0) return;
+
+            var undoTargets = newSources.Cast<Object>().Concat(new Object[] { activeSM }).ToArray();
+            Undo.RegisterCompleteObjectUndo(undoTargets, "Replicate Transitions");
+
+            foreach (var sourceState in newSources)
+                foreach (var template in validTemplates)
+                {
+                    AnimatorStateTransition newTransition;
+                    if (template.destinationStateMachine != null)
+                        newTransition = sourceState.AddTransition(template.destinationStateMachine);
+                    else
+                        newTransition = sourceState.AddTransition(template.destinationState);
+
+                    Undo.RegisterCreatedObjectUndo(newTransition, "Replicate Transitions");
+                    AnimatorTransitionOps.CopySettings(newTransition, template);
+                }
+
+            foreach (var sourceState in newSources) EditorUtility.SetDirty(sourceState);
             EditorUtility.SetDirty(activeSM);
             RebuildAnimatorGraph();
         }

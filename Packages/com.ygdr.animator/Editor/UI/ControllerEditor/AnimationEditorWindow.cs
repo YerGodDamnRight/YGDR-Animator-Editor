@@ -38,6 +38,7 @@ namespace YGDR.Editor.Animation
         Vector2 _scrollPosition;
 
         AnimatorStateTransition[] _selectedTransitions = Array.Empty<AnimatorStateTransition>();
+        AnimatorTransition[] _selectedEntryTransitions = Array.Empty<AnimatorTransition>();
         bool _tagScrollEnabled = true;
         Vector2 _tagScrollPos;
         AnimatorState[] _selectedStates = Array.Empty<AnimatorState>();
@@ -103,6 +104,7 @@ namespace YGDR.Editor.Animation
         void OnSelectionChanged()
         {
             _selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
+            _selectedEntryTransitions = Selection.objects.OfType<AnimatorTransition>().Where(t => !((t as object) is AnimatorStateTransition)).ToArray();
             _selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
             _conditionCacheDirty = true;
             UpdateSelectedClipIds();

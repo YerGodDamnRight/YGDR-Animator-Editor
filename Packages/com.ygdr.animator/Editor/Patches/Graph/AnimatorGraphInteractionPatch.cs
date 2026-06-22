@@ -150,7 +150,7 @@ namespace YGDR.Editor.Animation
                     if (PatchStateChainTransition.ChainActive) { PatchStateChainTransition.Clear(); currentEvent.Use(); return; }
                     if (PatchStateChainTransition.FanActive) { PatchStateChainTransition.ClearFan(); currentEvent.Use(); return; }
                     if (PatchTransitionCopyPaste.PasteActive) { PatchTransitionCopyPaste.ClearPaste(); currentEvent.Use(); return; }
-                    if (PatchStateNodeMenu._multiTransitionSources != null || PatchStateNodeMenu._redirectTransitions != null || PatchStateNodeMenu._replicateTransitions != null)
+                    if (PatchStateNodeMenu._multiTransitionSources != null || PatchStateNodeMenu._redirectTransitions != null || PatchStateNodeMenu._replicateTransitions != null || PatchStateNodeMenu._redirectEntryTransitions != null)
                     {
                         PatchStateNodeMenu.CancelPending();
                         currentEvent.Use();
@@ -166,13 +166,17 @@ namespace YGDR.Editor.Animation
                         var multiSources = PatchStateNodeMenu._multiTransitionSources;
                         var multiSM = PatchStateNodeMenu._multiTransitionSM;
                         var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
+                        var fromEntry = PatchStateNodeMenu._multiTransitionFromEntry;
                         PatchStateNodeMenu._multiTransitionSources = null;
                         PatchStateNodeMenu._multiTransitionSM = null;
                         PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                        PatchStateNodeMenu._multiTransitionFromEntry = false;
                         if (destinationStates.Length > 0)
                         {
                             if (fromAnyState)
                                 AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, destinationStates);
+                            else if (fromEntry)
+                                AnimatorBulkTransitionOps.MultiTransitionFromEntry(multiSM, destinationStates);
                             else
                                 AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, destinationStates);
                         }
@@ -189,6 +193,17 @@ namespace YGDR.Editor.Animation
                         PatchStateNodeMenu._redirectSM = null;
                         if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
                         else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
+                        currentEvent.Use();
+                        return;
+                    }
+                    if (PatchStateNodeMenu._redirectEntryTransitions != null)
+                    {
+                        var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                        var redirectTransitions = PatchStateNodeMenu._redirectEntryTransitions;
+                        var redirectSM = PatchStateNodeMenu._redirectEntrySM;
+                        PatchStateNodeMenu._redirectEntryTransitions = null;
+                        PatchStateNodeMenu._redirectEntrySM = null;
+                        if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectEntryTransitions(redirectSM, redirectTransitions, destinationStates);
                         currentEvent.Use();
                         return;
                     }
@@ -227,8 +242,8 @@ namespace YGDR.Editor.Animation
                     {
                         var allTransitions = activeStateMachineA.states
                             .SelectMany(childState => childState.state.transitions)
-                            .Concat(activeStateMachineA.anyStateTransitions)
-                            .Cast<UnityEngine.Object>()
+                            .Concat<UnityEngine.Object>(activeStateMachineA.anyStateTransitions)
+                            .Concat(activeStateMachineA.entryTransitions)
                             .ToArray();
                         Selection.objects = allTransitions;
                         currentEvent.Use();
@@ -251,7 +266,8 @@ namespace YGDR.Editor.Animation
 
                     bool isAnyStateKb = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
                     bool isExitKb     = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
-                    if (isAnyStateKb || isExitKb)
+                    bool isEntryKb    = Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
+                    if (isAnyStateKb || isExitKb || isEntryKb)
                     {
                         var activeSMKb = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                         if (activeSMKb != null)
@@ -259,6 +275,7 @@ namespace YGDR.Editor.Animation
                             var controllerKb = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(activeSMKb));
                             if (isAnyStateKb && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromAnyState(controllerKb); currentEvent.Use(); return; }
                             if (isExitKb     && kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingToExit(controllerKb);        currentEvent.Use(); return; }
+                            if (isEntryKb    && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromEntry(controllerKb);     currentEvent.Use(); return; }
                         }
                     }
 
@@ -275,6 +292,7 @@ namespace YGDR.Editor.Animation
                                     PatchStateNodeMenu._multiTransitionSources      = selectedStates;
                                     PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
                                     PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                                    PatchStateNodeMenu._multiTransitionFromEntry    = false;
                                 }
                                 else if (isAnyStateKb)
                                 {
@@ -282,21 +300,35 @@ namespace YGDR.Editor.Animation
                                     PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
                                     PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
                                     PatchStateNodeMenu._multiTransitionFromAnyState = true;
+                                    PatchStateNodeMenu._multiTransitionFromEntry    = false;
+                                }
+                                else if (isEntryKb)
+                                {
+                                    PatchStateNodeMenu.CancelPending();
+                                    PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
+                                    PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                                    PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                                    PatchStateNodeMenu._multiTransitionFromEntry    = true;
                                 }
                             }
                         }
-                        else if (!(PatchStateNodeMenu._multiTransitionFromAnyState && isExitKb))
+                        else if (!(PatchStateNodeMenu._multiTransitionFromAnyState && isExitKb)
+                              && !(PatchStateNodeMenu._multiTransitionFromEntry    && isExitKb))
                         {
                             var multiSources = PatchStateNodeMenu._multiTransitionSources;
                             var multiSM      = PatchStateNodeMenu._multiTransitionSM;
                             var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
+                            var fromEntry    = PatchStateNodeMenu._multiTransitionFromEntry;
                             PatchStateNodeMenu._multiTransitionSources      = null;
                             PatchStateNodeMenu._multiTransitionSM           = null;
                             PatchStateNodeMenu._multiTransitionFromAnyState = false;
-                            if (isExitKb && !fromAnyState)
+                            PatchStateNodeMenu._multiTransitionFromEntry    = false;
+                            if (isExitKb && !fromAnyState && !fromEntry)
                                 AnimatorBulkTransitionOps.MultiTransitionToExit(multiSM, multiSources);
                             else if (fromAnyState && selectedStates.Length > 0)
                                 AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, selectedStates);
+                            else if (fromEntry && selectedStates.Length > 0)
+                                AnimatorBulkTransitionOps.MultiTransitionFromEntry(multiSM, selectedStates);
                             else if (selectedStates.Length > 0)
                                 AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, selectedStates);
                         }
@@ -319,12 +351,23 @@ namespace YGDR.Editor.Animation
                         {
                             var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
                             bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                            bool isEntrySelected    = Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
                             var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
                             var replicateSM = PatchStateNodeMenu._replicateSM;
                             PatchStateNodeMenu._replicateTransitions = null;
                             PatchStateNodeMenu._replicateSM = null;
-                            if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
-                            else if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
+                            if (isAnyStateSelected)               AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                            else if (isEntrySelected)             AnimatorBulkTransitionOps.ReplicateTransitionsFromEntry(replicateSM, replicateTransitions);
+                            else if (newSourceStates.Length > 0)  AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
+                        }
+                        else if (PatchStateNodeMenu._replicateEntryTransitions != null)
+                        {
+                            var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                            var templates = PatchStateNodeMenu._replicateEntryTransitions;
+                            var replicateSM = PatchStateNodeMenu._replicateEntrySM;
+                            PatchStateNodeMenu._replicateEntryTransitions = null;
+                            PatchStateNodeMenu._replicateEntrySM = null;
+                            if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitionsFromEntryTransitions(replicateSM, templates, newSourceStates);
                         }
                         else if (selectedTransitions.Length > 0)
                         {
@@ -336,10 +379,25 @@ namespace YGDR.Editor.Animation
                                 PatchStateNodeMenu._replicateSM = activeSMrep;
                             }
                         }
+                        else
+                        {
+                            var entryTransitionsKb = Selection.objects.OfType<AnimatorTransition>().ToArray();
+                            if (entryTransitionsKb.Length > 0)
+                            {
+                                var activeSMrep = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                                if (activeSMrep != null)
+                                {
+                                    PatchStateNodeMenu.CancelPending();
+                                    PatchStateNodeMenu._replicateEntryTransitions = entryTransitionsKb;
+                                    PatchStateNodeMenu._replicateEntrySM = activeSMrep;
+                                }
+                            }
+                        }
                         currentEvent.Use();
                         return;
                     }
 
+                    var selectedEntryTransitions = Selection.objects.OfType<AnimatorTransition>().ToArray();
                     if (kb.kbRedirect.Matches(currentEvent))
                     {
                         if (PatchStateNodeMenu._redirectTransitions != null)
@@ -353,6 +411,15 @@ namespace YGDR.Editor.Animation
                             if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
                             else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
                         }
+                        else if (PatchStateNodeMenu._redirectEntryTransitions != null)
+                        {
+                            var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                            var redirectTransitions = PatchStateNodeMenu._redirectEntryTransitions;
+                            var redirectSM = PatchStateNodeMenu._redirectEntrySM;
+                            PatchStateNodeMenu._redirectEntryTransitions = null;
+                            PatchStateNodeMenu._redirectEntrySM = null;
+                            if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectEntryTransitions(redirectSM, redirectTransitions, destinationStates);
+                        }
                         else if (selectedTransitions.Length > 0)
                         {
                             var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
@@ -361,6 +428,16 @@ namespace YGDR.Editor.Animation
                                 PatchStateNodeMenu.CancelPending();
                                 PatchStateNodeMenu._redirectTransitions = selectedTransitions;
                                 PatchStateNodeMenu._redirectSM = activeSMred;
+                            }
+                        }
+                        else if (selectedEntryTransitions.Length > 0)
+                        {
+                            var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                            if (activeSMred != null)
+                            {
+                                PatchStateNodeMenu.CancelPending();
+                                PatchStateNodeMenu._redirectEntryTransitions = selectedEntryTransitions;
+                                PatchStateNodeMenu._redirectEntrySM = activeSMred;
                             }
                         }
                         currentEvent.Use();

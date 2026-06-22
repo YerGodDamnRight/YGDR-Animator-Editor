@@ -134,13 +134,21 @@ namespace YGDR.Editor.Animation
         {
             try
             {
+                var expressionParameters = avatarDescriptor.expressionParameters;
+                if (expressionParameters?.parameters == null)
+                {
+                    // Descriptor has no expression params — keep existing sync data so params from
+                    // the previous qualifying avatar remain visible in the animator window.
+                    _cachedSelectedGO = selectedGO;
+                    return;
+                }
+
                 ClearCache();
                 _cachedAvatarRoot = avatarDescriptor.gameObject;
                 _cachedSelectedGO = selectedGO;
-
-                var expressionParameters = avatarDescriptor.expressionParameters;
-                if (expressionParameters?.parameters == null) return;
-
+#if VRC_SDK_VRCSDK3
+                PatchParameterRow.InvalidateVrcComponentCache();
+#endif
                 BuildSyncMaps(expressionParameters.parameters);
             }
             catch (Exception e)
@@ -164,6 +172,9 @@ namespace YGDR.Editor.Animation
                     OpenControllerInAnimatorWindow(controller);
 
                 if (expressionParameters?.parameters == null) return;
+#if VRC_SDK_VRCSDK3
+                PatchParameterRow.InvalidateVrcComponentCache();
+#endif
                 BuildSyncMaps(expressionParameters.parameters);
             }
             catch (Exception e)

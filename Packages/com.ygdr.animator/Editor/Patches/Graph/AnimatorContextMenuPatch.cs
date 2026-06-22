@@ -64,16 +64,26 @@ namespace YGDR.Editor.Animation
         internal static AnimatorStateTransition[] _replicateTransitions;
         internal static AnimatorStateMachine _replicateSM;
         internal static bool _multiTransitionFromAnyState;
+        internal static bool _multiTransitionFromEntry;
+        internal static AnimatorTransition[] _redirectEntryTransitions;
+        internal static AnimatorStateMachine _redirectEntrySM;
+        internal static AnimatorTransition[] _replicateEntryTransitions;
+        internal static AnimatorStateMachine _replicateEntrySM;
 
         internal static void CancelPending()
         {
             _multiTransitionSources      = null;
             _multiTransitionSM           = null;
             _multiTransitionFromAnyState = false;
+            _multiTransitionFromEntry    = false;
             _redirectTransitions         = null;
             _redirectSM                  = null;
             _replicateTransitions        = null;
             _replicateSM                 = null;
+            _redirectEntryTransitions    = null;
+            _redirectEntrySM             = null;
+            _replicateEntryTransitions   = null;
+            _replicateEntrySM            = null;
         }
 
         [HarmonyTargetMethods]
@@ -133,8 +143,12 @@ namespace YGDR.Editor.Animation
                     .Cast<AnimatorStateTransition>()
                     .ToArray();
 
-                bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
-                bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                bool isAnyStateSelected = (AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(node) ?? false)
+                                       || Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                bool isExitSelected    = (AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(node) ?? false)
+                                       || Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                bool isEntrySelected   = (AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(node) ?? false)
+                                       || Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
 
                 if (menu.GetItemCount() > 0) menu.AddSeparator("");
 
@@ -207,6 +221,20 @@ namespace YGDR.Editor.Animation
                         capturedSM);
                 }
 
+                if (isEntrySelected)
+                {
+                    var capturedSM = activeSM;
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.select_outgoing_all")), false,
+                        static data =>
+                        {
+                            var sm = (AnimatorStateMachine)data;
+                            var path = AssetDatabase.GetAssetPath(sm);
+                            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+                            AnimationEditorWindow.SelectOutgoingFromEntry(controller);
+                        },
+                        capturedSM);
+                }
+
                 if (isExitSelected)
                 {
                     var capturedSM = activeSM;
@@ -245,8 +273,8 @@ namespace YGDR.Editor.Animation
                         selectedStates);
                 }
 
-                // Multi Transition — only when states/AnyState selected or phase-2 active
-                bool showMultiTransition = selectedStates.Length > 0 || isAnyStateSelected || _multiTransitionSources != null;
+                // Multi Transition — only when states/AnyState/Entry selected or phase-2 active
+                bool showMultiTransition = selectedStates.Length > 0 || isAnyStateSelected || isEntrySelected || _multiTransitionSources != null;
                 if (showMultiTransition)
                 {
 
@@ -276,6 +304,22 @@ namespace YGDR.Editor.Animation
                                     _replicateTransitions = null;
                                     _replicateSM = null;
                                     _multiTransitionFromAnyState = true;
+                                    _multiTransitionFromEntry = false;
+                                    _multiTransitionSources = System.Array.Empty<AnimatorState>();
+                                    _multiTransitionSM = sm;
+                                },
+                                activeSM);
+                        else if (isEntrySelected)
+                            menu.AddItem(new GUIContent(L10n.Get("context_menu.multi_transition")), false,
+                                static data =>
+                                {
+                                    var sm = (AnimatorStateMachine)data;
+                                    _redirectTransitions = null;
+                                    _redirectSM = null;
+                                    _replicateTransitions = null;
+                                    _replicateSM = null;
+                                    _multiTransitionFromAnyState = false;
+                                    _multiTransitionFromEntry = true;
                                     _multiTransitionSources = System.Array.Empty<AnimatorState>();
                                     _multiTransitionSM = sm;
                                 },
@@ -285,30 +329,37 @@ namespace YGDR.Editor.Animation
                     {
                         menu.AddDisabledItem(new GUIContent($"{L10n.Get("context_menu.multi_transition")} (AnyState cannot target Exit)"));
                     }
+                    else if (_multiTransitionFromEntry && isExitSelected)
+                    {
+                        menu.AddDisabledItem(new GUIContent($"{L10n.Get("context_menu.multi_transition")} (Entry cannot target Exit)"));
+                    }
                     else
                     {
                         menu.AddItem(new GUIContent(L10n.Get("context_menu.multi_transition")), true,
                             static data =>
                             {
-                                var (dests, toExit, fromAnyState) = ((AnimatorState[], bool, bool))data;
+                                var (dests, toExit, fromAnyState, fromEntry) = ((AnimatorState[], bool, bool, bool))data;
                                 var sources = _multiTransitionSources;
                                 var sm = _multiTransitionSM;
                                 _multiTransitionSources = null;
                                 _multiTransitionSM = null;
                                 _multiTransitionFromAnyState = false;
-                                if (toExit && !fromAnyState)
+                                _multiTransitionFromEntry = false;
+                                if (toExit && !fromAnyState && !fromEntry)
                                     AnimatorBulkTransitionOps.MultiTransitionToExit(sm, sources);
                                 else if (fromAnyState && dests.Length > 0)
                                     AnimatorBulkTransitionOps.MultiTransitionFromAnyState(sm, dests);
+                                else if (fromEntry && dests.Length > 0)
+                                    AnimatorBulkTransitionOps.MultiTransitionFromEntry(sm, dests);
                                 else if (dests.Length > 0)
                                     AnimatorBulkTransitionOps.MultiTransition(sm, sources, dests);
                             },
-                            (selectedStates, isExitSelected, _multiTransitionFromAnyState));
+                            (selectedStates, isExitSelected, _multiTransitionFromAnyState, _multiTransitionFromEntry));
                     }
                 }
 
                 // Transition ops — only when transitions selected or phase-2 active
-                bool hasTransitionOps = selectedTransitions.Length > 0 || _redirectTransitions != null || _replicateTransitions != null;
+                bool hasTransitionOps = selectedTransitions.Length > 0 || _redirectTransitions != null || _replicateTransitions != null || _redirectEntryTransitions != null || _replicateEntryTransitions != null;
                 if (hasTransitionOps)
                 {
                     menu.AddSeparator("");
@@ -362,7 +413,7 @@ namespace YGDR.Editor.Animation
                             (selectedStates, isExitSelected));
                     }
 
-                    if (_replicateTransitions == null)
+                    if (_replicateTransitions == null && _replicateEntryTransitions == null)
                     {
                         if (selectedTransitions.Length > 0)
                             menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), false,
@@ -378,22 +429,54 @@ namespace YGDR.Editor.Animation
                                 },
                                 (selectedTransitions, activeSM));
                     }
-                    else
+                    else if (_replicateTransitions != null)
                     {
                         menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
                             static data =>
                             {
-                                var (newSourceStates, fromAnyState) = ((AnimatorState[], bool))data;
+                                var (newSourceStates, fromAnyState, fromEntry) = ((AnimatorState[], bool, bool))data;
                                 var transitions = _replicateTransitions;
                                 var sm = _replicateSM;
                                 _replicateTransitions = null;
                                 _replicateSM = null;
                                 if (fromAnyState)
                                     AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(sm, transitions);
+                                else if (fromEntry)
+                                    AnimatorBulkTransitionOps.ReplicateTransitionsFromEntry(sm, transitions);
                                 else if (newSourceStates.Length > 0)
                                     AnimatorBulkTransitionOps.ReplicateTransitions(sm, transitions, newSourceStates);
                             },
-                            (selectedStates, isAnyStateSelected));
+                            (selectedStates, isAnyStateSelected, isEntrySelected));
+                    }
+                    else if (_replicateEntryTransitions != null)
+                    {
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
+                            static data =>
+                            {
+                                var (newSourceStates, sm) = ((AnimatorState[], AnimatorStateMachine))data;
+                                var templates = _replicateEntryTransitions;
+                                _replicateEntryTransitions = null;
+                                _replicateEntrySM = null;
+                                if (newSourceStates.Length > 0)
+                                    AnimatorBulkTransitionOps.ReplicateTransitionsFromEntryTransitions(sm, templates, newSourceStates);
+                            },
+                            (selectedStates, activeSM));
+                    }
+
+                    if (_redirectEntryTransitions != null)
+                    {
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), true,
+                            static data =>
+                            {
+                                var dests = (AnimatorState[])data;
+                                var transitions = _redirectEntryTransitions;
+                                var sm = _redirectEntrySM;
+                                _redirectEntryTransitions = null;
+                                _redirectEntrySM = null;
+                                if (dests.Length > 0)
+                                    AnimatorBulkTransitionOps.RedirectEntryTransitions(sm, transitions, dests);
+                            },
+                            selectedStates);
                     }
                 }
 
@@ -682,7 +765,12 @@ namespace YGDR.Editor.Animation
                     .Cast<AnimatorStateTransition>()
                     .ToArray();
 
-                if (selectedTransitions.Length == 0) return true;
+                var selectedEntryTransitions = Selection.objects
+                    .OfType<AnimatorTransition>()
+                    .ToArray();
+
+                if (selectedTransitions.Length == 0 && selectedEntryTransitions.Length == 0
+                    && PatchStateNodeMenu._redirectEntryTransitions == null) return true;
 
                 var menu = new GenericMenu();
                 AddItems(menu, __instance);
@@ -713,6 +801,9 @@ namespace YGDR.Editor.Animation
                 var selectedTransitions = Selection.objects
                     .Where(static x => x is AnimatorStateTransition)
                     .Cast<AnimatorStateTransition>()
+                    .ToArray();
+                var selectedEntryTransitions = Selection.objects
+                    .OfType<AnimatorTransition>()
                     .ToArray();
                 var selectedStates = Selection.objects
                     .Where(static x => x is AnimatorState)
@@ -767,7 +858,7 @@ namespace YGDR.Editor.Animation
                         selectedStates);
                 }
 
-                if (PatchStateNodeMenu._replicateTransitions == null)
+                if (PatchStateNodeMenu._replicateTransitions == null && PatchStateNodeMenu._replicateEntryTransitions == null)
                 {
                     if (selectedTransitions.Length > 0)
                         menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), false,
@@ -783,7 +874,7 @@ namespace YGDR.Editor.Animation
                             },
                             (selectedTransitions, activeStateMachine));
                 }
-                else
+                else if (PatchStateNodeMenu._replicateTransitions != null)
                 {
                     menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
                         static data =>
@@ -799,6 +890,64 @@ namespace YGDR.Editor.Animation
                         selectedStates);
                 }
 
+                if (PatchStateNodeMenu._redirectEntryTransitions == null)
+                {
+                    if (selectedEntryTransitions.Length > 0)
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), false,
+                            static data =>
+                            {
+                                var (transitions, sm) = ((AnimatorTransition[], AnimatorStateMachine))data;
+                                PatchStateNodeMenu.CancelPending();
+                                PatchStateNodeMenu._redirectEntryTransitions = transitions;
+                                PatchStateNodeMenu._redirectEntrySM = sm;
+                            },
+                            (selectedEntryTransitions, activeStateMachine));
+                }
+                else
+                {
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.redirect_transitions")), true,
+                        static data =>
+                        {
+                            var dests = (AnimatorState[])data;
+                            var transitions = PatchStateNodeMenu._redirectEntryTransitions;
+                            var sm = PatchStateNodeMenu._redirectEntrySM;
+                            PatchStateNodeMenu._redirectEntryTransitions = null;
+                            PatchStateNodeMenu._redirectEntrySM = null;
+                            if (dests.Length > 0)
+                                AnimatorBulkTransitionOps.RedirectEntryTransitions(sm, transitions, dests);
+                        },
+                        selectedStates);
+                }
+
+                if (PatchStateNodeMenu._replicateEntryTransitions == null && PatchStateNodeMenu._replicateTransitions == null)
+                {
+                    if (selectedEntryTransitions.Length > 0)
+                        menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), false,
+                            static data =>
+                            {
+                                var (transitions, sm) = ((AnimatorTransition[], AnimatorStateMachine))data;
+                                PatchStateNodeMenu.CancelPending();
+                                PatchStateNodeMenu._replicateEntryTransitions = transitions;
+                                PatchStateNodeMenu._replicateEntrySM = sm;
+                            },
+                            (selectedEntryTransitions, activeStateMachine));
+                }
+                else if (PatchStateNodeMenu._replicateEntryTransitions != null)
+                {
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
+                        static data =>
+                        {
+                            var newSourceStates = (AnimatorState[])data;
+                            var templates = PatchStateNodeMenu._replicateEntryTransitions;
+                            var sm = PatchStateNodeMenu._replicateEntrySM;
+                            PatchStateNodeMenu._replicateEntryTransitions = null;
+                            PatchStateNodeMenu._replicateEntrySM = null;
+                            if (newSourceStates.Length > 0)
+                                AnimatorBulkTransitionOps.ReplicateTransitionsFromEntryTransitions(sm, templates, newSourceStates);
+                        },
+                        selectedStates);
+                }
+
                 // Always visible
                 menu.AddItem(
                     new GUIContent(L10n.Get("context_menu.delete_all_transitions")),
@@ -806,7 +955,7 @@ namespace YGDR.Editor.Animation
                     static data => AnimatorBulkTransitionOps.DeleteAllTransitions((AnimatorStateMachine)data),
                     activeStateMachine);
 
-                if (selectedTransitions.Length == 0)
+                if (selectedTransitions.Length == 0 && selectedEntryTransitions.Length == 0)
                 {
                     menu.AddSeparator("");
 

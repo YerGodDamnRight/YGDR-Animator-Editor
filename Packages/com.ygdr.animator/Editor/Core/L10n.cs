@@ -584,6 +584,9 @@ namespace YGDR.Editor.Animation
             ["find_usage.empty.no_clips"]       = "No clips animate this parameter as AAP.",
             ["find_usage.empty.no_references"]  = "No clips reference this object.",
             ["find_usage.count.nodes_clips"]    = "{n} Nodes · {m} Clips",
+            ["find_usage.behavior.parameter_driver"] = "Parameter Driver",
+            ["find_usage.behavior.play_audio"]       = "Play Audio",
+            ["find_usage.behavior.clip_select"]      = "clip select",
         };
 
         [System.Serializable]

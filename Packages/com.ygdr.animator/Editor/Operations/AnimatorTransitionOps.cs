@@ -106,6 +106,27 @@ namespace YGDR.Editor.Animation
             destination.conditions          = source.conditions;
         }
 
+        internal static void CopySettings(AnimatorTransition destination, AnimatorTransition source)
+        {
+            destination.mute       = source.mute;
+            destination.solo       = source.solo;
+            destination.conditions = source.conditions;
+        }
+
+        internal static void CopySettings(AnimatorTransition destination, AnimatorStateTransition source)
+        {
+            destination.mute       = source.mute;
+            destination.solo       = source.solo;
+            destination.conditions = source.conditions;
+        }
+
+        internal static void CopySettings(AnimatorStateTransition destination, AnimatorTransition source)
+        {
+            destination.mute       = source.mute;
+            destination.solo       = source.solo;
+            destination.conditions = source.conditions;
+        }
+
         internal static void CopySettings(AnimatorStateTransition destination, TransitionData source)
         {
             destination.hasExitTime         = source.hasExitTime;

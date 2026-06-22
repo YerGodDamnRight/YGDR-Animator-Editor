@@ -275,7 +275,7 @@ namespace YGDR.Editor.Animation
                             if (!matchesDestination && !matchesSource) continue;
                             _behaviorRows.Add(new UsageRow
                             {
-                                transitionLabel = $"{childState.state.name}  →  Parameter Driver",
+                                transitionLabel = $"{childState.state.name}  →  {L10n.Get("find_usage.behavior.parameter_driver")}",
                                 conditionLabel  = matchesSource
                                                  ? $"Copy (source) → {driverParameter.name}"
                                                  : driverParameter.type switch
@@ -295,13 +295,42 @@ namespace YGDR.Editor.Animation
                     {
                         _behaviorRows.Add(new UsageRow
                         {
-                            transitionLabel = $"{childState.state.name}  →  Play Audio",
-                            conditionLabel  = "clip select",
+                            transitionLabel = $"{childState.state.name}  →  {L10n.Get("find_usage.behavior.play_audio")}",
+                            conditionLabel  = L10n.Get("find_usage.behavior.clip_select"),
                             state           = childState.state
                         });
                     }
                 }
 #endif
+                var state = childState.state;
+                if (state.speedParameterActive && state.speedParameter == _parameterName)
+                    _behaviorRows.Add(new UsageRow
+                    {
+                        transitionLabel = $"{state.name}  →  {L10n.Get("states.multiplier")}",
+                        conditionLabel  = L10n.Get("states.multiplier"),
+                        state           = state
+                    });
+                if (state.timeParameterActive && state.timeParameter == _parameterName)
+                    _behaviorRows.Add(new UsageRow
+                    {
+                        transitionLabel = $"{state.name}  →  {L10n.Get("states.motion_time")}",
+                        conditionLabel  = L10n.Get("states.motion_time"),
+                        state           = state
+                    });
+                if (state.mirrorParameterActive && state.mirrorParameter == _parameterName)
+                    _behaviorRows.Add(new UsageRow
+                    {
+                        transitionLabel = $"{state.name}  →  {L10n.Get("states.mirror")}",
+                        conditionLabel  = L10n.Get("states.mirror"),
+                        state           = state
+                    });
+                if (state.cycleOffsetParameterActive && state.cycleOffsetParameter == _parameterName)
+                    _behaviorRows.Add(new UsageRow
+                    {
+                        transitionLabel = $"{state.name}  →  {L10n.Get("states.cycle_offset")}",
+                        conditionLabel  = L10n.Get("states.cycle_offset"),
+                        state           = state
+                    });
             }
 
             foreach (var childStateMachine in sm.stateMachines)

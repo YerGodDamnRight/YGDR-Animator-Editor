@@ -33,7 +33,8 @@ namespace YGDR.Editor.Animation
 
         void DrawTransitionsTab()
         {
-            int count = _selectedTransitions.Length;
+            bool hasState = _selectedTransitions.Length > 0;
+            int count = _selectedTransitions.Length + _selectedEntryTransitions.Length;
 
             var panelRect = EditorGUILayout.BeginVertical(Styles.SectionPadded);
             if (Event.current.type == EventType.Repaint && panelRect.height > 0)
@@ -45,7 +46,7 @@ namespace YGDR.Editor.Animation
                 DrawTransitionTags();
 
             EditorGUILayout.Space(8);
-            DrawProperties();
+            if (hasState) DrawProperties();
             EditorGUILayout.Space(4);
             DrawConditionsSection();
 
@@ -99,23 +100,35 @@ namespace YGDR.Editor.Animation
         void DrawTagsInto(Rect area, float tagH, float gap)
         {
             float currentX = 4f, currentY = 2f;
-            for (int i = 0; i < _selectedTransitions.Length; i++)
+            foreach (var transition in _selectedTransitions)
             {
-                var transition = _selectedTransitions[i];
                 string label = GetTransitionLabel(transition);
                 float tagW = Mathf.Clamp(Styles.TransitionTagLabel.CalcSize(new GUIContent(label)).x + 36f, 80f, area.width - 4f);
-
                 if (currentX + tagW > area.width && currentX > 4f) { currentX = 4f; currentY += tagH + gap; }
-
                 var tag = new Rect(area.x + currentX, area.y + currentY, tagW, tagH);
                 EditorGUI.DrawRect(tag, Styles.PrimaryColor);
-
                 if (CursorBtn(new Rect(tag.x + 2f, tag.y + 2f, 16f, 16f), "✕", Styles.TransitionTagBtn))
                 {
-                    Selection.objects = _selectedTransitions.Where(x => x != transition).Cast<UnityEngine.Object>().ToArray();
+                    Selection.objects = _selectedTransitions.Where(x => x != transition).Cast<UnityEngine.Object>()
+                        .Concat(_selectedEntryTransitions.Cast<UnityEngine.Object>()).ToArray();
                     return;
                 }
-
+                GUI.Label(new Rect(tag.x + 20f, tag.y, tagW - 22f, tagH), label, Styles.TransitionTagLabel);
+                currentX += tagW + gap;
+            }
+            foreach (var transition in _selectedEntryTransitions)
+            {
+                string label = GetEntryTransitionLabel(transition);
+                float tagW = Mathf.Clamp(Styles.TransitionTagLabel.CalcSize(new GUIContent(label)).x + 36f, 80f, area.width - 4f);
+                if (currentX + tagW > area.width && currentX > 4f) { currentX = 4f; currentY += tagH + gap; }
+                var tag = new Rect(area.x + currentX, area.y + currentY, tagW, tagH);
+                EditorGUI.DrawRect(tag, Styles.PrimaryColor);
+                if (CursorBtn(new Rect(tag.x + 2f, tag.y + 2f, 16f, 16f), "✕", Styles.TransitionTagBtn))
+                {
+                    Selection.objects = _selectedTransitions.Cast<UnityEngine.Object>()
+                        .Concat(_selectedEntryTransitions.Where(x => x != transition).Cast<UnityEngine.Object>()).ToArray();
+                    return;
+                }
                 GUI.Label(new Rect(tag.x + 20f, tag.y, tagW - 22f, tagH), label, Styles.TransitionTagLabel);
                 currentX += tagW + gap;
             }
@@ -126,9 +139,10 @@ namespace YGDR.Editor.Animation
         {
             float currentX = 4f;
             int rows = 1;
-            foreach (var transition in _selectedTransitions)
+            var labels = _selectedTransitions.Select(t => GetTransitionLabel(t))
+                .Concat(_selectedEntryTransitions.Select(t => GetEntryTransitionLabel(t)));
+            foreach (var label in labels)
             {
-                string label = GetTransitionLabel(transition);
                 float tagW = Mathf.Clamp(Styles.TransitionTagLabel.CalcSize(new GUIContent(label)).x + 36f, 80f, estimatedW);
                 if (currentX + tagW > estimatedW && currentX > 4f) { currentX = 4f; rows++; }
                 currentX += tagW + gap;
@@ -145,6 +159,16 @@ namespace YGDR.Editor.Animation
                 : transition.destinationStateMachine != null ? transition.destinationStateMachine.name
                 : "?";
             return $"{sourceName} → {destinationName}";
+        }
+
+        /* Returns an "Entry → Destination" display string for an entry transition. */
+        static string GetEntryTransitionLabel(AnimatorTransition transition)
+        {
+            string destinationName = transition.isExit ? "Exit"
+                : transition.destinationState != null ? transition.destinationState.name
+                : transition.destinationStateMachine != null ? transition.destinationStateMachine.name
+                : "?";
+            return $"Entry → {destinationName}";
         }
 
         /* Searches all layers in the controller for the state that owns the transition, returning its name or null. */
@@ -285,19 +309,19 @@ namespace YGDR.Editor.Animation
 
         bool _conditionCacheDirty = true;
         bool _cachedForSharedMode;
-        AnimatorStateTransition[] _cachedForTransitions;
+        UnityEngine.Object[] _cachedForOwners;
         List<CondEntry> _cachedEntries;
-        HashSet<(AnimatorStateTransition, string)> _cachedDuplicateParameters;
+        HashSet<(UnityEngine.Object, string)> _cachedDuplicateParameters;
         string[] _cachedParameterNames;
         HashSet<string> _cachedParamNameSet;
         Dictionary<string, string> _danglingParamResolution;
 
-        /* Returns true if the cached transition array matches the current selection — used to skip condition rebuilds. */
-        bool ConditionSelectionUnchanged()
+        /* Returns true if the given owner array matches the cached selection — used to skip condition rebuilds. */
+        bool ConditionSelectionUnchanged(UnityEngine.Object[] owners)
         {
-            if (_cachedForTransitions == null || _cachedForTransitions.Length != _selectedTransitions.Length) return false;
-            for (int i = 0; i < _selectedTransitions.Length; i++)
-                if (_cachedForTransitions[i] != _selectedTransitions[i]) return false;
+            if (_cachedForOwners == null || _cachedForOwners.Length != owners.Length) return false;
+            for (int i = 0; i < owners.Length; i++)
+                if (_cachedForOwners[i] != owners[i]) return false;
             return true;
         }
 
@@ -350,8 +374,8 @@ namespace YGDR.Editor.Animation
 
             float rightColumnX = headerRect.x + parameterColumnWidth;
             if (CursorBtn(new Rect(rightColumnX,                                       headerRect.y, modeColumnWidth,  headerRect.height), new GUIContent("⇄", L10n.Get("transitions.tooltip.switch_modes")),  Styles.CondSwitchBtn)) ReverseAllConditions();
-            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth,                     headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("M", L10n.Get("transitions.tooltip.merge")),           Styles.IconBtn)) MergeTransitions();
-            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth + splitColumnWidth,  headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("S", L10n.Get("transitions.tooltip.separate")),        Styles.IconBtn)) SeparateTransitions();
+            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth,                     headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("M", L10n.Get("transitions.tooltip.merge")),           Styles.IconBtn)) { MergeTransitions(); MergeEntryTransitions(); }
+            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth + splitColumnWidth,  headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("S", L10n.Get("transitions.tooltip.separate")),        Styles.IconBtn)) { SeparateTransitions(); SeparateEntryTransitions(); }
 
             /* Padded + colored body — rows and add button only */
             GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
@@ -359,14 +383,15 @@ namespace YGDR.Editor.Animation
             if (Event.current.type == EventType.Repaint && bodyRect.height > 0)
                 EditorGUI.DrawRect(bodyRect, Styles.SecondaryColor);
 
-            if (_conditionCacheDirty || _cachedEntries == null || _cachedForSharedMode != _showSharedConditions || !ConditionSelectionUnchanged() || ParameterListChanged())
+            var allOwners = AllSelectedOwners();
+            if (_conditionCacheDirty || _cachedEntries == null || _cachedForSharedMode != _showSharedConditions || !ConditionSelectionUnchanged(allOwners) || ParameterListChanged())
             {
-                _cachedEntries = GetDisplayedConditions();
-                _cachedDuplicateParameters = new HashSet<(AnimatorStateTransition, string)>(
+                _cachedEntries = GetDisplayedConditions(allOwners);
+                _cachedDuplicateParameters = new HashSet<(UnityEngine.Object, string)>(
                     _cachedEntries.GroupBy(entry => (entry.owner, entry.condition.parameter))
                                   .Where(group => group.Count() > 1)
                                   .Select(group => group.Key));
-                _cachedForTransitions = _selectedTransitions.ToArray();
+                _cachedForOwners = allOwners;
                 _cachedForSharedMode = _showSharedConditions;
                 _danglingParamResolution = BuildDanglingResolution();
                 _cachedParameterNames = _controller?.parameters.Select(parameter => parameter.name).ToArray() ?? Array.Empty<string>();
@@ -396,7 +421,7 @@ namespace YGDR.Editor.Animation
 
             EditorGUILayout.EndVertical();
 
-            if (_showSharedConditions || _selectedTransitions.Length <= 1)
+            if (_showSharedConditions || allOwners.Length <= 1)
             {
                 GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
                 float rowH = EditorGUIUtility.singleLineHeight;
@@ -409,64 +434,66 @@ namespace YGDR.Editor.Animation
 
         readonly struct CondEntry
         {
-            internal readonly AnimatorStateTransition owner;
+            internal readonly UnityEngine.Object owner;
             internal readonly AnimatorCondition condition;
             internal readonly int index;
-            internal readonly Dictionary<AnimatorStateTransition, int> sharedIndices;
+            internal readonly Dictionary<UnityEngine.Object, int> sharedIndices;
             internal readonly bool mixedThreshold;
 
-            internal CondEntry(AnimatorStateTransition owner, AnimatorCondition condition, int index)
+            internal CondEntry(UnityEngine.Object owner, AnimatorCondition condition, int index)
             { this.owner = owner; this.condition = condition; this.index = index; this.sharedIndices = null; this.mixedThreshold = false; }
 
-            internal CondEntry(AnimatorStateTransition owner, AnimatorCondition condition, int index, Dictionary<AnimatorStateTransition, int> sharedIndices, bool mixedThreshold)
+            internal CondEntry(UnityEngine.Object owner, AnimatorCondition condition, int index, Dictionary<UnityEngine.Object, int> sharedIndices, bool mixedThreshold)
             { this.owner = owner; this.condition = condition; this.index = index; this.sharedIndices = sharedIndices; this.mixedThreshold = mixedThreshold; }
 
-            internal int IndexFor(AnimatorStateTransition transition)
-                => sharedIndices != null && sharedIndices.TryGetValue(transition, out int idx) ? idx : index;
+            internal int IndexFor(UnityEngine.Object obj)
+                => sharedIndices != null && sharedIndices.TryGetValue(obj, out int idx) ? idx : index;
         }
 
-        /* Builds the flat list of CondEntry to display: all conditions per transition in individual mode, or only conditions shared across all selected transitions in shared mode. */
-        List<CondEntry> GetDisplayedConditions()
+        /* Builds the flat list of CondEntry to display: all conditions per owner in individual mode, or only conditions shared across all selected owners in shared mode. */
+        List<CondEntry> GetDisplayedConditions(UnityEngine.Object[] owners)
         {
             var result = new List<CondEntry>();
-            _selectedTransitions = _selectedTransitions.Where(transition => transition != null).ToArray();
-            if (_selectedTransitions.Length == 0) return result;
+            if (owners.Length == 0) return result;
 
             if (!_showSharedConditions)
             {
-                foreach (var transition in _selectedTransitions)
+                foreach (var owner in owners)
                 {
-                    var conditions = transition.conditions;
+                    var conditions = GetConditions(owner);
                     for (int i = 0; i < conditions.Length; i++)
-                        result.Add(new CondEntry(transition, conditions[i], i));
+                        result.Add(new CondEntry(owner, conditions[i], i));
                 }
                 return result;
             }
 
-            var first = _selectedTransitions[0];
-            var firstConditions = first.conditions;
-            var claimed = new Dictionary<AnimatorStateTransition, HashSet<int>>();
-            foreach (var transition in _selectedTransitions) claimed[transition] = new HashSet<int>();
+            var first = owners[0];
+            var firstConditions = GetConditions(first);
+            var claimed = new Dictionary<UnityEngine.Object, HashSet<int>>();
+            foreach (var owner in owners) claimed[owner] = new HashSet<int>();
 
             for (int i = 0; i < firstConditions.Length; i++)
             {
                 var condition = firstConditions[i];
-                var indexMap = new Dictionary<AnimatorStateTransition, int> { [first] = i };
+                var indexMap = new Dictionary<UnityEngine.Object, int> { [first] = i };
                 bool allMatch = true;
 
-                foreach (var transition in _selectedTransitions)
+                foreach (var owner in owners)
                 {
-                    if (transition == first) continue;
-                    int matchIdx = FindConditionIndexExcluding(transition, condition.parameter, condition.mode, claimed[transition]);
+                    if (owner == first) continue;
+                    int matchIdx = FindConditionIndexExcluding(owner, condition.parameter, condition.mode, claimed[owner]);
                     if (matchIdx < 0) { allMatch = false; break; }
-                    indexMap[transition] = matchIdx;
+                    indexMap[owner] = matchIdx;
                 }
 
                 if (!allMatch) continue;
                 foreach (var pair in indexMap) claimed[pair.Key].Add(pair.Value);
                 bool mixedThreshold = indexMap.Any(pair =>
-                    pair.Key != first && pair.Value < pair.Key.conditions.Length &&
-                    pair.Key.conditions[pair.Value].threshold != condition.threshold);
+                {
+                    if (pair.Key == first) return false;
+                    var ownerConditions = GetConditions(pair.Key);
+                    return pair.Value < ownerConditions.Length && ownerConditions[pair.Value].threshold != condition.threshold;
+                });
                 result.Add(new CondEntry(first, condition, i, indexMap, mixedThreshold));
             }
             return result;
@@ -474,10 +501,10 @@ namespace YGDR.Editor.Animation
 
         /* Draws one condition row: parameter dropdown, mode/value controls, and a remove button.
            Layout is split into parameter (50%), mode (25%), value, and remove columns. */
-        void DrawConditionRow(int rowIdx, CondEntry entry, HashSet<(AnimatorStateTransition, string)> duplicateParameters, bool altRow = false)
+        void DrawConditionRow(int rowIdx, CondEntry entry, HashSet<(UnityEngine.Object, string)> duplicateParameters, bool altRow = false)
         {
             var row = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
-            var ownerConditions = entry.owner.conditions;
+            var ownerConditions = GetConditions(entry.owner);
             var condition = entry.index < ownerConditions.Length ? ownerConditions[entry.index] : entry.condition;
             if (_danglingParamResolution != null && _danglingParamResolution.TryGetValue(condition.parameter, out string resolvedParam))
                 condition = new AnimatorCondition { parameter = resolvedParam, mode = condition.mode, threshold = condition.threshold };
@@ -514,7 +541,7 @@ namespace YGDR.Editor.Animation
                 GUI.color = Color.red;
                 GUI.Label(parameterRect, condition.parameter, EditorStyles.miniLabel);
                 GUI.color = previousColor;
-                CursorBtn(removeRect, "−", Styles.CondBtn);
+                if (CursorBtn(removeRect, "−", Styles.CondBtn)) RemoveConditionFromTargets(entry);
                 return;
             }
 
@@ -593,7 +620,6 @@ namespace YGDR.Editor.Animation
 
             if (CursorBtn(removeRect, "−", Styles.CondBtn))
                 RemoveConditionFromTargets(entry);
-
         }
 
         /* Looks up the parameter type by name from the active controller, defaulting to Float if not found. */
@@ -629,88 +655,83 @@ namespace YGDR.Editor.Animation
             _                             => mode.ToString()
         };
 
-        /* Replaces the entry's condition with replacement on one transition (individual mode) or all selected transitions (shared mode).
+        /* Replaces the entry's condition with replacement on one owner (individual mode) or all selected owners (shared mode).
            When preserveThreshold is true, each target keeps its own existing threshold — only parameter and mode are overwritten. */
         void ReplaceConditionOnTargets(CondEntry entry, AnimatorCondition replacement, bool preserveThreshold = false)
         {
             InvalidateConditionCache();
             if (!_showSharedConditions)
             {
-                if (entry.index < entry.owner.conditions.Length)
+                var ownerConditions = GetConditions(entry.owner);
+                if (entry.index < ownerConditions.Length)
                     RebuildConditions(entry.owner, entry.index, replacement);
             }
             else
             {
-                foreach (var transition in _selectedTransitions)
+                foreach (var owner in AllSelectedOwners())
                 {
-                    int idx = entry.IndexFor(transition);
-                    if (idx < 0 || idx >= transition.conditions.Length) continue;
+                    int idx = entry.IndexFor(owner);
+                    var ownerConditions = GetConditions(owner);
+                    if (idx < 0 || idx >= ownerConditions.Length) continue;
                     var actual = preserveThreshold
-                        ? new AnimatorCondition { parameter = replacement.parameter, mode = replacement.mode, threshold = transition.conditions[idx].threshold }
+                        ? new AnimatorCondition { parameter = replacement.parameter, mode = replacement.mode, threshold = ownerConditions[idx].threshold }
                         : replacement;
-                    RebuildConditions(transition, idx, actual);
+                    RebuildConditions(owner, idx, actual);
                 }
             }
         }
 
-        /* Removes the entry's condition from one transition (individual mode) or from all selected transitions (shared mode). */
+        /* Removes the entry's condition from one owner (individual mode) or from all selected owners (shared mode). */
         void RemoveConditionFromTargets(CondEntry entry)
         {
             InvalidateConditionCache();
-            IEnumerable<AnimatorStateTransition> targets = _showSharedConditions
-                ? (IEnumerable<AnimatorStateTransition>)_selectedTransitions
-                : new[] { entry.owner };
-
-            foreach (var transition in targets)
+            var targets = _showSharedConditions ? AllSelectedOwners() : new[] { entry.owner };
+            foreach (var owner in targets)
             {
-                int idx = _showSharedConditions ? entry.IndexFor(transition) : entry.index;
-                if (idx < 0 || idx >= transition.conditions.Length) continue;
-                Undo.RecordObject(transition, "Remove Condition");
-                var allConditions = transition.conditions.ToArray();
-                foreach (var condition in allConditions) transition.RemoveCondition(condition);
+                int idx = _showSharedConditions ? entry.IndexFor(owner) : entry.index;
+                var ownerConditions = GetConditions(owner);
+                if (idx < 0 || idx >= ownerConditions.Length) continue;
+                Undo.RecordObject(owner, "Remove Condition");
+                var allConditions = ownerConditions.ToArray();
+                foreach (var condition in allConditions) RemoveConditionFrom(owner, condition);
                 for (int i = 0; i < allConditions.Length; i++)
-                    if (i != idx) transition.AddCondition(allConditions[i].mode, allConditions[i].threshold, allConditions[i].parameter);
-                EditorUtility.SetDirty(transition);
+                    if (i != idx) AddConditionTo(owner, allConditions[i].mode, allConditions[i].threshold, allConditions[i].parameter);
+                EditorUtility.SetDirty(owner);
             }
         }
 
-        /* Adds a new condition using the controller's first parameter (and its default mode) to every selected transition. */
+        /* Adds a new condition using an unused parameter (or the first) to every selected owner. */
         void AddConditionToAll()
         {
             InvalidateConditionCache();
             if (_controller == null || _controller.parameters.Length == 0) return;
+            var owners = AllSelectedOwners();
             var defaultParam = _controller.parameters[0];
-            if (_selectedTransitions.Length == 1)
+            if (owners.Length == 1 || _showSharedConditions)
             {
-                var usedNames = new HashSet<string>(_selectedTransitions[0].conditions.Select(condition => condition.parameter));
+                var usedNames = new HashSet<string>(owners.SelectMany(owner => GetConditions(owner).Select(condition => condition.parameter)));
                 var unusedParam = _controller.parameters.FirstOrDefault(parameter => !usedNames.Contains(parameter.name));
                 if (unusedParam != null) defaultParam = unusedParam;
             }
-            else if (_showSharedConditions)
+            foreach (var owner in owners)
             {
-                var usedNames = new HashSet<string>(_selectedTransitions.SelectMany(transition => transition.conditions.Select(condition => condition.parameter)));
-                var unusedParam = _controller.parameters.FirstOrDefault(parameter => !usedNames.Contains(parameter.name));
-                if (unusedParam != null) defaultParam = unusedParam;
-            }
-            foreach (var transition in _selectedTransitions)
-            {
-                Undo.RecordObject(transition, "Add Condition");
-                transition.AddCondition(DefaultModeForType(defaultParam.type), 0f, defaultParam.name);
-                EditorUtility.SetDirty(transition);
+                Undo.RecordObject(owner, "Add Condition");
+                AddConditionTo(owner, DefaultModeForType(defaultParam.type), 0f, defaultParam.name);
+                EditorUtility.SetDirty(owner);
             }
         }
 
-        /* Inverts every condition mode on all selected transitions (If↔IfNot, Greater↔Less, Equals↔NotEqual). */
+        /* Inverts every condition mode on all selected owners (If↔IfNot, Greater↔Less, Equals↔NotEqual). */
         void ReverseAllConditions()
         {
             InvalidateConditionCache();
-            foreach (var transition in _selectedTransitions)
+            foreach (var owner in AllSelectedOwners())
             {
-                Undo.RecordObject(transition, "Reverse Conditions");
-                var allConditions = transition.conditions.ToArray();
-                foreach (var condition in allConditions) transition.RemoveCondition(condition);
-                foreach (var condition in allConditions) transition.AddCondition(ReverseMode(condition.mode), condition.threshold, condition.parameter);
-                EditorUtility.SetDirty(transition);
+                Undo.RecordObject(owner, "Reverse Conditions");
+                var allConditions = GetConditions(owner).ToArray();
+                foreach (var condition in allConditions) RemoveConditionFrom(owner, condition);
+                foreach (var condition in allConditions) AddConditionTo(owner, ReverseMode(condition.mode), condition.threshold, condition.parameter);
+                EditorUtility.SetDirty(owner);
             }
         }
 
@@ -726,28 +747,28 @@ namespace YGDR.Editor.Animation
             _                             => mode
         };
 
-        /* Returns the first unclaimed index matching paramName+mode, or -1 if not found. */
-        static int FindConditionIndexExcluding(AnimatorStateTransition transition, string paramName, AnimatorConditionMode mode, HashSet<int> exclude)
+        /* Returns the first unclaimed index in owner's conditions matching paramName+mode, or -1. */
+        static int FindConditionIndexExcluding(UnityEngine.Object owner, string paramName, AnimatorConditionMode mode, HashSet<int> exclude)
         {
-            var conditions = transition.conditions;
+            var conditions = GetConditions(owner);
             for (int i = 0; i < conditions.Length; i++)
                 if (!exclude.Contains(i) && conditions[i].parameter == paramName && conditions[i].mode == mode)
                     return i;
             return -1;
         }
 
-        /* Clears and re-adds all conditions on the transition, substituting replacement at replaceIdx. */
-        static void RebuildConditions(AnimatorStateTransition transition, int replaceIdx, AnimatorCondition replacement)
+        /* Clears and re-adds all conditions on the owner, substituting replacement at replaceIdx. */
+        static void RebuildConditions(UnityEngine.Object owner, int replaceIdx, AnimatorCondition replacement)
         {
-            Undo.RecordObject(transition, "Edit Condition");
-            var allConditions = transition.conditions.ToArray();
-            foreach (var condition in allConditions) transition.RemoveCondition(condition);
+            Undo.RecordObject(owner, "Edit Condition");
+            var allConditions = GetConditions(owner).ToArray();
+            foreach (var condition in allConditions) RemoveConditionFrom(owner, condition);
             for (int i = 0; i < allConditions.Length; i++)
             {
                 var condition = i == replaceIdx ? replacement : allConditions[i];
-                transition.AddCondition(condition.mode, condition.threshold, condition.parameter);
+                AddConditionTo(owner, condition.mode, condition.threshold, condition.parameter);
             }
-            EditorUtility.SetDirty(transition);
+            EditorUtility.SetDirty(owner);
         }
 
         /* ── Merge / Separate ────────────────────────────────────────────── */
@@ -791,7 +812,7 @@ namespace YGDR.Editor.Animation
                 foreach (var transition in group.Skip(1))
                 {
                     foreach (var condition in transition.conditions)
-                        primary.AddCondition(condition.mode, condition.threshold, condition.parameter);
+                        AddConditionTo(primary, condition.mode, condition.threshold, condition.parameter);
                     DeleteTransition(ownerStateMachine, transition);
                 }
                 EditorUtility.SetDirty(primary);
@@ -840,6 +861,79 @@ namespace YGDR.Editor.Animation
             }
 
             EditorUtility.SetDirty(controller);
+        }
+
+        void MergeEntryTransitions()
+        {
+            if (_selectedEntryTransitions.Length < 2 || _controller == null) return;
+            var transitions = _selectedEntryTransitions.Where(t => t != null).ToArray();
+            Undo.RegisterCompleteObjectUndo(_controller, "Merge Transitions");
+
+            var groups = new Dictionary<string, List<AnimatorTransition>>();
+            foreach (var transition in transitions)
+            {
+                string key = transition.destinationState != null ? transition.destinationState.GetInstanceID().ToString()
+                    : transition.destinationStateMachine != null ? transition.destinationStateMachine.GetInstanceID().ToString()
+                    : "?";
+                if (!groups.ContainsKey(key)) groups[key] = new List<AnimatorTransition>();
+                groups[key].Add(transition);
+            }
+
+            foreach (var group in groups.Values)
+            {
+                if (group.Count < 2) continue;
+                var ownerSM = FindEntryOwnerSM(_controller, group[0]);
+                if (ownerSM == null) continue;
+                Undo.RegisterCompleteObjectUndo(ownerSM, "Merge Transitions");
+                Undo.RecordObject(group[0], "Merge Transitions");
+                foreach (var transition in group.Skip(1))
+                {
+                    foreach (var condition in transition.conditions)
+                        AddConditionTo(group[0], condition.mode, condition.threshold, condition.parameter);
+                    ownerSM.RemoveEntryTransition(transition);
+                }
+                EditorUtility.SetDirty(group[0]);
+            }
+
+            EditorUtility.SetDirty(_controller);
+            InvalidateConditionCache();
+        }
+
+        void SeparateEntryTransitions()
+        {
+            if (_selectedEntryTransitions.Length == 0 || _controller == null) return;
+            var transitions = _selectedEntryTransitions.Where(t => t != null).ToArray();
+            Undo.RegisterCompleteObjectUndo(_controller, "Separate Transitions");
+
+            foreach (var transition in transitions)
+            {
+                var conditions = transition.conditions.ToArray();
+                if (conditions.Length <= 1) continue;
+                var ownerSM = FindEntryOwnerSM(_controller, transition);
+                if (ownerSM == null) continue;
+                Undo.RegisterCompleteObjectUndo(ownerSM, "Separate Transitions");
+
+                for (int i = 1; i < conditions.Length; i++)
+                {
+                    AnimatorTransition newTransition = transition.destinationState != null
+                        ? ownerSM.AddEntryTransition(transition.destinationState)
+                        : transition.destinationStateMachine != null
+                            ? ownerSM.AddEntryTransition(transition.destinationStateMachine)
+                            : null;
+                    if (newTransition == null) continue;
+                    Undo.RegisterCreatedObjectUndo(newTransition, "Separate Transitions");
+                    newTransition.mute = transition.mute;
+                    newTransition.solo = transition.solo;
+                    newTransition.AddCondition(conditions[i].mode, conditions[i].threshold, conditions[i].parameter);
+                    EditorUtility.SetDirty(newTransition);
+                }
+
+                Undo.RecordObject(transition, "Separate Transitions");
+                foreach (var condition in conditions.Skip(1)) transition.RemoveCondition(condition);
+                EditorUtility.SetDirty(transition);
+            }
+
+            EditorUtility.SetDirty(_controller);
         }
 
         /* Creates a new transition in sm with the same source/destination topology as original (anyState, exit, state, or SM). */
@@ -898,6 +992,27 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+        static AnimatorStateMachine FindEntryOwnerSM(AnimatorController controller, AnimatorTransition transition)
+        {
+            foreach (var layer in controller.layers)
+            {
+                var found = FindEntryOwnerSMRecursive(layer.stateMachine, transition);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        static AnimatorStateMachine FindEntryOwnerSMRecursive(AnimatorStateMachine sm, AnimatorTransition transition)
+        {
+            if (sm.entryTransitions.Contains(transition)) return sm;
+            foreach (var childSM in sm.stateMachines)
+            {
+                var found = FindEntryOwnerSMRecursive(childSM.stateMachine, transition);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
         /* Removes a transition from sm's anyState list or from the source state that owns it. */
         static void DeleteTransition(AnimatorStateMachine sm, AnimatorStateTransition transition)
         {
@@ -920,12 +1035,11 @@ namespace YGDR.Editor.Animation
         static string GetSrcKey(AnimatorController controller, AnimatorStateTransition transition)
         {
             if (controller == null) return "?";
-            foreach (var layer in controller.layers)
-            {
-                if (layer.stateMachine.anyStateTransitions.Contains(transition)) return "anystate";
-                foreach (var childState in layer.stateMachine.states)
-                    if (childState.state.transitions.Contains(transition)) return childState.state.GetInstanceID().ToString();
-            }
+            var ownerSM = FindOwnerSM(controller, transition);
+            if (ownerSM == null) return "?";
+            if (ownerSM.anyStateTransitions.Contains(transition)) return "anystate";
+            foreach (var childState in ownerSM.states)
+                if (childState.state.transitions.Contains(transition)) return childState.state.GetInstanceID().ToString();
             return "?";
         }
 
@@ -939,7 +1053,7 @@ namespace YGDR.Editor.Animation
 
         /* ── Utility ─────────────────────────────────────────────────────── */
 
-        /* Applies mutate to every selected transition with undo recording, then marks each dirty. */
+        /* Applies mutate to every selected state transition with undo recording, then marks each dirty. */
         void SetOnAll(Action<AnimatorStateTransition> mutate)
         {
             foreach (var transition in _selectedTransitions)
@@ -948,6 +1062,32 @@ namespace YGDR.Editor.Animation
                 mutate(transition);
                 EditorUtility.SetDirty(transition);
             }
+        }
+
+        /* Returns all selected owners (state transitions + entry transitions) as a combined UnityEngine.Object array. */
+        UnityEngine.Object[] AllSelectedOwners() =>
+            _selectedTransitions.Where(t => t != null).Cast<UnityEngine.Object>()
+            .Concat(_selectedEntryTransitions.Where(t => t != null))
+            .ToArray();
+
+        /* Returns the conditions array for any transition type. */
+        static AnimatorCondition[] GetConditions(UnityEngine.Object obj) =>
+            obj is AnimatorStateTransition stateTrans ? stateTrans.conditions :
+            obj is AnimatorTransition entryTrans      ? entryTrans.conditions :
+            Array.Empty<AnimatorCondition>();
+
+        /* Adds a condition to any transition type. */
+        static void AddConditionTo(UnityEngine.Object obj, AnimatorConditionMode mode, float threshold, string param)
+        {
+            if (obj is AnimatorStateTransition stateTrans) stateTrans.AddCondition(mode, threshold, param);
+            else if (obj is AnimatorTransition entryTrans) entryTrans.AddCondition(mode, threshold, param);
+        }
+
+        /* Removes a condition from any transition type. */
+        static void RemoveConditionFrom(UnityEngine.Object obj, AnimatorCondition condition)
+        {
+            if (obj is AnimatorStateTransition stateTrans) stateTrans.RemoveCondition(condition);
+            else if (obj is AnimatorTransition entryTrans) entryTrans.RemoveCondition(condition);
         }
     }
 }

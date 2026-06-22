@@ -73,7 +73,7 @@ namespace YGDR.Editor.Animation
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() => GraphPatchReflection.DrawEdgeMethod;
 
-        // __state: 0 = entry (skip postfix), 1 = selected, 2 = normal
+        // __state: 0 = overlay disabled (skip postfix), 1 = selected, 2 = normal
         [HarmonyPrefix]
         static void Prefix(object edge, ref Color color, object info, ref int __state)
         {
@@ -87,7 +87,7 @@ namespace YGDR.Editor.Animation
                 }
                 var settings = AnimatorDefaultSettings.Load();
                 if (!settings.transitionOverlayEnabled) return;
-                if (IsEntryEdge(edge)) return;
+                if (IsEntryEdge(edge)) { __state = color.b > color.r + 0.15f ? 1 : 2; return; }
                 bool selected = color.b > color.r + 0.15f;
                 __state = selected ? 1 : 2;
                 if (!selected)
@@ -228,23 +228,37 @@ namespace YGDR.Editor.Animation
             if (transitions == null || transitions.Count == 0) return null;
 
             var stateTransitions = new List<AnimatorStateTransition>();
+            var entryTransitions = new List<AnimatorTransition>();
             foreach (var transitionContext in transitions)
             {
                 if (transitionContext == null) continue;
                 _labelTransitionContextField ??= AccessTools.Field(transitionContext.GetType(), "transition");
-                if (_labelTransitionContextField?.GetValue(transitionContext) is AnimatorStateTransition stateTransition)
-                    stateTransitions.Add(stateTransition);
+                var transObj = _labelTransitionContextField?.GetValue(transitionContext);
+                if ((transObj as object) is AnimatorStateTransition stateTrans)
+                    stateTransitions.Add(stateTrans);
+                else if ((transObj as object) is AnimatorTransition entryTrans)
+                    entryTransitions.Add(entryTrans);
             }
-            if (stateTransitions.Count == 0) return null;
 
-            if (stateTransitions.Any(x => !x.hasExitTime && (x.conditions == null || x.conditions.Length == 0)))
-                return L10n.Get("transition_overlay.invalid");
+            if (stateTransitions.Count > 0)
+            {
+                if (stateTransitions.Any(x => !x.hasExitTime && (x.conditions == null || x.conditions.Length == 0)))
+                    return L10n.Get("transition_overlay.invalid");
+                if (stateTransitions.Count == 1 && stateTransitions[0].conditions?.Length == 1)
+                    return FormatCondition(stateTransitions[0].conditions[0]);
+                int stateTotal = stateTransitions.Sum(x => x.conditions?.Length ?? 0);
+                return L10n.Get("transition_overlay.n_conditions").Replace("{n}", stateTotal.ToString());
+            }
 
-            if (stateTransitions.Count == 1 && stateTransitions[0].conditions?.Length == 1)
-                return FormatCondition(stateTransitions[0].conditions[0]);
+            if (entryTransitions.Count > 0)
+            {
+                if (entryTransitions.Count == 1 && entryTransitions[0].conditions?.Length == 1)
+                    return FormatCondition(entryTransitions[0].conditions[0]);
+                int entryTotal = entryTransitions.Sum(x => x.conditions?.Length ?? 0);
+                return entryTotal == 0 ? null : L10n.Get("transition_overlay.n_conditions").Replace("{n}", entryTotal.ToString());
+            }
 
-            int total = stateTransitions.Sum(x => x.conditions?.Length ?? 0);
-            return L10n.Get("transition_overlay.n_conditions").Replace("{n}", total.ToString());
+            return null;
         }
 
         static readonly string[] GestureNames =
@@ -278,15 +292,8 @@ namespace YGDR.Editor.Animation
             return intValue.ToString();
         }
 
-        /* Draws text rotated to follow the edge direction at mid-point, offsetting above or below the line based on the horizontal component of dir. Self-transitions (zero dir) use LabelOffsetBelow to place the label clear of the node. */
-        static void DrawLabel(Vector2 mid, Vector2 dir, string text)
+        static Rect VisibleRect()
         {
-            bool isSelfTransition = dir.sqrMagnitude < 0.001f;
-            float yOffset = isSelfTransition ? LabelOffsetSelfTransition : (dir.x >= 0f ? LabelOffsetAbove : LabelOffsetBelow);
-            float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
-            if (angle > 90f)  angle -= 180f;
-            if (angle < -90f) angle += 180f;
-
             if (_getVisibleRect == null)
             {
                 var guiClipType = typeof(GUI).Assembly.GetType("UnityEngine.GUIClip");
@@ -296,8 +303,19 @@ namespace YGDR.Editor.Animation
                     ? (Func<Rect>)Delegate.CreateDelegate(typeof(Func<Rect>), prop.GetGetMethod(nonPublic: true))
                     : static () => new Rect(0, 0, 9999, 9999);
             }
-            var clipRect = _getVisibleRect();
+            return _getVisibleRect();
+        }
 
+        /* Draws text rotated to follow the edge direction at mid-point, offsetting above or below the line based on the horizontal component of dir. Self-transitions (zero dir) use LabelOffsetBelow to place the label clear of the node. */
+        static void DrawLabel(Vector2 mid, Vector2 dir, string text)
+        {
+            bool isSelfTransition = dir.sqrMagnitude < 0.001f;
+            float yOffset = isSelfTransition ? LabelOffsetSelfTransition : (dir.x >= 0f ? LabelOffsetAbove : LabelOffsetBelow);
+            float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg;
+            if (angle > 90f)  angle -= 180f;
+            if (angle < -90f) angle += 180f;
+
+            var clipRect = VisibleRect();
             var localMid = mid - clipRect.position;
             var matrix = GUI.matrix;
             GUI.BeginClip(clipRect);
@@ -319,16 +337,26 @@ namespace YGDR.Editor.Animation
             {
                 if (transitionContext == null) continue;
                 _labelTransitionContextField ??= AccessTools.Field(transitionContext.GetType(), "transition");
-                if (_labelTransitionContextField?.GetValue(transitionContext) is not AnimatorStateTransition stateTransition) continue;
+                var transObj = _labelTransitionContextField?.GetValue(transitionContext);
 
-                if (!stateTransition.hasExitTime && (stateTransition.conditions == null || stateTransition.conditions.Length == 0))
+                AnimatorCondition[] conditions;
+                if ((transObj as object) is AnimatorStateTransition stateTransition)
                 {
-                    conditionLines.Add(L10n.Get("transition_overlay.invalid"));
-                    continue;
+                    if (!stateTransition.hasExitTime && (stateTransition.conditions == null || stateTransition.conditions.Length == 0))
+                    {
+                        conditionLines.Add(L10n.Get("transition_overlay.invalid"));
+                        continue;
+                    }
+                    conditions = stateTransition.conditions;
                 }
-                if (stateTransition.conditions != null)
+                else if ((transObj as object) is AnimatorTransition entryTransition)
+                    conditions = entryTransition.conditions;
+                else
+                    continue;
+
+                if (conditions != null)
                 {
-                    foreach (var condition in stateTransition.conditions)
+                    foreach (var condition in conditions)
                         conditionLines.Add(FormatCondition(condition, truncate: false));
                 }
             }
@@ -342,16 +370,7 @@ namespace YGDR.Editor.Animation
             bool isSelfTransition = direction.sqrMagnitude < 0.001f;
             float yOffset = isSelfTransition ? 60f : -(boxHeight + 14f);
 
-            if (_getVisibleRect == null)
-            {
-                var guiClipType = typeof(GUI).Assembly.GetType("UnityEngine.GUIClip");
-                var prop = guiClipType?.GetProperty("visibleRect",
-                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-                _getVisibleRect = prop != null
-                    ? (Func<Rect>)Delegate.CreateDelegate(typeof(Func<Rect>), prop.GetGetMethod(nonPublic: true))
-                    : static () => new Rect(0, 0, 9999, 9999);
-            }
-            var clipRect = _getVisibleRect();
+            var clipRect = VisibleRect();
             var localMid = midPoint - clipRect.position;
             var boxRect  = new Rect(localMid.x - boxWidth * 0.5f, localMid.y + yOffset, boxWidth, boxHeight);
 

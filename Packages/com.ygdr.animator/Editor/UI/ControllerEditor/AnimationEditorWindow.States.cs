@@ -337,18 +337,30 @@ void DrawStateRows()
 
         void DrawStateCycleOffsetField(bool multi, bool empty, AnimatorState first)
         {
+            bool cycleOffsetParamActive = !empty && first.cycleOffsetParameterActive;
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.LabelField(L10n.Get("states.cycle_offset"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.cycleOffset, first.cycleOffset));
-                EditorGUI.BeginChangeCheck();
-                float newCycleOffset = EditorGUILayout.FloatField(empty ? 0f : first.cycleOffset);
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffset = newCycleOffset);
-                EditorGUI.showMixedValue = false;
-                GUILayout.FlexibleSpace();
+                if (cycleOffsetParamActive)
+                {
+                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.cycleOffsetParameter != first.cycleOffsetParameter);
+                    EditorGUI.BeginChangeCheck();
+                    string newCycleOffsetParameter = DrawFloatParamDropdown(empty ? "" : first.cycleOffsetParameter);
+                    if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffsetParameter = newCycleOffsetParameter);
+                    EditorGUI.showMixedValue = false;
+                }
+                else
+                {
+                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.cycleOffset, first.cycleOffset));
+                    EditorGUI.BeginChangeCheck();
+                    float newCycleOffset = EditorGUILayout.FloatField(empty ? 0f : first.cycleOffset);
+                    if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffset = newCycleOffset);
+                    EditorGUI.showMixedValue = false;
+                    GUILayout.FlexibleSpace();
+                }
                 EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.cycleOffsetParameterActive != first.cycleOffsetParameterActive);
                 EditorGUI.BeginChangeCheck();
-                bool newOffsetParameterActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.cycleOffsetParameterActive, GUILayout.Width(90));
+                bool newOffsetParameterActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"), empty ? false : first.cycleOffsetParameterActive, GUILayout.Width(90));
                 if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffsetParameterActive = newOffsetParameterActive);
                 EditorGUI.showMixedValue = false;
             }
@@ -462,9 +474,13 @@ void DrawStateRows()
         {
             if (controller == null) return;
             var targets = new HashSet<AnimatorState>(states);
+            var sm = GetActiveLayerStateMachine(controller);
             var incoming = new List<AnimatorStateTransition>();
-            CollectIncoming(GetActiveLayerStateMachine(controller), targets, incoming);
-            SelectTransitionsAndFocusAnimator(incoming);
+            CollectIncoming(sm, targets, incoming);
+            var entryIncoming = new List<AnimatorTransition>();
+            CollectIncomingEntryTransitions(sm, targets, entryIncoming);
+            Selection.objects = incoming.Cast<UnityEngine.Object>().Concat(entryIncoming).ToArray();
+            FocusAnimatorWindow();
         }
 
         /* Sets Selection.objects to all incoming and outgoing transitions for every state in states (active layer only). */
@@ -472,17 +488,25 @@ void DrawStateRows()
         {
             if (controller == null) return;
             var targets = new HashSet<AnimatorState>(states);
+            var sm = GetActiveLayerStateMachine(controller);
             var incoming = new List<AnimatorStateTransition>();
-            CollectIncoming(GetActiveLayerStateMachine(controller), targets, incoming);
-            SelectTransitionsAndFocusAnimator(incoming.Union(states.SelectMany(state => state.transitions)));
+            CollectIncoming(sm, targets, incoming);
+            var entryIncoming = new List<AnimatorTransition>();
+            CollectIncomingEntryTransitions(sm, targets, entryIncoming);
+            Selection.objects = incoming.Cast<UnityEngine.Object>()
+                .Concat(entryIncoming)
+                .Concat(states.SelectMany(state => state.transitions))
+                .ToArray();
+            FocusAnimatorWindow();
         }
+
+        static void FocusAnimatorWindow()
+            => (Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType).FirstOrDefault() as EditorWindow)?.Focus();
 
         static void SelectTransitionsAndFocusAnimator(IEnumerable<AnimatorStateTransition> transitions)
         {
             Selection.objects = transitions.Cast<UnityEngine.Object>().ToArray();
-            var animatorWindow = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType)
-                .FirstOrDefault() as EditorWindow;
-            animatorWindow?.Focus();
+            FocusAnimatorWindow();
         }
 
         /* Recursively collects into result all anyState and state transitions within sm (and nested sub SMs) whose destinationState is in targets. */
@@ -539,6 +563,31 @@ void DrawStateRows()
                         result.Add(transition);
             foreach (var childStateMachine in sm.stateMachines)
                 CollectExitTransitions(childStateMachine.stateMachine, result);
+        }
+
+        internal static void SelectOutgoingFromEntry(AnimatorController controller)
+        {
+            if (controller == null) return;
+            var result = new List<AnimatorTransition>();
+            CollectEntryTransitions(GetActiveLayerStateMachine(controller), result);
+            Selection.objects = result.Cast<UnityEngine.Object>().ToArray();
+            FocusAnimatorWindow();
+        }
+
+        static void CollectEntryTransitions(AnimatorStateMachine sm, List<AnimatorTransition> result)
+        {
+            result.AddRange(sm.entryTransitions);
+            foreach (var childStateMachine in sm.stateMachines)
+                CollectEntryTransitions(childStateMachine.stateMachine, result);
+        }
+
+        static void CollectIncomingEntryTransitions(AnimatorStateMachine sm, HashSet<AnimatorState> targets, List<AnimatorTransition> result)
+        {
+            foreach (var transition in sm.entryTransitions)
+                if (transition.destinationState != null && targets.Contains(transition.destinationState))
+                    result.Add(transition);
+            foreach (var childStateMachine in sm.stateMachines)
+                CollectIncomingEntryTransitions(childStateMachine.stateMachine, targets, result);
         }
 
         // ── Alignment ─────────────────────────────────────────────────────────

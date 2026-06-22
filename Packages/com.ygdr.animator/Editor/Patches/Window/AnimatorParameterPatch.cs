@@ -144,6 +144,8 @@ namespace YGDR.Editor.Animation
         }
 
 #if VRC_SDK_VRCSDK3
+        internal static void InvalidateVrcComponentCache() => _vrcComponentNeedsRebuild = true;
+
         internal static HashSet<string> GetVrcComponentUsedParams()
         {
             if (!_vrcComponentNeedsRebuild && _vrcComponentUsedParams != null) return _vrcComponentUsedParams;
@@ -344,8 +346,24 @@ namespace YGDR.Editor.Animation
                 if (hasSyncData && showVrcComponent)
                 {
                     cursorX -= iconSize + iconPadding;
-                    GUI.Label(new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize),
-                              isSynced ? SyncedIcon : UnsyncedIcon);
+                    var syncIconRect = new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
+                    GUI.Label(syncIconRect, isSynced ? SyncedIcon : UnsyncedIcon);
+                    if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && syncIconRect.Contains(Event.current.mousePosition))
+                    {
+                        Event.current.Use();
+                        var expParams = VRCSyncCache.GetExpressionParameters();
+                        if (expParams?.parameters != null)
+                        {
+                            var vrcParam = System.Array.Find(expParams.parameters, p => p.name == parameter.name);
+                            if (vrcParam != null)
+                            {
+                                Undo.RecordObject(expParams, "Toggle VRC Parameter Sync");
+                                vrcParam.networkSynced = !vrcParam.networkSynced;
+                                EditorUtility.SetDirty(expParams);
+                                EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
+                            }
+                        }
+                    }
                     cursorX -= iconPadding;
                 }
 #endif
@@ -706,8 +724,12 @@ namespace YGDR.Editor.Animation
                 {
                     var capturedType = type;
                     string convertToLabel = $"{L10n.Get("params_menu.convert_to")} {type}";
-                    menu.AddItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_controller")}"), false, () =>
-                        AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
+                    bool controllerAlreadyMatches = type == parameter.type;
+                    if (controllerAlreadyMatches)
+                        menu.AddDisabledItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_controller")}"), false);
+                    else
+                        menu.AddItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_controller")}"), false, () =>
+                            AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
                     bool vrcAlreadyMatches = existsInVrc && (
                         type == AnimatorControllerParameterType.Float ? currentVrcType == VRCExpressionParameters.ValueType.Float :
                         type == AnimatorControllerParameterType.Int   ? currentVrcType == VRCExpressionParameters.ValueType.Int   :
@@ -726,8 +748,11 @@ namespace YGDR.Editor.Animation
                          Enum.GetValues(typeof(AnimatorControllerParameterType)))
                 {
                     var capturedType = type;
-                    menu.AddItem(new GUIContent($"{L10n.Get("params_menu.convert_to")} {type}"), false, () =>
-                        AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
+                    if (type == parameter.type)
+                        menu.AddDisabledItem(new GUIContent($"{L10n.Get("params_menu.convert_to")} {type}"), false);
+                    else
+                        menu.AddItem(new GUIContent($"{L10n.Get("params_menu.convert_to")} {type}"), false, () =>
+                            AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
                 }
             }
 

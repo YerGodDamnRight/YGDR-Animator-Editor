@@ -113,8 +113,10 @@ namespace YGDR.Editor.Animation
             }
             if (PatchStateNodeMenu._multiTransitionSources != null && PatchTransitionCopyPaste.HasClipboard) return string.Format(L10n.Get("bottom_bar.multi_with_paste"), pasteKey);
             if (PatchStateNodeMenu._multiTransitionSources != null) return L10n.Get("bottom_bar.multi");
-            if (PatchStateNodeMenu._redirectTransitions != null)    return L10n.Get("bottom_bar.redirect");
-            if (PatchStateNodeMenu._replicateTransitions != null)   return L10n.Get("bottom_bar.replicate");
+            if (PatchStateNodeMenu._redirectTransitions != null)      return L10n.Get("bottom_bar.redirect");
+            if (PatchStateNodeMenu._redirectEntryTransitions != null) return L10n.Get("bottom_bar.redirect");
+            if (PatchStateNodeMenu._replicateTransitions != null)      return L10n.Get("bottom_bar.replicate");
+            if (PatchStateNodeMenu._replicateEntryTransitions != null) return L10n.Get("bottom_bar.replicate");
             return null;
         }
     }
