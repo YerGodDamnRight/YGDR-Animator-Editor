@@ -23,6 +23,7 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
 namespace YGDR.Editor.Animation
@@ -30,11 +31,20 @@ namespace YGDR.Editor.Animation
     [System.Flags]
     internal enum ObjectBindingType
     {
-        None          = 0,
-        GameObject    = 1,
-        Renderer      = 2,
+        None           = 0,
+        GameObject     = 1,
+        Renderer       = 2,
         ParticleSystem = 4,
-        AudioSource   = 8,
+        AudioSource    = 8,
+        Light          = 16,
+        VRCPhysBone    = 32,
+    }
+
+    internal struct BlendshapeEntry
+    {
+        internal string shapeName;
+        internal float  offValue;
+        internal float  onValue;
     }
 
     // ─── Operations ──────────────────────────────────────────────────────────────
@@ -46,6 +56,10 @@ namespace YGDR.Editor.Animation
             (ObjectBindingType.Renderer,       typeof(Renderer),       "m_Enabled"),
             (ObjectBindingType.ParticleSystem, typeof(ParticleSystem), "m_Enabled"),
             (ObjectBindingType.AudioSource,    typeof(AudioSource),    "m_Enabled"),
+            (ObjectBindingType.Light,          typeof(Light),          "m_Enabled"),
+#if VRC_SDK_VRCSDK3
+            (ObjectBindingType.VRCPhysBone,    typeof(VRC.SDK3.Dynamics.PhysBone.Components.VRCPhysBone), "m_Enabled"),
+#endif
         };
 
         // Walks up the hierarchy to find an Animator whose controller matches.
@@ -84,7 +98,7 @@ namespace YGDR.Editor.Animation
             string layerName,
             string parameterName,
             bool writeDefaults,
-            List<(string relativePath, string objectName, ObjectBindingType bindingType)> objectEntries)
+            List<(string relativePath, string objectName, ObjectBindingType bindingType, List<BlendshapeEntry> blendshapeEntries)> objectEntries)
         {
             Undo.RegisterCompleteObjectUndo(controller, "Create Toggle Layer");
 
@@ -146,17 +160,29 @@ namespace YGDR.Editor.Animation
         static AnimationClip CreateActiveClip(
             string directory,
             string clipName,
-            List<(string relativePath, string objectName, ObjectBindingType bindingType)> objectEntries,
+            List<(string relativePath, string objectName, ObjectBindingType bindingType, List<BlendshapeEntry> blendshapeEntries)> objectEntries,
             float activeValue)
         {
-            var clip  = new AnimationClip { name = clipName };
-            var curve = AnimationCurve.Constant(0f, 0f, activeValue);
-            foreach (var (relativePath, _, bindingType) in objectEntries)
+            var clip      = new AnimationClip { name = clipName };
+            var curve     = AnimationCurve.Constant(0f, 0f, activeValue);
+            bool isOnClip = activeValue > 0.5f;
+            foreach (var (relativePath, _, bindingType, blendshapeEntries) in objectEntries)
+            {
                 foreach (var (flag, componentType, propertyName) in s_bindingDefs)
                     if ((bindingType & flag) != 0)
                         AnimationUtility.SetEditorCurve(clip,
                             new EditorCurveBinding { path = relativePath, type = componentType, propertyName = propertyName },
                             curve);
+                foreach (var blendshapeEntry in blendshapeEntries)
+                    AnimationUtility.SetEditorCurve(clip,
+                        new EditorCurveBinding
+                        {
+                            path         = relativePath,
+                            type         = typeof(SkinnedMeshRenderer),
+                            propertyName = $"blendShape.{blendshapeEntry.shapeName}"
+                        },
+                        AnimationCurve.Constant(0f, 0f, isOnClip ? blendshapeEntry.onValue : blendshapeEntry.offValue));
+            }
             var uniqueAssetPath = AssetDatabase.GenerateUniqueAssetPath($"{directory}/{clipName}.anim");
             AssetDatabase.CreateAsset(clip, uniqueAssetPath);
             return clip;
@@ -180,7 +206,13 @@ namespace YGDR.Editor.Animation
             internal bool              hasRenderer;
             internal bool              hasParticleSystem;
             internal bool              hasAudioSource;
+            internal bool              hasLight;
+            internal bool              hasVRCPhysBone;
             internal ObjectBindingType bindingType;
+            internal bool                  hasSkinnedMeshRenderer;
+            internal SkinnedMeshRenderer   skinnedMeshRenderer;
+            internal bool                  blendshapeExpanded;
+            internal List<BlendshapeEntry> blendshapeEntries;
         }
 
         AnimatorController _controller;
@@ -360,7 +392,9 @@ namespace YGDR.Editor.Animation
                     DrawDropHighlight(listRect);
             }
 
-            const float rowHeight = 22f;
+            const float rowHeight    = 22f;
+            const float subRowHeight = 22f;
+            const float addRowHeight = 22f;
 
             GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
@@ -372,12 +406,20 @@ namespace YGDR.Editor.Animation
             }
             else
             {
-                var   allRowsRect  = EditorGUILayout.GetControlRect(false, _objectEntries.Count * rowHeight);
-                float rowY         = allRowsRect.y;
-                float rowWidth     = allRowsRect.width + 3.5f; // extend into SectionPadded right padding
-                int   removeIndex  = -1;
+                float totalHeight = 0f;
+                foreach (var entry in _objectEntries)
+                    totalHeight += rowHeight + (entry.blendshapeExpanded
+                        ? addRowHeight + entry.blendshapeEntries.Count * subRowHeight
+                        : 0f);
 
-                for (int i = 0; i < _objectEntries.Count; i++, rowY += rowHeight)
+                var   allRowsRect      = EditorGUILayout.GetControlRect(false, totalHeight);
+                float rowY             = allRowsRect.y;
+                float rowWidth         = allRowsRect.width + 3.5f;
+                int   removeIndex      = -1;
+                int   removeShapeOwner = -1;
+                int   removeShapeIndex = -1;
+
+                for (int i = 0; i < _objectEntries.Count; i++)
                 {
                     var rowRect = new Rect(allRowsRect.x, rowY, rowWidth, rowHeight);
                     if (Event.current.type == EventType.Repaint && i % 2 == 1)
@@ -386,10 +428,25 @@ namespace YGDR.Editor.Animation
                             AnimationEditorWindow.Styles.RowAltColor);
                     if (DrawObjectRow(i, rowRect))
                         removeIndex = i;
+                    rowY += rowHeight;
+
+                    var currentEntry = _objectEntries[i];
+                    if (currentEntry.blendshapeExpanded)
+                    {
+                        int removedShape = DrawBlendshapeSubRows(i, allRowsRect.x, rowWidth, rowY, subRowHeight, addRowHeight);
+                        if (removedShape >= 0)
+                        {
+                            removeShapeOwner = i;
+                            removeShapeIndex = removedShape;
+                        }
+                        rowY += addRowHeight + currentEntry.blendshapeEntries.Count * subRowHeight;
+                    }
                 }
 
                 if (removeIndex >= 0)
                     _objectEntries.RemoveAt(removeIndex);
+                else if (removeShapeOwner >= 0)
+                    _objectEntries[removeShapeOwner].blendshapeEntries.RemoveAt(removeShapeIndex);
             }
 
             EditorGUILayout.EndScrollView();
@@ -401,18 +458,24 @@ namespace YGDR.Editor.Animation
         {
             var entry = _objectEntries[index];
 
-            const float removeWidth   = 22f;
+            const float removeWidth    = 22f;
             const float objectBtnW    = 56f;
             const float rendererBtnW  = 66f;
             const float particleBtnW  = 56f;
-            const float audioBtnW     = 50f;
-            const float nameGap       = 2f;
-            const float pad           = 4f;
+            const float audioBtnW      = 50f;
+            const float lightBtnW      = 40f;
+            const float physBoneBtnW   = 66f;
+            const float blendshapeBtnW = 76f;
+            const float nameGap        = 2f;
+            const float pad            = 4f;
 
             float btnsWidth = objectBtnW
-                + (entry.hasRenderer       ? rendererBtnW : 0f)
-                + (entry.hasParticleSystem ? particleBtnW : 0f)
-                + (entry.hasAudioSource    ? audioBtnW    : 0f);
+                + (entry.hasRenderer            ? rendererBtnW   : 0f)
+                + (entry.hasParticleSystem      ? particleBtnW   : 0f)
+                + (entry.hasAudioSource         ? audioBtnW      : 0f)
+                + (entry.hasLight               ? lightBtnW      : 0f)
+                + (entry.hasVRCPhysBone         ? physBoneBtnW   : 0f)
+                + (entry.hasSkinnedMeshRenderer ? blendshapeBtnW : 0f);
 
             float nameWidth  = rowRect.width - removeWidth - btnsWidth - nameGap - pad;
             var   nameRect   = new Rect(rowRect.x + pad,            rowRect.y, nameWidth,   rowRect.height);
@@ -427,7 +490,16 @@ namespace YGDR.Editor.Animation
             var parBtnRect = entry.hasParticleSystem ? new Rect(nextX, rowRect.y, particleBtnW, rowRect.height) : default;
             if (entry.hasParticleSystem) nextX = parBtnRect.xMax;
 
-            var audBtnRect = entry.hasAudioSource    ? new Rect(nextX, rowRect.y, audioBtnW, rowRect.height)    : default;
+            var audBtnRect     = entry.hasAudioSource    ? new Rect(nextX, rowRect.y, audioBtnW,    rowRect.height) : default;
+            if (entry.hasAudioSource) nextX = audBtnRect.xMax;
+
+            var lightBtnRect   = entry.hasLight          ? new Rect(nextX, rowRect.y, lightBtnW,    rowRect.height) : default;
+            if (entry.hasLight) nextX = lightBtnRect.xMax;
+
+            var physBoneRect   = entry.hasVRCPhysBone    ? new Rect(nextX, rowRect.y, physBoneBtnW, rowRect.height) : default;
+            if (entry.hasVRCPhysBone) nextX = physBoneRect.xMax;
+
+            var smrBtnRect     = entry.hasSkinnedMeshRenderer ? new Rect(nextX, rowRect.y, blendshapeBtnW, rowRect.height) : default;
 
             GUI.Label(nameRect, entry.gameObject.name, ObjectNameStyle);
 
@@ -441,41 +513,47 @@ namespace YGDR.Editor.Animation
                 DrawModeBtn(objBtnRect, L10n.Get("toggle.bind.object"),   bindingType, ObjectBindingType.GameObject,    mousePos, accent, accentHover);
                 if (entry.hasRenderer)       DrawModeBtn(renBtnRect, L10n.Get("toggle.bind.renderer"), bindingType, ObjectBindingType.Renderer,       mousePos, accent, accentHover);
                 if (entry.hasParticleSystem) DrawModeBtn(parBtnRect, L10n.Get("toggle.bind.particle"), bindingType, ObjectBindingType.ParticleSystem,  mousePos, accent, accentHover);
-                if (entry.hasAudioSource)    DrawModeBtn(audBtnRect, L10n.Get("toggle.bind.audio"),    bindingType, ObjectBindingType.AudioSource,     mousePos, accent, accentHover);
+                if (entry.hasAudioSource)    DrawModeBtn(audBtnRect,   L10n.Get("toggle.bind.audio"),    bindingType, ObjectBindingType.AudioSource,  mousePos, accent, accentHover);
+                if (entry.hasLight)          DrawModeBtn(lightBtnRect, L10n.Get("toggle.bind.light"),    bindingType, ObjectBindingType.Light,         mousePos, accent, accentHover);
+                if (entry.hasVRCPhysBone)    DrawModeBtn(physBoneRect, L10n.Get("toggle.bind.physbone"), bindingType, ObjectBindingType.VRCPhysBone,   mousePos, accent, accentHover);
+                if (entry.hasSkinnedMeshRenderer)
+                {
+                    EditorGUI.DrawRect(smrBtnRect, (entry.blendshapeExpanded || smrBtnRect.Contains(mousePos)) ? accentHover : accent);
+                    GUI.Label(smrBtnRect, "Blendshape", MiniLabelStyle);
+                }
 
                 EditorGUI.DrawRect(removRect, removRect.Contains(mousePos) ? accentHover : accent);
                 GUI.Label(removRect, "−", MiniLabelStyle);
             }
 
-            if (GUI.Button(objBtnRect, GUIContent.none, GUIStyle.none))
+            if (ClickableButton(objBtnRect))
                 ToggleBindingFlag(index, ObjectBindingType.GameObject);
-            EditorGUIUtility.AddCursorRect(objBtnRect, MouseCursor.Link);
-
-            if (entry.hasRenderer)
+            if (entry.hasRenderer       && ClickableButton(renBtnRect))
+                ToggleBindingFlag(index, ObjectBindingType.Renderer);
+            if (entry.hasParticleSystem && ClickableButton(parBtnRect))
+                ToggleBindingFlag(index, ObjectBindingType.ParticleSystem);
+            if (entry.hasAudioSource    && ClickableButton(audBtnRect))
+                ToggleBindingFlag(index, ObjectBindingType.AudioSource);
+            if (entry.hasLight          && ClickableButton(lightBtnRect))
+                ToggleBindingFlag(index, ObjectBindingType.Light);
+            if (entry.hasVRCPhysBone    && ClickableButton(physBoneRect))
+                ToggleBindingFlag(index, ObjectBindingType.VRCPhysBone);
+            if (entry.hasSkinnedMeshRenderer && ClickableButton(smrBtnRect))
             {
-                if (GUI.Button(renBtnRect, GUIContent.none, GUIStyle.none))
-                    ToggleBindingFlag(index, ObjectBindingType.Renderer);
-                EditorGUIUtility.AddCursorRect(renBtnRect, MouseCursor.Link);
+                var updatedEntry = _objectEntries[index];
+                updatedEntry.blendshapeExpanded = !updatedEntry.blendshapeExpanded;
+                _objectEntries[index] = updatedEntry;
             }
 
-            if (entry.hasParticleSystem)
-            {
-                if (GUI.Button(parBtnRect, GUIContent.none, GUIStyle.none))
-                    ToggleBindingFlag(index, ObjectBindingType.ParticleSystem);
-                EditorGUIUtility.AddCursorRect(parBtnRect, MouseCursor.Link);
-            }
-
-            if (entry.hasAudioSource)
-            {
-                if (GUI.Button(audBtnRect, GUIContent.none, GUIStyle.none))
-                    ToggleBindingFlag(index, ObjectBindingType.AudioSource);
-                EditorGUIUtility.AddCursorRect(audBtnRect, MouseCursor.Link);
-            }
-
-            bool remove = GUI.Button(removRect, GUIContent.none, GUIStyle.none);
-            EditorGUIUtility.AddCursorRect(removRect, MouseCursor.Link);
+            bool remove = ClickableButton(removRect);
 
             return remove;
+        }
+
+        static bool ClickableButton(Rect rect)
+        {
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+            return GUI.Button(rect, GUIContent.none, GUIStyle.none);
         }
 
         void ToggleBindingFlag(int index, ObjectBindingType flag)
@@ -535,18 +613,121 @@ namespace YGDR.Editor.Animation
                     ? AnimatorGameObjectToggleOps.GetRelativePath(_avatarRoot.transform, gameObject.transform) ?? gameObject.name
                     : AnimatorGameObjectToggleOps.GetRelativePath(AnimatorGameObjectToggleOps.FindAvatarRoot(gameObject, _controller), gameObject.transform) ?? gameObject.name;
 
+                var smrComponent    = gameObject.GetComponent<SkinnedMeshRenderer>();
+                bool hasBlendshapes = smrComponent != null && smrComponent.sharedMesh != null && smrComponent.sharedMesh.blendShapeCount > 0;
+
                 _objectEntries.Add(new ObjectEntry
                 {
-                    gameObject        = gameObject,
-                    relativePath      = relativePath,
-                    hasRenderer       = gameObject.GetComponent<Renderer>()       != null,
-                    hasParticleSystem = gameObject.GetComponent<ParticleSystem>() != null,
-                    hasAudioSource    = gameObject.GetComponent<AudioSource>()    != null,
-                    bindingType       = ObjectBindingType.GameObject,
+                    gameObject             = gameObject,
+                    relativePath           = relativePath,
+                    hasRenderer            = gameObject.GetComponent<Renderer>()             != null,
+                    hasParticleSystem      = gameObject.GetComponent<ParticleSystem>()       != null,
+                    hasAudioSource         = gameObject.GetComponent<AudioSource>()          != null,
+                    hasLight               = gameObject.GetComponent<Light>()                != null,
+#if VRC_SDK_VRCSDK3
+                    hasVRCPhysBone         = gameObject.GetComponent<VRC.SDK3.Dynamics.PhysBone.Components.VRCPhysBone>() != null,
+#endif
+                    hasSkinnedMeshRenderer = hasBlendshapes,
+                    skinnedMeshRenderer    = smrComponent,
+                    bindingType            = ObjectBindingType.GameObject,
+                    blendshapeExpanded     = false,
+                    blendshapeEntries      = new List<BlendshapeEntry>(),
                 });
             }
 
             Repaint();
+        }
+
+        int DrawBlendshapeSubRows(int entryIndex, float x, float rowWidth, float startY, float subRowHeight, float addRowHeight)
+        {
+            var entry = _objectEntries[entryIndex];
+            var smr   = entry.skinnedMeshRenderer;
+
+            var  accent      = AnimationEditorWindow.Styles.AccentColor;
+            var  accentHover = GetHoverColor();
+            var  mousePos    = Event.current.mousePosition;
+
+            float indentX = x + 16f;
+            float indentW = rowWidth - 16f;
+
+            // ── Per-shape rows ───────────────────────────────────────────────────
+            const float removeBtnWidth = 22f;
+            const float fieldLabelW    = 24f;
+            const float fieldW         = 44f;
+            const float fieldPad       = 4f;
+            float fixedRight     = fieldPad + fieldLabelW + fieldW + fieldPad + fieldLabelW + fieldW + removeBtnWidth;
+            float shapeNameWidth = indentW - fieldPad - fixedRight;
+
+            int   removeShapeIndex = -1;
+            float shapeY           = startY;
+
+            for (int k = 0; k < entry.blendshapeEntries.Count; k++)
+            {
+                var blendshapeEntry = entry.blendshapeEntries[k];
+
+                var shapeNameRect = new Rect(indentX + fieldPad, shapeY, shapeNameWidth, subRowHeight);
+                var offLabelRect  = new Rect(shapeNameRect.xMax + fieldPad, shapeY, fieldLabelW, subRowHeight);
+                var offFieldRect  = new Rect(offLabelRect.xMax, shapeY, fieldW, subRowHeight);
+                var onLabelRect   = new Rect(offFieldRect.xMax + fieldPad, shapeY, fieldLabelW, subRowHeight);
+                var onFieldRect   = new Rect(onLabelRect.xMax, shapeY, fieldW, subRowHeight);
+                var removeRect    = new Rect(indentX + indentW - removeBtnWidth, shapeY, removeBtnWidth, subRowHeight);
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    GUI.Label(shapeNameRect, blendshapeEntry.shapeName, ObjectNameStyle);
+                    GUI.Label(offLabelRect,  "Off", MiniLabelStyle);
+                    GUI.Label(onLabelRect,   "On",  MiniLabelStyle);
+                    EditorGUI.DrawRect(removeRect, removeRect.Contains(mousePos) ? accentHover : accent);
+                    GUI.Label(removeRect, "−", MiniLabelStyle);
+                }
+
+                EditorGUI.BeginChangeCheck();
+                float newOffValue = EditorGUI.FloatField(offFieldRect, blendshapeEntry.offValue);
+                float newOnValue  = EditorGUI.FloatField(onFieldRect,  blendshapeEntry.onValue);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    blendshapeEntry.offValue   = Mathf.Clamp(newOffValue, 0f, 100f);
+                    blendshapeEntry.onValue    = Mathf.Clamp(newOnValue,  0f, 100f);
+                    entry.blendshapeEntries[k] = blendshapeEntry;
+                }
+
+                if (ClickableButton(removeRect))
+                    removeShapeIndex = k;
+
+                shapeY += subRowHeight;
+            }
+
+            // ── Add shape button (bottom) ────────────────────────────────────────
+            const float addBtnPad = 2f;
+            var addBtnRect = new Rect(indentX + addBtnPad, shapeY + addBtnPad, indentW - addBtnPad * 2f, addRowHeight - addBtnPad * 2f);
+
+            if (Event.current.type == EventType.Repaint)
+            {
+                EditorGUI.DrawRect(addBtnRect, addBtnRect.Contains(mousePos) ? accentHover : accent);
+                GUI.Label(addBtnRect, "+", MiniLabelStyle);
+            }
+
+            if (ClickableButton(addBtnRect) && smr != null && smr.sharedMesh != null)
+            {
+                var capturedEntries = entry.blendshapeEntries;
+                var existingNames   = new HashSet<string>(capturedEntries.Select(blendshapeEntry => blendshapeEntry.shapeName));
+                int shapeCount      = smr.sharedMesh.blendShapeCount;
+                var available       = new List<string>();
+                for (int k = 0; k < shapeCount; k++)
+                {
+                    var shapeName = smr.sharedMesh.GetBlendShapeName(k);
+                    if (!existingNames.Contains(shapeName))
+                        available.Add(shapeName);
+                }
+                new BlendshapeDropdown(available.ToArray(), shapeName =>
+                {
+                    capturedEntries.Add(new BlendshapeEntry { shapeName = shapeName, offValue = 0f, onValue = 100f });
+                    Repaint();
+                }).Show(addBtnRect);
+            }
+            EditorGUIUtility.AddCursorRect(addBtnRect, MouseCursor.Link);
+
+            return removeShapeIndex;
         }
 
         void DrawFooter()
@@ -580,9 +761,38 @@ namespace YGDR.Editor.Animation
                 _layerName,
                 _parameterName,
                 _writeDefaults,
-                _objectEntries.Select(entry => (entry.relativePath, entry.gameObject.name, entry.bindingType)).ToList());
+                _objectEntries.Select(entry => (entry.relativePath, entry.gameObject.name, entry.bindingType, entry.blendshapeEntries)).ToList());
             Close();
         }
+    }
+    internal class BlendshapeDropdown : AdvancedDropdown
+    {
+        static readonly System.Reflection.PropertyInfo s_maximumSizeProperty =
+            typeof(AdvancedDropdown).GetProperty("maximumSize",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+
+        readonly string[]              _shapeNames;
+        readonly System.Action<string> _onSelected;
+
+        internal BlendshapeDropdown(string[] shapeNames, System.Action<string> onSelected)
+            : base(new AdvancedDropdownState())
+        {
+            _shapeNames = shapeNames;
+            _onSelected = onSelected;
+            minimumSize = new Vector2(200f, 250f);
+            s_maximumSizeProperty?.SetValue(this, new Vector2(200f, 350f));
+        }
+
+        protected override AdvancedDropdownItem BuildRoot()
+        {
+            var root = new AdvancedDropdownItem("Blendshapes");
+            foreach (var shapeName in _shapeNames)
+                root.AddChild(new AdvancedDropdownItem(shapeName));
+            return root;
+        }
+
+        protected override void ItemSelected(AdvancedDropdownItem item)
+            => _onSelected?.Invoke(item.name);
     }
 }
 #endif

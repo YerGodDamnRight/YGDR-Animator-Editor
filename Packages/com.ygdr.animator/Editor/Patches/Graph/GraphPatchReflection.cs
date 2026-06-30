@@ -95,6 +95,8 @@ namespace YGDR.Editor.Animation
             AccessTools.Method(AnimatorEditorInit.StateNodeType, "MakeTransitionCallback");
         internal static readonly MethodInfo AnyStateMakeTransitionCallbackMethod =
             AccessTools.Method(AnimatorEditorInit.AnyStateNodeType, "MakeTransitionCallback");
+        internal static readonly MethodInfo EntryMakeTransitionCallbackMethod =
+            AccessTools.Method(AnimatorEditorInit.EntryNodeType, "MakeTransitionCallback");
     }
 }
 #endif

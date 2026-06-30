@@ -55,7 +55,7 @@ namespace YGDR.Editor.Animation
                 typeof(PatchStateMachineNodeMenu),
                 typeof(PatchTransitionContextMenu),
                 typeof(PatchClipMenuNesting),
-                typeof(PatchClipMenuDoubleClickGuard),
+                typeof(PatchClipMenuAdvancedDropdown),
             },
             [NodeOverlayId] = new[]
             {

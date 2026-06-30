@@ -80,6 +80,13 @@ namespace YGDR.Editor.Animation
     }
 
     [Serializable]
+    internal class AnimatorPalette
+    {
+        public string slotName     = "Palette";
+        public string encodedColors = "";
+    }
+
+    [Serializable]
     internal class AnimatorDefaultSettings
     {
         const string PrefsKey = "YGDR.AnimatorTools.Settings";
@@ -122,6 +129,9 @@ namespace YGDR.Editor.Animation
 
         // Color tags
         [SerializeField] internal List<AnimatorColorTag> colorTags = new List<AnimatorColorTag>();
+
+        // User palette slots
+        [SerializeField] internal List<AnimatorPalette> savedPalettes = new List<AnimatorPalette>();
 
         internal static Color? GetTagColor(string tagName, AnimatorDefaultSettings settings)
         {
@@ -199,6 +209,111 @@ namespace YGDR.Editor.Animation
             blendTree2DNodeColor    = new(0.24f, 0.60f, 0.45f, 1f);
         }
 
+        // ── Palette capture / apply ───────────────────────────────────────────
+
+        internal const int PaletteColorCount = 30;
+
+        // Order matches visual section order in settings UI:
+        // Interface → Graph Grid → Node Colors → Node Overlay → Transition Overlay
+        internal static Color[] CapturePaletteColors(AnimatorDefaultSettings settings) => new[]
+        {
+            // Interface [0–8]
+            settings.paletteColorPrimary,   settings.paletteColorSecondary, settings.paletteColorAccent,
+            settings.paramColorFloat,        settings.paramColorInt,         settings.paramColorBool,
+            settings.paramColorTrigger,      settings.paramColorVrcLabel,    settings.analysisHighlightColor,
+            // Graph Grid [9–11]
+            settings.graphGridBackgroundColor, settings.graphGridColorMajor, settings.graphGridColorMinor,
+            // Node Colors [12–21]
+            settings.nodeSelectionColor,     settings.stateNodeColor,        settings.defaultStateColor,
+            settings.subStateMachineColor,   settings.entryNodeColor,        settings.exitNodeColor,
+            settings.anyStateNodeColor,      settings.blendTreeDirectNodeColor, settings.blendTree1DNodeColor,
+            settings.blendTree2DNodeColor,
+            // Node Overlay [22–23]
+            settings.overlayActiveColor,     settings.overlayInactiveColor,
+            // Transition Overlay [24–29]
+            settings.transitionOverlayColor, settings.transitionIncomingColor, settings.transitionOutgoingColor,
+            settings.transitionOverlayArrowColor, settings.transitionArrowNoConditionColor, settings.transitionArrowInstantColor,
+        };
+
+        internal static void ApplyPaletteColors(AnimatorDefaultSettings settings, Color[] colors)
+        {
+            // Interface [0–8]
+            settings.paletteColorPrimary          = ClampPaletteColor(colors[0]);
+            settings.paletteColorSecondary        = ClampPaletteColor(colors[1]);
+            settings.paletteColorAccent           = ClampPaletteColor(colors[2]);
+            settings.paramColorFloat              = colors[3];
+            settings.paramColorInt                = colors[4];
+            settings.paramColorBool               = colors[5];
+            settings.paramColorTrigger            = colors[6];
+            settings.paramColorVrcLabel           = colors[7];
+            settings.analysisHighlightColor       = colors[8];
+            // Graph Grid [9–11]
+            settings.graphGridBackgroundColor     = colors[9];
+            settings.graphGridColorMajor          = colors[10];
+            settings.graphGridColorMinor          = colors[11];
+            // Node Colors [12–21]
+            settings.nodeSelectionColor           = colors[12];
+            settings.stateNodeColor               = colors[13];
+            settings.defaultStateColor            = colors[14];
+            settings.subStateMachineColor         = colors[15];
+            settings.entryNodeColor               = colors[16];
+            settings.exitNodeColor                = colors[17];
+            settings.anyStateNodeColor            = colors[18];
+            settings.blendTreeDirectNodeColor     = colors[19];
+            settings.blendTree1DNodeColor         = colors[20];
+            settings.blendTree2DNodeColor         = colors[21];
+            // Node Overlay [22–23]
+            settings.overlayActiveColor           = colors[22];
+            settings.overlayInactiveColor         = colors[23];
+            // Transition Overlay [24–29]
+            settings.transitionOverlayColor       = colors[24];
+            settings.transitionIncomingColor      = colors[25];
+            settings.transitionOutgoingColor      = colors[26];
+            settings.transitionOverlayArrowColor  = colors[27];
+            settings.transitionArrowNoConditionColor = colors[28];
+            settings.transitionArrowInstantColor  = colors[29];
+        }
+
+        internal static string EncodePalette(Color[] colors)
+        {
+            var tokens = new string[PaletteColorCount];
+            for (int i = 0; i < PaletteColorCount; i++)
+                tokens[i] = ColorUtility.ToHtmlStringRGBA(colors[i]);
+            return string.Join("|", tokens);
+        }
+
+        internal static bool TryDecodePalette(string encoded, out Color[] colors)
+        {
+            colors = null;
+            if (string.IsNullOrEmpty(encoded)) return false;
+            var tokens = encoded.Split('|');
+            if (tokens.Length != PaletteColorCount)
+            {
+                Debug.LogWarning($"[AnimatorTools] Palette string has {tokens.Length} tokens, expected {PaletteColorCount}.");
+                return false;
+            }
+            colors = new Color[PaletteColorCount];
+            for (int i = 0; i < PaletteColorCount; i++)
+            {
+                if (!ColorUtility.TryParseHtmlString("#" + tokens[i], out colors[i]))
+                {
+                    Debug.LogWarning($"[AnimatorTools] Palette token {i} could not be parsed: '{tokens[i]}'.");
+                    colors = null;
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static Color ClampPaletteColor(Color color)
+        {
+            Color.RGBToHSV(color, out float hue, out float saturation, out float value);
+            value = EditorGUIUtility.isProSkin ? Mathf.Min(value, 0.40f) : Mathf.Max(value, 0.70f);
+            var clamped = Color.HSVToRGB(hue, saturation, value);
+            clamped.a = color.a;
+            return clamped;
+        }
+
         // Editor palette
         [SerializeField] internal Color paletteColorPrimary   = new(0.25f, 0.25f, 0.25f, 1f);
         [SerializeField] internal Color paletteColorSecondary = new(0.30f, 0.30f, 0.30f, 1f);
@@ -251,6 +366,7 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal KeyBinding kbSelectAllTransitions = new(KeyCode.A, ctrl: true, shift: true);
         [SerializeField] internal KeyBinding kbCopy                 = new(KeyCode.C, ctrl: true);
         [SerializeField] internal KeyBinding kbPaste                = new(KeyCode.V, ctrl: true);
+        [SerializeField] internal KeyBinding kbDuplicate            = new(KeyCode.D, ctrl: true);
         [SerializeField] internal KeyBinding kbChainMode            = new(KeyCode.None);
         [SerializeField] internal KeyBinding kbFanMode              = new(KeyCode.None);
         [SerializeField] internal KeyBinding kbMultiTransition      = new(KeyCode.None);
@@ -267,6 +383,7 @@ namespace YGDR.Editor.Animation
             kbSelectAllTransitions = new(KeyCode.A, ctrl: true, shift: true);
             kbCopy                 = new(KeyCode.C, ctrl: true);
             kbPaste                = new(KeyCode.V, ctrl: true);
+            kbDuplicate            = new(KeyCode.D, ctrl: true);
             kbChainMode            = new(KeyCode.None);
             kbFanMode              = new(KeyCode.None);
             kbMultiTransition      = new(KeyCode.None);

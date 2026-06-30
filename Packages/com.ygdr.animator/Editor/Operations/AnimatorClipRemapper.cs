@@ -78,7 +78,7 @@ namespace YGDR.Editor.Animation
             pathSet.Add(path);
         }
 
-        // Walks path segments from root; returns the name of the first segment not found in the hierarchy.
+        // Walks path segments from root; returns the full path prefix up to and including the first segment not found in the hierarchy.
         static string FindFirstBrokenSegment(string path, HashSet<string> validPaths)
         {
             var segments = path.Split('/');
@@ -87,9 +87,9 @@ namespace YGDR.Editor.Animation
             {
                 prefix = i == 0 ? segments[0] : prefix + "/" + segments[i];
                 if (!validPaths.Contains(prefix))
-                    return segments[i];
+                    return prefix;
             }
-            return segments[segments.Length - 1];
+            return path;
         }
 
         // Remap all clips in controller: prefix path replacement wrapped in StartAssetEditing for batched reimport.

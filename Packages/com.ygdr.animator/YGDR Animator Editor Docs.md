@@ -62,7 +62,7 @@ Tabbed interface for editing currently selected object(s) in Animator graph. Upd
 
 ### Transitions Tab
 
-Edit multiple transitions at once. Select one or more transitions in Animator graph → tab shows all selected together → mass-edit shared properties. Toggle pill button on right to deselect and collapse displayed transition tags.
+Edit multiple transitions at once. Select one or more transitions in Animator graph → tab shows all selected together → mass-edit shared properties. Toggle pill button on right to collapse displayed transition tags to scrollable list.
 
 **Transition Details** — Edit timing (exit time, duration), interruption settings, atomic flags. Changes sync to Animator graph in real time.
 
@@ -161,7 +161,8 @@ Sub-tabs listing all layers, states, blend trees, and clips in controller. Each 
 
 Fix broken animation clip bindings.
 
-- Drag GameObject (with `Animator` + controller) into field → enables scan button → flags broken bindings + suggests From paths.
+- Drag GameObject (with `Animator` + controller) into field → enables scan button → flags broken bindings. Up to 5 broken path segments shown as clickable buttons — click one to auto-fill the From path field.
+- **From / To path fields** — Each has a drag-and-drop GameObject slot. Drop a GO onto it → full hierarchy path auto-fills the text field.
 - **Auto-Repath** — Automatically updates bindings on hierarchy GameObject rename/move. Tracks only bindings that were valid when toggled on.
 - Select clip from list → focuses asset in Project window. Select multiple clips in Project → list highlights in green → direct remap available. List shows only clips belonging to avatar in slot.
 
@@ -202,7 +203,7 @@ Toggle 3D vs flat state nodes. Assign custom colors for selection, state nodes, 
 
 #### Node Icons
 
-Overlay icons for nodes. Available: empty node, looping animation, WD on/off, contains behaviors, parameter affecting speed, parameter affecting motion, clip name in node, node coordinates in graph. Custom active/inactive colors and names.
+Overlay icons for nodes. Available: empty node, looping animation, WD on/off, contains behaviors, parameter affecting speed, parameter affecting motion, clip name in node, clip time/duration in node, node coordinates in graph. Custom active/inactive colors and names.
 
 #### Transition Overlay
 
@@ -232,11 +233,13 @@ See [Rebindable Shortcuts](#rebindable-shortcuts-defaults) for the full action l
 - **Prevent Layer Scroll** — Stops Unity scrolling layer list to top on new layer creation.
 - **Prevent Param Scroll** — Same behavior for parameters list.
 - **Default Weight 1** — New layers auto-set weight to `1`.
-- **Clip Menu Nesting** — Nest Animation window clips in sub-menus by name. Use `parent.child.name` with `.` as separator.
+- **Clip Menu Nesting** — Nest Animation window clips in sub-menus by name using a searchable advanced dropdown. Use `parent.child.name` with `.` as separator.
 - **Layer Templates** — Replaces layer `+` button with dropdown ([see below](#layer-templates)).
 - **Param Add Menu** — Parameter `+` button gains quick options for VRC built-in parameters. Right-click parameter adds:
   - Add parameter below
-  - Convert to Float / Int / Bool / Trigger → auto-updates all references (controller and VRC params)
+  - Convert to Float / Int / Bool / Trigger → submenu with two independent actions:
+    - **Controller** — converts type and auto-updates all references in the controller (transitions, behaviours, AAP clips)
+    - **VRC Params** — converts the matching VRC expression parameter type independently (use for type mismatches without touching controller references)
   - Set Synced / Set Not Synced → toggle VRC sync status on the parameter
   - Add to VRC Parameters → adds parameter to VRC expression parameters asset
   - Add All to VRC Parameters → bulk-adds all controller parameters to VRC expression parameters
@@ -247,6 +250,11 @@ See [Rebindable Shortcuts](#rebindable-shortcuts-defaults) for the full action l
   - Remap to Parameter → dropdown redirects all uses to different parameter — affects transitions, VRC behaviours, AAP clip bindings, VRC expression parameters and menus (expression parameters/menus only when a GameObject containing them is selected)
   - Delete and Clean → removes parameter from all transitions + parameter list without leaving `Parameter does not exist in Controller` warnings
   - Remove Unused Parameters → deletes any parameter not referenced by transitions, behaviours, or AAP clips
+- **Parameter Copy / Paste / Duplicate** *(keyboard only)* — Configurable hotkeys for copying parameters between controllers or duplicating quickly:
+  - **Copy** — copies selected parameter (name, type, default value) to clipboard.
+  - **Paste** — inserts copy after selected parameter. Auto-renames on collision (`Name 1`, `Name 2`, …).
+  - **Duplicate** — copy + paste in one action.
+- **Palettes** — Save and share interface color palettes. **Save Palette** snapshots all current interface colors (Primary, Secondary, Accent, and all sub-colors) into a named slot. Each saved slot shows an editable name field, a row of color swatches (click swatches to apply that palette), a **Copy** button that copies an encoded string to clipboard, and **−** to delete. To import a shared palette: paste the encoded string into the text field at the bottom → click **Apply**.
 - **Color Tags** — Named tags with custom colors for visually categorizing states and transitions. Each tag has a name field and a color picker. Click `+ Add Tag` to create, `-` to remove. Applied via right-click context menu **Tag** submenu on states or transitions. Tagged state nodes show a thin colored strip above them; tagged transitions use the tag color for their arrow. Tag name matches `AnimatorState.tag`; transition tag stored in `AnimatorStateTransition.name`.
 - **Frames** — Enables custom Frames feature ([see Frames](#frames)).
 
@@ -266,13 +274,18 @@ Disable individual Harmony patches if they conflict with other tools.
 
 Extends built-in layer list in Animator window.
 
+### Layer Index
+
+Each layer row displays its zero-based index as small gray text in the bottom-left corner of the row (standard mode only). Useful for referencing layers in VRC Animator Layer Control behaviours.
+
 ### Layer Right-Click Context Menu
 
 Right-click any layer row to access:
 
-- **Copy Layer** — Copies layer (states, transitions, frames) to clipboard.
-- **Paste Layer** — Pastes copied layer as new layer below current. Cross-controller paste auto-adds referenced parameters to destination.
+- **Copy Layer** — Copies layer (states, transitions, frames) to clipboard. Also available via configurable Copy hotkey.
+- **Paste Layer** — Pastes copied layer as new layer below current. Cross-controller paste auto-adds referenced parameters to destination. Also available via configurable Paste hotkey.
 - **Paste Layer Settings** — Applies only layer properties (avatar mask, blend mode, weight, IK pass, sync settings) from clipboard. Does not replace states.
+- **Duplicate Layer** *(keyboard only)* — Configurable Duplicate hotkey immediately copies and pastes the current layer in one action.
 - **Delete Layer** — Removes layer.
 - **Create Template** *(visible when Layer Templates enabled)* — click opens parameter-mapping window. Saves current layer as user template. Seperate new layer name with `.` or `/` to create submenu heirarchy
 
@@ -302,6 +315,10 @@ Creates a complete bool-toggle layer setup in one step. Accessible via the **Tog
 | Renderer | `Renderer.m_Enabled` |
 | Particle | `ParticleSystem.m_Enabled` |
 | Audio | `AudioSource.m_Enabled` |
+| Light | `Light.m_Enabled` |
+| PhysBone | `VRCPhysBone.m_Enabled` *(VRC SDK only)* |
+
+**Blendshape** button appears when the object has a `SkinnedMeshRenderer` with blendshapes. Click to expand per-shape sub-rows. Each row shows the shape name and **Off** / **On** float fields (0–100). Click `+` at the bottom of the expanded section → dropdown lists all available shapes not yet added. Click `−` to remove a shape row.
 
 Click **Create** → generates: Bool parameter (if not present), new layer (weight 1), `Off` and `On` states with instant transitions and corresponding animation clips saved alongside the controller.
 
@@ -312,6 +329,18 @@ Click **Create** → generates: Bool parameter (if not present), new layer (weig
 Patches built-in Animator window graph view. Works seamlessly with Unity native controls.
 
 ### Mouse Interactions
+
+#### Right-Click Drag → Create Transition
+
+Right-click and drag from a state node, AnyState, or Entry → release on a destination to create a transition instantly.
+
+| Source | Valid Destinations |
+|---|---|
+| State node | State, Sub-State Machine, Exit |
+| AnyState | State only (Exit not supported) |
+| Entry | State, Sub-State Machine (Exit not supported) |
+
+Drag activates after moving 8px. Preview line follows cursor while dragging. Releasing on empty space cancels. Fully undoable.
 
 #### Double-Click Empty Space → Create State
 
@@ -335,8 +364,8 @@ Right-click a state node:
 - **Pack into Sub-State Machine** — Select 2+ states → right-click → groups into new sub-state machine. Node positions preserved within bounding box. Fully undoable.
 - **Select Transitions** — Submenu: all incoming / outgoing / shared transitions for selected nodes.
 - **Copy / Paste Behaviors** — Copy `StateMachineBehaviour(s)` → paste onto other states. Menu shows all 7 supported types: Param Drivers, Play Audio, Tracking Control, Locomotion Control, Animator Layer Control, Playable Layer Control, Temporary Pose Space.
-- **Tag** — Submenu listing all Color Tags defined in Settings. Click a tag → applies it to all selected states (sets `AnimatorState.tag`) and any selected transitions simultaneously. Toggle behavior: if all selected objects already carry that tag, clicking removes it. Tagged state nodes show a colored strip above them on the graph.
-- **Multi-Transition** — Select source node → click menu item → select other nodes → invoke menu item again → creates transitions from source to all destinations. AnyState can be source (right-click AnyState → Multi-Transition, then select destinations). Exit can be destination (select states as source, then select Exit node as destination in phase 2). AnyState → Exit is not supported.
+- **Tag** — Submenu listing all Color Tags defined in Settings. Click a tag → applies it to all selected states (sets `AnimatorState.tag`) and any selected transitions simultaneously. Toggle behavior: if all selected objects already carry that tag, clicking removes it. **Remove Tags** at the bottom of the submenu clears tags from all selected states and transitions at once. Tagged state nodes show a colored strip above them on the graph.
+- **Multi-Transition** — Select source node → click menu item → select other nodes → invoke menu item again → creates transitions from source to all destinations. AnyState or Entry can be source (right-click either → Multi-Transition, then select destinations). Exit can be destination (select states as source, then select Exit node as destination in phase 2). AnyState → Exit and Entry → Exit are not supported.
 
 ##### Pack / Unpack Diagram
 
@@ -368,11 +397,12 @@ Step 1: Right-click source        Step 2: Select dests + invoke again
                                     └─────┘└─────┘└─────┘
 ```
 
-#### AnyState / Exit Node Context Menu
+#### AnyState / Entry / Exit Node Context Menu
 
-Right-click AnyState or Exit node:
+Right-click AnyState, Entry, or Exit node:
 
-- **AnyState** — When AnyState is selected and Multi-Transition is invoked, AnyState becomes the source. Click destination states, then invoke Multi-Transition again to create transitions from AnyState to all selected destinations.
+- **AnyState** — When AnyState is selected and Multi-Transition is invoked, AnyState becomes the source. Click destination states, then invoke Multi-Transition again to create transitions from AnyState to all selected destinations. AnyState → Exit is not supported (menu item disabled).
+- **Entry** — **Select All Outgoing Transitions** — selects all entry transitions in the current state machine. Entry can also be used as a Multi-Transition source: invoke Multi-Transition with Entry selected → click destination states → invoke again to create entry transitions to all selected destinations. Entry → Exit is not supported (menu item disabled).
 - **Exit** — **Select All Incoming Transitions** — selects all transitions in the current layer (including nested sub-state machines) whose destination is Exit.
 
 #### Sub-State Machine Node Context Menu
@@ -456,6 +486,8 @@ Requires transitions copied to clipboard first. While Multi-Transition is pendin
 #### <kbd>F2</kbd> — States, Sub-State Machines, Blend Tree Nodes, Pamameters, Layers, Frames
 
 Select node → <kbd>F2</kbd> → rename directly on graph. <kbd>Enter</kbd> confirms, <kbd>Esc</kbd> cancels.
+
+**Parameter Sibling Rename** — When renaming a VRC PhysBone, Contact, or Raycast parameter (detected by known suffixes), a dialog appears offering to batch-rename all sibling parameters sharing the same prefix to match the new name. Skipping renames only the selected parameter and updates all its references.
 
 #### <kbd>F3</kbd> — Animation Clips & Blend Tree Leaves, Frame Comments
 
@@ -606,10 +638,11 @@ Most graph shortcuts are rebindable via **Settings → Keybinds**. Defaults show
 | <kbd>P</kbd> | Select both incoming and outgoing transitions of selected states |
 | <kbd>Ctrl</kbd>+<kbd>A</kbd> | Select all Nodes |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> | Select all Transitions |
-| <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy selected transitions / blend tree nodes / frames |
-| <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste transitions / blend tree nodes / frames |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy selected transitions / blend tree nodes / frames / layer / parameter |
+| <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste transitions / blend tree nodes / frames / layer / parameter |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> (in Fan Mode) | Toggle Seeded Fan — paste clipboard transitions instead of blank |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> (in Multi-Transition) | Complete with seeded transitions using current selection as destinations |
+| *(unbound)* | **Duplicate** — copy + immediately paste selected layer, parameter, or node |
 | *(unbound)* | Chain Transition Mode — keyboard alternative to Ctrl+double-click |
 | *(unbound)* | Fan Transition Mode — keyboard alternative to Shift+double-click |
 | *(unbound)* | **Multi Transition** — Phase 1: set selected states (or AnyState) as sources; Phase 2: press again with destinations selected (or Exit) to execute |

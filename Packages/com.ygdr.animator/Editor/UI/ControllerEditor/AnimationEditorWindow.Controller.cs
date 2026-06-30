@@ -416,6 +416,8 @@ namespace YGDR.Editor.Animation
         string     _clipRemapFromPath  = "";
         string     _clipRemapToPath    = "";
         GameObject _clipRemapAvatarRoot;
+        GameObject _clipRemapFromPathGO;
+        GameObject _clipRemapToPathGO;
         AnimatorController _slotController;
         bool       _slotHasNoAnimator;
         AnimatorController ClipController => _slotController != null ? _slotController : _controller;
@@ -433,6 +435,7 @@ namespace YGDR.Editor.Animation
         {
             DrawAvatarRootField();
             DrawInvalidSlotWarning();
+            EditorGUILayout.Space(4);
             DrawAutoRepathButton();
             DrawScanResultLabel();
             EditorGUILayout.Space(4);
@@ -445,7 +448,7 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label(L10n.Get("controller.repath.avatar_root"), Styles.SmallLabel, GUILayout.Width(100));
+                GUILayout.Label(L10n.Get("controller.repath.avatar_root"), Styles.SmallLabel, GUILayout.Width(60));
                 EditorGUI.BeginChangeCheck();
                 var newRoot = (GameObject)EditorGUILayout.ObjectField(_clipRemapAvatarRoot, typeof(GameObject), true);
                 if (EditorGUI.EndChangeCheck())
@@ -466,7 +469,7 @@ namespace YGDR.Editor.Animation
                 bool slotInvalid = _clipRemapAvatarRoot != null && _slotController == null;
                 using (new EditorGUI.DisabledScope(_clipRemapAvatarRoot == null || slotInvalid))
                 {
-                    if (CursorBtn(L10n.Get("controller.repath.scan"), Styles.IconBtn, GUILayout.Width(48)))
+                    if (CursorBtn(L10n.Get("controller.repath.scan"), Styles.IconBtn, GUILayout.Width(position.width * 0.25f)))
                     {
                         _clipScanResult = AnimatorClipRemapper.ScanBrokenPaths(ClipController, _clipRemapAvatarRoot);
                         _clipScanned = true;
@@ -532,13 +535,29 @@ namespace YGDR.Editor.Animation
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label(L10n.Get("controller.repath.from_path"), Styles.SmallLabel, GUILayout.Width(100));
+                GUILayout.Label(L10n.Get("controller.repath.from_path"), Styles.SmallLabel, GUILayout.Width(60));
                 _clipRemapFromPath = EditorGUILayout.TextField(_clipRemapFromPath);
+                EditorGUI.BeginChangeCheck();
+                var fromGO = (GameObject)EditorGUILayout.ObjectField(_clipRemapFromPathGO, typeof(GameObject), true, GUILayout.Width(160));
+                if (EditorGUI.EndChangeCheck())
+                {
+                    if (fromGO != null && _clipRemapAvatarRoot != null)
+                        _clipRemapFromPath = AnimationUtility.CalculateTransformPath(fromGO.transform, _clipRemapAvatarRoot.transform);
+                    _clipRemapFromPathGO = null;
+                }
             }
             using (new EditorGUILayout.HorizontalScope())
             {
-                GUILayout.Label(L10n.Get("controller.repath.to_path"), Styles.SmallLabel, GUILayout.Width(100));
+                GUILayout.Label(L10n.Get("controller.repath.to_path"), Styles.SmallLabel, GUILayout.Width(60));
                 _clipRemapToPath = EditorGUILayout.TextField(_clipRemapToPath);
+                EditorGUI.BeginChangeCheck();
+                var toGO = (GameObject)EditorGUILayout.ObjectField(_clipRemapToPathGO, typeof(GameObject), true, GUILayout.Width(160));
+                if (EditorGUI.EndChangeCheck())
+                {
+                    if (toGO != null && _clipRemapAvatarRoot != null)
+                        _clipRemapToPath = AnimationUtility.CalculateTransformPath(toGO.transform, _clipRemapAvatarRoot.transform);
+                    _clipRemapToPathGO = null;
+                }
             }
         }
 
@@ -931,7 +950,7 @@ namespace YGDR.Editor.Animation
                 {
                     if (HasInvalidTransition(state, paramNames))
                         _statesWithInvalidTransitions.Add(asset.GetInstanceID());
-                    if (state.motion == null)
+                    if (state.motion == null && !state.name.StartsWith("!"))
                         _statesWithNoMotion.Add(asset.GetInstanceID());
                 }
             }
@@ -939,7 +958,7 @@ namespace YGDR.Editor.Animation
             _emptySMIds = new HashSet<int>(
                 stateMachines
                     .OfType<AnimatorStateMachine>()
-                    .Where(sm => sm.states.Length == 0 && sm.stateMachines.Length == 0)
+                    .Where(sm => sm.states.Length == 0 && sm.stateMachines.Length == 0 && !sm.name.StartsWith("!"))
                     .Select(sm => sm.GetInstanceID()));
 
             _blendTreesWithEmptyMotion = new HashSet<int>(

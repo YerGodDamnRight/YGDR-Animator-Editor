@@ -299,6 +299,10 @@ namespace YGDR.Editor.Animation
                 padding   = new RectOffset(8, 0, 0, 0),
                 normal    = { textColor = EditorStyles.miniLabel.normal.textColor }
             };
+            internal static readonly GUIStyle BehaviorHeaderBtn = new(EditorStyles.miniButton)
+            {
+                margin = new RectOffset(4, 4, 3, 3)
+            };
             internal static readonly GUIStyle SectionPadded = new(GUIStyle.none)
             {
                 padding = new RectOffset(12, 12, 12, 12)
@@ -322,7 +326,8 @@ namespace YGDR.Editor.Animation
             internal static readonly GUIStyle SmallLabel = new(EditorStyles.label)
             {
                 alignment = TextAnchor.MiddleLeft,
-                fontSize = 11
+                fontSize  = 11,
+                padding   = new RectOffset(0, 0, 3, 3)
             };
             internal static readonly GUIStyle StateRowName = new(EditorStyles.boldLabel)
             {

@@ -991,11 +991,7 @@ namespace YGDR.Editor.Animation
                     var getActiveSM = AccessTools.Method(capturedGraphGUI.GetType(), "get_activeStateMachine");
                     var sm = getActiveSM?.Invoke(capturedGraphGUI, null) as AnimatorStateMachine;
                     if (sm == null) return;
-                    var controllerPath = AssetDatabase.GetAssetPath(sm);
-                    var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
-                    if (controller == null) return;
 
-                    var frameData = FrameLayoutData.GetOrCreate(controller);
                     Rect frameBounds;
                     if (FrameInteractionPatch.TryComputeSelectionBounds(capturedSelectedStates, capturedSelectedSubSMs, capturedSpecialNodePositions, out var fitBounds))
                         frameBounds = fitBounds;
@@ -1006,6 +1002,10 @@ namespace YGDR.Editor.Animation
                         frameBounds = new Rect(graphX, graphY, 300f, 200f);
                     }
 
+                    var controllerPath = AssetDatabase.GetAssetPath(sm);
+                    var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+                    if (controller == null) return;
+                    var frameData = FrameLayoutData.GetOrCreate(controller);
                     var newFrame = new FrameRect
                     {
                         title = "New Frame",

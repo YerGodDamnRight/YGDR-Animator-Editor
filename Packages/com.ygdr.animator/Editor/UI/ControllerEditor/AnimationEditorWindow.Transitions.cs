@@ -390,6 +390,13 @@ namespace YGDR.Editor.Animation
                 _cachedDuplicateParameters = new HashSet<(UnityEngine.Object, string)>(
                     _cachedEntries.GroupBy(entry => (entry.owner, entry.condition.parameter))
                                   .Where(group => group.Count() > 1)
+                                  .Where(group =>
+                                  {
+                                      var paramType = GetParamType(group.Key.Item2);
+                                      if (paramType != AnimatorControllerParameterType.Float) return true;
+                                      var thresholds = group.Select(e => e.condition.threshold).ToList();
+                                      return thresholds.Count != thresholds.Distinct().Count();
+                                  })
                                   .Select(group => group.Key));
                 _cachedForOwners = allOwners;
                 _cachedForSharedMode = _showSharedConditions;
@@ -567,15 +574,28 @@ namespace YGDR.Editor.Animation
                     }, preserveThreshold: true);
                 });
 
-            if (duplicateParameters.Contains((entry.owner, condition.parameter)))
+            var parameterType = GetParamType(condition.parameter);
+
+            bool showTypeIcons  = AnimatorDefaultSettings.Load().showParamTypeIcons;
+            bool isDuplicateParam = duplicateParameters.Contains((entry.owner, condition.parameter));
+            if (isDuplicateParam)
             {
+                const float duplicateIconOffsetNoTypeIcons = 30f;
+                float duplicateIconRightOffset = showTypeIcons
+                    ? parameterType switch
+                    {
+                        AnimatorControllerParameterType.Float   => 58f,
+                        AnimatorControllerParameterType.Bool    => 55f,
+                        AnimatorControllerParameterType.Int     => 45f,
+                        _                                       => 68f
+                    }
+                    : duplicateIconOffsetNoTypeIcons;
                 var duplicateIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.erroricon").image, L10n.Get("transitions.duplicate_param_tooltip"));
-                var duplicateIconRect = new Rect(parameterRect.xMax - 40, parameterRect.y, 16, parameterRect.height);
+                var duplicateIconRect    = new Rect(parameterRect.xMax - duplicateIconRightOffset, parameterRect.y, 16, parameterRect.height);
                 GUI.Label(duplicateIconRect, duplicateIconContent);
             }
 
-            var parameterType = GetParamType(condition.parameter);
-            if (Event.current.type == EventType.Repaint && AnimatorDefaultSettings.Load().showParamTypeIcons)
+            if (Event.current.type == EventType.Repaint && showTypeIcons)
                 GUI.Label(parameterRect, parameterType.ToString(), Styles.MiniLabelRight);
 
             if (parameterType == AnimatorControllerParameterType.Bool)

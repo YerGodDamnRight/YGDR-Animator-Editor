@@ -69,9 +69,6 @@ namespace YGDR.Editor.Animation
 
         static readonly List<FrameRect> _copiedFrames = new List<FrameRect>();
 
-        static MethodInfo _getActiveStateMachineMethod;
-        static AnimatorStateMachine _lastKnownActiveSM;
-
         internal static bool IsRenaming;
         static bool _renameJustStarted;
         static bool _renameFieldHadFocus;
@@ -86,22 +83,6 @@ namespace YGDR.Editor.Animation
         static void Prefix(object __instance)
         {
             _lastGraphGUI = __instance;
-
-            // Detect layer switch by resolving activeStateMachine directly from the GraphGUI instance.
-            // Zero-frame delay — does not depend on FrameRenderer's postfix having run yet.
-            _getActiveStateMachineMethod ??= AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
-            var currentActiveSM = _getActiveStateMachineMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-            if (currentActiveSM != _lastKnownActiveSM)
-            {
-                _lastKnownActiveSM    = currentActiveSM;
-                IsRenaming            = false;
-                IsPickingColor        = false;
-                IsEditingComments     = false;
-                CommentsTarget        = null;
-                ColorPickerTarget     = null;
-                GUIUtility.keyboardControl = 0;
-            }
-
             var frameData = FrameRenderer.LastFrameData;
             if (frameData == null) return;
 
@@ -255,7 +236,7 @@ namespace YGDR.Editor.Animation
             }
 
             // Ctrl+C — copy all selected
-            if (AnimatorDefaultSettings.Load().kbCopy.Matches(currentEvent)
+            if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.keyCode == KeyCode.C
                 && FrameRenderer.SelectedFrames.Count > 0)
             {
                 _copiedFrames.Clear();
@@ -265,7 +246,7 @@ namespace YGDR.Editor.Animation
             }
 
             // Ctrl+V — paste all copied, offset so top-left corner of group lands at cursor
-            if (AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent)
+            if (currentEvent.type == EventType.KeyDown && currentEvent.control && currentEvent.keyCode == KeyCode.V
                 && _copiedFrames.Count > 0)
             {
                 float minX = _copiedFrames.Min(frame => frame.bounds.x);
@@ -301,7 +282,7 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
-            // Rename — rename selected frame title
+            // F2 — rename selected frame title
             if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F2
                 && FrameRenderer.SingleSelected != null && !FrameRenderer.SingleSelected.locked)
             {
@@ -313,7 +294,7 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
-            // Edit comments on selected frame
+            // F3 — edit comments on selected frame
             if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F3
                 && FrameRenderer.SingleSelected != null && !FrameRenderer.SingleSelected.locked)
             {
@@ -380,7 +361,6 @@ namespace YGDR.Editor.Animation
 
             if (currentEvent.type != EventType.MouseDown) return;
 
-            PatchLayerListFocusHighlight._layerPanelActive = false;
             var mousePosition = currentEvent.mousePosition;
             bool isShift = currentEvent.shift;
 
@@ -443,8 +423,9 @@ namespace YGDR.Editor.Animation
                         new Rect(activeSM.anyStatePosition.x, activeSM.anyStatePosition.y, 160, 30).Contains(graphMouse) ||
                         new Rect(activeSM.entryPosition.x, activeSM.entryPosition.y, 160, 30).Contains(graphMouse) ||
                         new Rect(activeSM.exitPosition.x, activeSM.exitPosition.y, 160, 30).Contains(graphMouse));
+                    bool transitionAtMouse = activeSM != null && IsTransitionAtMouse(graphMouse, activeSM);
 
-                    if (!nodeAtMouse)
+                    if (!nodeAtMouse && !transitionAtMouse)
                     {
                         if (currentEvent.button == 1)
                         {
@@ -491,12 +472,12 @@ namespace YGDR.Editor.Animation
                             return;
                         }
                     }
-                    else
+                    else if (nodeAtMouse || transitionAtMouse)
                     {
                         FrameRenderer.SelectedFrames.Clear();
                         IsRenaming = false;
                     }
-                    return; // don't consume — let Unity handle node/empty click
+                    return; // don't consume — let Unity handle node/transition/empty click
                 }
             }
 
@@ -706,8 +687,8 @@ namespace YGDR.Editor.Animation
                 newBounds.yMin = Mathf.Round(newBounds.yMin / 10f) * 10f;
                 newBounds.xMax = Mathf.Round(newBounds.xMax / 10f) * 10f;
                 newBounds.yMax = Mathf.Round(newBounds.yMax / 10f) * 10f;
-                if (newBounds.width  < 110f) newBounds.xMax = newBounds.xMin + 110f;
-                if (newBounds.height < 70f) newBounds.yMax = newBounds.yMin + 70f;
+                if (newBounds.width < 120f) { if (_dragHandleIndex == 0 || _dragHandleIndex == 2 || _dragHandleIndex == 6) newBounds.xMin = newBounds.xMax - 120f; else newBounds.xMax = newBounds.xMin + 120f; }
+                if (newBounds.height < 80f) { if (_dragHandleIndex == 0 || _dragHandleIndex == 1 || _dragHandleIndex == 4) newBounds.yMin = newBounds.yMax - 80f; else newBounds.yMax = newBounds.yMin + 80f; }
                 frame.bounds = newBounds;
             }
         }
@@ -734,20 +715,18 @@ namespace YGDR.Editor.Animation
             Vector3[] specialNodePositions = null)
         {
             var menu = new GenericMenu();
-            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_rename")), false, () =>
+            menu.AddItem(new GUIContent("Rename"), false, () =>
             {
                 IsRenaming = true;
-                _renameJustStarted = true;
-                _renameFieldHadFocus = false;
                 RenameBuffer = frame.title;
             });
-            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_edit_comments")), false, () =>
+            menu.AddItem(new GUIContent("Edit Comments"), false, () =>
             {
                 IsEditingComments = true;
                 CommentsTarget = frame;
                 CommentsBuffer = frame.comments ?? "";
             });
-            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_color")), false, () =>
+            menu.AddItem(new GUIContent("Color"), false, () =>
             {
                 IsPickingColor = true;
                 ColorPickerTarget = frame;
@@ -758,11 +737,10 @@ namespace YGDR.Editor.Animation
                 .DefaultIfEmpty(-1)
                 .Max();
 
-            string zLayerPrefix = L10n.Get("context_menu.frame_zlayer");
             if (frame.zLayer > maxZLayerAmongOthers)
-                menu.AddDisabledItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_top")}"));
+                menu.AddDisabledItem(new GUIContent("Z-Layer/Move To Top"));
             else
-                menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_top")}"), false, () =>
+                menu.AddItem(new GUIContent("Z-Layer/Move To Top"), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer to Top");
                     frame.zLayer = maxZLayerAmongOthers + 1;
@@ -770,7 +748,7 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
 
-            menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_up")}"), false, () =>
+            menu.AddItem(new GUIContent("Z-Layer/Move Up"), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer Up");
                 frame.zLayer++;
@@ -779,7 +757,7 @@ namespace YGDR.Editor.Animation
             });
 
             if (frame.zLayer > 0)
-                menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_down")}"), false, () =>
+                menu.AddItem(new GUIContent("Z-Layer/Move Down"), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer Down");
                     frame.zLayer--;
@@ -787,10 +765,10 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
             else
-                menu.AddDisabledItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_down")}"));
+                menu.AddDisabledItem(new GUIContent("Z-Layer/Move Down"));
 
             if (frame.zLayer > 0)
-                menu.AddItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_bottom")}"), false, () =>
+                menu.AddItem(new GUIContent("Z-Layer/Move To Bottom"), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer to Bottom");
                     frame.zLayer = 0;
@@ -798,7 +776,7 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
             else
-                menu.AddDisabledItem(new GUIContent($"{zLayerPrefix}/{L10n.Get("context_menu.frame_zlayer_bottom")}"));
+                menu.AddDisabledItem(new GUIContent("Z-Layer/Move To Bottom"));
 
             selectedStates ??= Array.Empty<AnimatorState>();
             selectedSubSMs ??= Array.Empty<AnimatorStateMachine>();
@@ -807,18 +785,18 @@ namespace YGDR.Editor.Animation
 
             if (hasNodeSelection)
             {
-                menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_fit_selected")), false, () =>
+                menu.AddItem(new GUIContent("Fit to Selected"), false, () =>
                     FitFrameToSelected(frame, frameData, selectedStates, selectedSubSMs, specialNodePositions));
             }
 
-            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_move_nodes")), frame.moveNodesWithFrame, () =>
+            menu.AddItem(new GUIContent("Move Nodes with Frame"), frame.moveNodesWithFrame, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Toggle Move Nodes with Frame");
                 frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
                 EditorUtility.SetDirty(frameData);
             });
 
-            menu.AddItem(new GUIContent(frame.locked ? L10n.Get("context_menu.frame_unlock") : L10n.Get("context_menu.frame_lock")), false, () =>
+            menu.AddItem(new GUIContent(frame.locked ? "Unlock" : "Lock"), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Toggle Frame Lock");
                 frame.locked = !frame.locked;
@@ -826,9 +804,7 @@ namespace YGDR.Editor.Animation
             });
 
             int selectedCount = FrameRenderer.SelectedFrames.Count;
-            string deleteLabel = selectedCount > 1
-                ? string.Format(L10n.Get("context_menu.frame_delete_multi"), selectedCount)
-                : L10n.Get("context_menu.frame_delete");
+            string deleteLabel = selectedCount > 1 ? $"Delete ({selectedCount} frames)" : "Delete";
             menu.AddItem(new GUIContent(deleteLabel), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Delete Frame");
@@ -897,6 +873,75 @@ namespace YGDR.Editor.Animation
 
             bounds = new Rect(minX - padding, minY - padding, (maxX - minX) + padding * 2f, (maxY - minY) + padding * 2f);
             return true;
+        }
+
+        static bool IsTransitionAtMouse(Vector2 graphMouse, AnimatorStateMachine activeSM)
+        {
+            const float hitDistance = 10f;
+            const float nodeW = 200f, nodeH = 44f;
+            const float specialW = 160f, specialH = 30f;
+
+            Vector2 NodeCenter(Vector3 pos) => new Vector2(pos.x + nodeW * 0.5f, pos.y + nodeH * 0.5f);
+            Vector2 SpecialCenter(Vector3 pos) => new Vector2(pos.x + specialW * 0.5f, pos.y + specialH * 0.5f);
+
+            var stateCenters = new Dictionary<AnimatorState, Vector2>();
+            foreach (var childState in activeSM.states)
+                stateCenters[childState.state] = NodeCenter(childState.position);
+
+            var subSMCenters = new Dictionary<AnimatorStateMachine, Vector2>();
+            foreach (var childSM in activeSM.stateMachines)
+                subSMCenters[childSM.stateMachine] = NodeCenter(childSM.position);
+
+            var exitCenter = SpecialCenter(activeSM.exitPosition);
+            var anyStateCenter = SpecialCenter(activeSM.anyStatePosition);
+            var entryCenter = SpecialCenter(activeSM.entryPosition);
+
+            bool SegmentHit(Vector2 from, Vector2 to) =>
+                DistancePointToSegment(graphMouse, from, to) < hitDistance;
+
+            bool TryGetTransitionDest(AnimatorStateTransition transition, out Vector2 dest)
+            {
+                if (transition.destinationState != null && stateCenters.TryGetValue(transition.destinationState, out dest)) return true;
+                if (transition.destinationStateMachine != null && subSMCenters.TryGetValue(transition.destinationStateMachine, out dest)) return true;
+                if (transition.isExit) { dest = exitCenter; return true; }
+                dest = default;
+                return false;
+            }
+
+            foreach (var childState in activeSM.states)
+            {
+                var sourceCenter = stateCenters[childState.state];
+                foreach (var transition in childState.state.transitions)
+                    if (TryGetTransitionDest(transition, out var dest) && SegmentHit(sourceCenter, dest))
+                        return true;
+            }
+
+            foreach (var anyTransition in activeSM.anyStateTransitions)
+                if (TryGetTransitionDest(anyTransition, out var dest) && SegmentHit(anyStateCenter, dest))
+                    return true;
+
+            foreach (var entryTransition in activeSM.entryTransitions)
+            {
+                if (entryTransition.destinationState != null
+                    && stateCenters.TryGetValue(entryTransition.destinationState, out var dest)
+                    && SegmentHit(entryCenter, dest))
+                    return true;
+                if (entryTransition.destinationStateMachine != null
+                    && subSMCenters.TryGetValue(entryTransition.destinationStateMachine, out dest)
+                    && SegmentHit(entryCenter, dest))
+                    return true;
+            }
+
+            return false;
+        }
+
+        static float DistancePointToSegment(Vector2 point, Vector2 segA, Vector2 segB)
+        {
+            var ab = segB - segA;
+            float sqrLen = ab.sqrMagnitude;
+            if (sqrLen < 0.0001f) return (point - segA).magnitude;
+            float t = Mathf.Clamp01(Vector2.Dot(point - segA, ab) / sqrLen);
+            return (point - (segA + t * ab)).magnitude;
         }
 
         static void FitFrameToSelected(FrameRect frame, FrameLayoutData frameData,

@@ -44,12 +44,12 @@ namespace YGDR.Editor.Animation
                 GUILayout.Label(L10n.Get("vrc.param_driver"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
                 bool hasAnyParams = _selectedStates.Any(state => { var driver = GetDriverForState(state); return driver != null && driver.parameters.Count > 0; });
-                if (!hasAnyParams && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!hasAnyParams && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     AddDriverParam();
                     anyHave = true;
                 }
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemoveDriverFromAll();
                     anyHave = false;
@@ -848,10 +848,10 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
             {
                 GUILayout.Label(L10n.Get("vrc.audio"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                     foreach (var state in _selectedStates)
                         GetOrCreateAudio(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemoveAudioFromAll();
                     anyHave = false;
@@ -1295,10 +1295,10 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
             {
                 GUILayout.Label(L10n.Get("vrc.tracking"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                     foreach (var state in _selectedStates)
                         GetOrCreateTracking(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemoveTrackingFromAll();
                     anyHave = false;
@@ -1530,10 +1530,10 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
             {
                 GUILayout.Label(L10n.Get("vrc.locomotion"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                     foreach (var state in _selectedStates)
                         GetOrCreateLocomotion(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemoveLocomotionFromAll();
                     anyHave = false;
@@ -1640,10 +1640,10 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
             {
                 GUILayout.Label(L10n.Get("vrc.layer_control"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                     foreach (var state in _selectedStates)
                         GetOrCreateLayerControl(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemoveLayerControlFromAll();
                     anyHave = false;
@@ -1810,10 +1810,10 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
             {
                 GUILayout.Label(L10n.Get("vrc.playable_layer"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                     foreach (var state in _selectedStates)
                         GetOrCreatePlayableLayer(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemovePlayableLayerFromAll();
                     anyHave = false;
@@ -1961,10 +1961,10 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
             {
                 GUILayout.Label(L10n.Get("vrc.pose_space"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
                 GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                     foreach (var state in _selectedStates)
                         GetOrCreatePoseSpace(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), EditorStyles.miniButton, GUILayout.Width(125), GUILayout.Height(24)))
+                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
                 {
                     RemovePoseSpaceFromAll();
                     anyHave = false;

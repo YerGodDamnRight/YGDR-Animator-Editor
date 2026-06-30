@@ -19,10 +19,13 @@
 
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using UnityEditor;
+using UnityEditor.Animations;
+using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 #if VRC_SDK_VRCSDK3
 using VRC.SDK3.Avatars.Components;
@@ -164,18 +167,153 @@ namespace YGDR.Editor.Animation
         }
     }
 
-    // DoClipPopup has no clickCount guard — double-click fires DisplayClipMenu twice, causing nested menu
+    // Replaces the clip popup OnGUI with a searchable AdvancedDropdown backed by controller clips.
     [HarmonyPatch]
-    internal static class PatchClipMenuDoubleClickGuard
+    internal static class PatchClipMenuAdvancedDropdown
     {
+        static AnimatorController  _cachedController;
+        static List<AnimationClip> _cachedClips;
+
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() =>
-            AccessTools.Method(WindowPatchReflection.AnimationWindowClipPopupType, "DisplayClipMenu");
+            AccessTools.Method(WindowPatchReflection.AnimationWindowClipPopupType, "OnGUI");
 
         [HarmonyPrefix]
-        static bool Prefix() =>
-            !AnimatorDefaultSettings.Load().clipMenuNestingEnabled ||
-            Event.current.type != EventType.MouseDown || Event.current.clickCount <= 1;
+        static bool Prefix()
+        {
+            if (!AnimatorDefaultSettings.Load().clipMenuNestingEnabled) return true;
+
+            var animWindow = Resources.FindObjectsOfTypeAll<AnimationWindow>().FirstOrDefault();
+            if (animWindow == null) return true;
+
+            var controller = WindowPatchReflection.GetOpenController();
+            if (controller == null) return true;
+
+            if (_cachedController != controller)
+            {
+                _cachedController = controller;
+                _cachedClips      = CollectClips(controller);
+            }
+
+            var activeClip = Traverse.Create(animWindow)
+                .Property("state").Property("activeAnimationClip").GetValue<AnimationClip>();
+            string label = activeClip != null ? activeClip.name : "None";
+
+            var rect        = GUILayoutUtility.GetRect(205f, EditorGUIUtility.singleLineHeight, EditorStyles.toolbarPopup);
+            var capturedWin = animWindow;
+            if (EditorGUI.DropdownButton(rect, new GUIContent(label), FocusType.Passive, EditorStyles.toolbarPopup))
+                new ClipMenuDropdown(_cachedClips, activeClip, clip =>
+                {
+                    try { WindowPatchReflection.AnimationWindowEditAnimationClipMethod?.Invoke(capturedWin, new object[] { clip }); }
+                    catch (Exception e) { Debug.LogError($"[AnimatorTools] ClipMenuDropdown select: {e}"); }
+                }).ShowDropdown(rect);
+
+            return false;
+        }
+
+        static List<AnimationClip> CollectClips(AnimatorController controller)
+        {
+            var set = new HashSet<AnimationClip>();
+            foreach (var layer in controller.layers)
+                CollectFromSM(layer.stateMachine, set);
+            return set.OrderBy(c => c.name).ToList();
+        }
+
+        static void CollectFromSM(AnimatorStateMachine sm, HashSet<AnimationClip> set)
+        {
+            foreach (var s in sm.states)        CollectFromMotion(s.state.motion, set);
+            foreach (var s in sm.stateMachines) CollectFromSM(s.stateMachine, set);
+        }
+
+        static void CollectFromMotion(Motion motion, HashSet<AnimationClip> set)
+        {
+            if (motion is AnimationClip c && c != null) set.Add(c);
+            else if (motion is BlendTree bt)
+                foreach (var ch in bt.children) CollectFromMotion(ch.motion, set);
+        }
+    }
+
+    internal class ClipMenuDropdown : AdvancedDropdown
+    {
+        static readonly PropertyInfo MaximumSizeProperty = AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
+        static readonly FieldInfo    DataSourceField     = AccessTools.Field(typeof(AdvancedDropdown), "m_DataSource");
+        static readonly FieldInfo    ItemIdField         = AccessTools.Field(typeof(AdvancedDropdownItem), "m_Id");
+        static FieldInfo _selectedIDsField;
+
+        readonly List<AnimationClip>   _clips;
+        readonly AnimationClip         _currentClip;
+        readonly Action<AnimationClip> _onSelected;
+        ClipItem                       _currentItem;
+
+        internal ClipMenuDropdown(List<AnimationClip> clips, AnimationClip currentClip, Action<AnimationClip> onSelected)
+            : base(new AdvancedDropdownState())
+        {
+            _clips       = clips;
+            _currentClip = currentClip;
+            _onSelected  = onSelected;
+            minimumSize  = new Vector2(220, 150);
+        }
+
+        internal void ShowDropdown(Rect rect)
+        {
+            MaximumSizeProperty?.SetValue(this, new Vector2(10000f, 500f));
+            Show(rect);
+
+            if (_currentItem == null || ItemIdField == null || DataSourceField == null) return;
+            try
+            {
+                var dataSource = DataSourceField.GetValue(this);
+                if (dataSource == null) return;
+                _selectedIDsField ??= AccessTools.Field(dataSource.GetType(), "m_SelectedIDs");
+                if (_selectedIDsField == null) return;
+                var selectedIDs = (List<int>)_selectedIDsField.GetValue(dataSource);
+                selectedIDs.Clear();
+                selectedIDs.Add((int)ItemIdField.GetValue(_currentItem));
+            }
+            catch (Exception) { }
+        }
+
+        protected override AdvancedDropdownItem BuildRoot()
+        {
+            _currentItem = null;
+            var root   = new AdvancedDropdownItem("Clips");
+            var groups = new Dictionary<string, AdvancedDropdownItem>();
+
+            foreach (var clip in _clips)
+            {
+                var parts  = clip.name.Replace('.', '/').Split('/');
+                var parent = root;
+
+                for (int i = 0; i < parts.Length - 1; i++)
+                {
+                    var key = string.Join("/", parts[..(i + 1)]);
+                    if (!groups.TryGetValue(key, out var group))
+                    {
+                        group = new AdvancedDropdownItem(parts[i]);
+                        parent.AddChild(group);
+                        groups[key] = group;
+                    }
+                    parent = group;
+                }
+
+                var item = new ClipItem(parts[^1], clip);
+                if (clip == _currentClip) _currentItem = item;
+                parent.AddChild(item);
+            }
+
+            return root;
+        }
+
+        protected override void ItemSelected(AdvancedDropdownItem item)
+        {
+            if (item is ClipItem ci) _onSelected?.Invoke(ci.Clip);
+        }
+
+        class ClipItem : AdvancedDropdownItem
+        {
+            internal readonly AnimationClip Clip;
+            internal ClipItem(string name, AnimationClip clip) : base(name) => Clip = clip;
+        }
     }
 
     internal static class HierarchyContextMenu

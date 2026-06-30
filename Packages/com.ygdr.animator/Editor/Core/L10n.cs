@@ -110,6 +110,11 @@ namespace YGDR.Editor.Animation
             ["transitions.can_transition_to_self"] = "Can Transition To Self",
             ["transitions.solo"]                   = "Solo",
             // Conditions
+            ["transitions.tooltip.toggle_conditions"] = "Toggle All / Shared Conditions",
+            ["transitions.tooltip.switch_modes"]      = "Switch Condition Modes",
+            ["transitions.tooltip.merge"]             = "Merge Transitions",
+            ["transitions.tooltip.separate"]          = "Separate Transitions",
+
             ["transitions.shared_conditions"] = "Shared Conditions",
             ["transitions.all_conditions"]    = "All Conditions",
             ["transitions.conditions_empty"]  = "List is Empty",
@@ -275,7 +280,7 @@ namespace YGDR.Editor.Animation
             ["controller.network.no_window"]          = "No animator window open",
             ["controller.network.no_vrcsdk"]          = "Network Sync not available without VRCSDK",
             // Clip Remapper
-            ["controller.repath.avatar_root"]      = "Avatar Root",
+            ["controller.repath.avatar_root"]      = "Avatar",
             ["controller.repath.scan"]             = "Scan",
             ["controller.repath.auto_on"]          = "Auto-Repath: On",
             ["controller.repath.auto_off"]         = "Auto-Repath: Off",
@@ -285,6 +290,10 @@ namespace YGDR.Editor.Animation
             ["controller.repath.to_path"]          = "To Path",
             ["controller.repath.remap_selected"]   = "Remap Selected",
             ["controller.repath.remap_clips"]      = "Remap Clips",
+            ["controller.repath.confirm_title"]    = "Enable Auto-Repath",
+            ["controller.repath.confirm_body"]     = "Auto-Repath automatically rewrites animation clip binding paths when a bone or GameObject is renamed or moved in the hierarchy. \n\nChanges are applied immediately and cannot be reliably undone. Ensure your project is backed up before enabling this. \n\nEnable Auto-Repath?",
+            ["controller.repath.confirm_ok"]       = "Activate",
+            ["controller.repath.confirm_cancel"]   = "Cancel",
             // Sub-Assets
             ["controller.subassets.state_machines"]         = "State Machines",
             ["controller.subassets.states"]                 = "States",
@@ -358,6 +367,7 @@ namespace YGDR.Editor.Animation
             ["params_menu.rename_sibling_param"]  = "parameter",
             ["params_menu.rename_sibling_params"] = "parameters",
             ["params_menu.rename_sibling_ok"]     = "Rename All",
+            ["params_menu.rename_sibling_cancel"] = "Cancel",
             ["params_menu.rename_sibling_skip"]   = "Skip",
 
             // ── Layer template ────────────────────────────────────────────────────
@@ -489,6 +499,7 @@ namespace YGDR.Editor.Animation
             ["settings.kb.select_all_transitions"] = "Select All Transitions",
             ["settings.kb.copy"]                   = "Copy",
             ["settings.kb.paste"]                  = "Paste",
+            ["settings.kb.duplicate"]              = "Duplicate",
             ["settings.kb.chain_mode"]             = "Chain Mode",
             ["settings.kb.fan_mode"]               = "Fan Mode",
             ["settings.kb.multi_transition"]       = "Multi Transition",
@@ -528,6 +539,11 @@ namespace YGDR.Editor.Animation
             ["settings.misc.tt.parameter_view"]    = "Turn off if the parameter panel crashes or conflicts with another tool.",
             ["settings.misc.tt.blend_tree"]        = "Turn off if blend trees crash or conflict with another tool.",
             ["settings.misc.tt.bottom_bar"]        = "Turn off if the bottom bar crashes or conflicts with another tool.",
+            ["settings.misc.palettes"]             = "Color Palettes",
+            ["settings.misc.save_palette"]         = "Save Current Palette",
+            ["settings.misc.apply_palette"]        = "Apply Palette",
+            ["settings.misc.copy_palette"]         = "Copy",
+            ["settings.misc.palette_import_hint"]  = "Paste palette code…",
             ["settings.misc.color_tags"]           = "Color Tags",
             ["settings.misc.add_color_tag"]        = "+ Add Tag",
 
@@ -564,6 +580,9 @@ namespace YGDR.Editor.Animation
             ["toggle.bind.renderer"]   = "Renderer",
             ["toggle.bind.particle"]   = "Particle",
             ["toggle.bind.audio"]      = "Audio",
+            ["toggle.bind.light"]      = "Light",
+            ["toggle.bind.physbone"]   = "PhysBone",
+            ["toggle.bind.blendshape"] = "Blendshape",
             ["toggle.create"]          = "Create",
 
             // ── Find Usage window ─────────────────────────────────────────────────

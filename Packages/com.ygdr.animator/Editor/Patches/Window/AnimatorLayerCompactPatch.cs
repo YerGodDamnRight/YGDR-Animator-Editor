@@ -146,8 +146,7 @@ namespace YGDR.Editor.Animation
                             : PatchLayerWDIndicator.GetOrComputeWD(stateMachine, wdSettings.wdIncludeBlendTreeStates);
                         bool showWD = !isEmpty && wdOn > 0;
 
-                        var controller = WindowPatchReflection.GetOpenController();
-                        bool hasFrameData = controller != null && PatchLayerWDIndicator.HasFrameData(stateMachine, controller);
+                        bool hasFrameData = PatchLayerWDIndicator.HasFrameData(stateMachine);
 
                         var wdStyle = PatchLayerWDIndicator.LabelStyle;
                         float cursorX = settingsRect.xMin - 4f;

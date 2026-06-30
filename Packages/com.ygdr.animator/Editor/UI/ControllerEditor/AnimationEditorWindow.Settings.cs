@@ -37,6 +37,7 @@ namespace YGDR.Editor.Animation
         bool _miscOpen;
         bool _keybindsOpen;
         string _recordingActionId;
+        string _paletteImportText = "";
 
         void DrawSettingsTab()
         {
@@ -342,24 +343,14 @@ namespace YGDR.Editor.Animation
                 EditorGUI.DrawRect(bodyRect, Styles.PrimaryColor);
             using (new EditorGUI.DisabledScope(!settings.transitionOverlayEnabled))
             {
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUI.BeginChangeCheck();
-                    bool showLabel = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.labels"), settings.transitionShowLabel, GUILayout.Width(60));
-                    if (EditorGUI.EndChangeCheck()) { settings.transitionShowLabel = showLabel; settings.Save(); }
-                    GUILayout.Space(6);
-                    EditorGUI.BeginChangeCheck();
-                    bool selectionColor = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.selection_colors"), settings.transitionSelectionColorEnabled, GUILayout.Width(120));
-                    if (EditorGUI.EndChangeCheck()) { settings.transitionSelectionColorEnabled = selectionColor; settings.Save(); }
-                    GUILayout.Space(6);
-                    EditorGUI.BeginChangeCheck();
-                    bool arrows = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.indicator_arrows"), settings.transitionIndicatorArrowsEnabled, GUILayout.Width(115));
-                    if (EditorGUI.EndChangeCheck()) { settings.transitionIndicatorArrowsEnabled = arrows; settings.Save(); }
-                    GUILayout.Space(6);
-                    EditorGUI.BeginChangeCheck();
-                    bool animate = EditorGUILayout.ToggleLeft(L10n.Get("settings.trans_overlay.animate"), settings.transitionAnimateSelected, GUILayout.Width(72));
-                    if (EditorGUI.EndChangeCheck()) { settings.transitionAnimateSelected = animate; settings.Save(); }
-                }
+                float transLineHeight = EditorGUIUtility.singleLineHeight;
+                var transToggleRowRect = EditorGUILayout.GetControlRect(false, transLineHeight);
+                float transColWidth = transToggleRowRect.width / 4f;
+
+                DrawOverlayToggle(new Rect(transToggleRowRect.x + 0 * transColWidth, transToggleRowRect.y, transColWidth, transLineHeight), L10n.Get("settings.trans_overlay.labels"),           ref settings.transitionShowLabel,               settings);
+                DrawOverlayToggle(new Rect(transToggleRowRect.x + 1 * transColWidth, transToggleRowRect.y, transColWidth, transLineHeight), L10n.Get("settings.trans_overlay.selection_colors"), ref settings.transitionSelectionColorEnabled,    settings);
+                DrawOverlayToggle(new Rect(transToggleRowRect.x + 2 * transColWidth, transToggleRowRect.y, transColWidth, transLineHeight), L10n.Get("settings.trans_overlay.indicator_arrows"), ref settings.transitionIndicatorArrowsEnabled,   settings);
+                DrawOverlayToggle(new Rect(transToggleRowRect.x + 3 * transColWidth, transToggleRowRect.y, transColWidth, transLineHeight), L10n.Get("settings.trans_overlay.animate"),          ref settings.transitionAnimateSelected,          settings);
 
                 DrawNodeColorRow(L10n.Get("settings.trans_overlay.transition_line"), ref settings.transitionOverlayColor,         new Color(1.0f, 1.0f, 1.0f, 1.0f), settings);
 
@@ -740,6 +731,120 @@ namespace YGDR.Editor.Animation
             DrawOverlayToggle(new Rect(miscRow2Rect.x + 3 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.frames"),            ref settings.framesEnabled,              settings);
 
             EditorGUILayout.Space(6);
+            EditorGUILayout.LabelField(L10n.Get("settings.misc.palettes"), EditorStyles.boldLabel);
+
+            var savePaletteBtnRect = GUILayoutUtility.GetRect(0, EditorGUIUtility.singleLineHeight, GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.Repaint)
+            {
+                bool hovered = savePaletteBtnRect.Contains(Event.current.mousePosition);
+                var accent = Styles.AccentColor;
+                EditorGUI.DrawRect(savePaletteBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                GUI.Label(savePaletteBtnRect, L10n.Get("settings.misc.save_palette"), BindingBtnLabelStyle);
+            }
+            EditorGUIUtility.AddCursorRect(savePaletteBtnRect, MouseCursor.Link);
+            if (GUI.Button(savePaletteBtnRect, GUIContent.none, GUIStyle.none))
+            {
+                settings.savedPalettes.Add(new AnimatorPalette { encodedColors = AnimatorDefaultSettings.EncodePalette(AnimatorDefaultSettings.CapturePaletteColors(settings)) });
+                settings.Save();
+                GUIUtility.ExitGUI();
+            }
+
+            float paletteSlotLineHeight  = EditorGUIUtility.singleLineHeight;
+            float paletteButtonSize      = paletteSlotLineHeight;
+            float paletteActionBtnWidth  = paletteSlotLineHeight * 6f;
+            float paletteSwatchGap       = EditorGUIUtility.standardVerticalSpacing * 2f;
+            for (int i = 0; i < settings.savedPalettes.Count; i++)
+            {
+                var slotRowRect   = EditorGUILayout.GetControlRect(false, paletteSlotLineHeight);
+                float nameWidth   = slotRowRect.width * 0.25f;
+
+                var deleteBtnRect   = new Rect(slotRowRect.xMax - paletteButtonSize, slotRowRect.y, paletteButtonSize, paletteSlotLineHeight);
+                var copyBtnRect     = new Rect(deleteBtnRect.x - paletteActionBtnWidth, slotRowRect.y, paletteActionBtnWidth, paletteSlotLineHeight);
+                var nameFieldRect   = new Rect(slotRowRect.x, slotRowRect.y, nameWidth, paletteSlotLineHeight);
+                var swatchBlockRect = new Rect(nameFieldRect.xMax + 2f, slotRowRect.y, copyBtnRect.x - nameFieldRect.xMax - 2f - paletteSwatchGap, paletteSlotLineHeight);
+
+                EditorGUI.BeginChangeCheck();
+                settings.savedPalettes[i].slotName = EditorGUI.TextField(nameFieldRect, settings.savedPalettes[i].slotName);
+                if (EditorGUI.EndChangeCheck()) settings.Save();
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    if (AnimatorDefaultSettings.TryDecodePalette(settings.savedPalettes[i].encodedColors, out var previewColors))
+                    {
+                        float swatchCellWidth = swatchBlockRect.width / AnimatorDefaultSettings.PaletteColorCount;
+                        for (int j = 0; j < AnimatorDefaultSettings.PaletteColorCount; j++)
+                            EditorGUI.DrawRect(new Rect(swatchBlockRect.x + j * swatchCellWidth, swatchBlockRect.y, swatchCellWidth, swatchBlockRect.height), previewColors[j]);
+                    }
+                    else
+                    {
+                        EditorGUI.DrawRect(swatchBlockRect, new Color(0.3f, 0.3f, 0.3f, 1f));
+                    }
+                }
+                EditorGUIUtility.AddCursorRect(swatchBlockRect, MouseCursor.Link);
+                if (GUI.Button(swatchBlockRect, GUIContent.none, GUIStyle.none))
+                {
+                    if (AnimatorDefaultSettings.TryDecodePalette(settings.savedPalettes[i].encodedColors, out var applyColors))
+                    {
+                        AnimatorDefaultSettings.ApplyPaletteColors(settings, applyColors);
+                        Styles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
+                        settings.Save();
+                    }
+                }
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    bool hovered = copyBtnRect.Contains(Event.current.mousePosition);
+                    var accent = Styles.AccentColor;
+                    EditorGUI.DrawRect(copyBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                    GUI.Label(copyBtnRect, L10n.Get("settings.misc.copy_palette"), BindingBtnLabelStyle);
+                }
+                EditorGUIUtility.AddCursorRect(copyBtnRect, MouseCursor.Link);
+                if (GUI.Button(copyBtnRect, GUIContent.none, GUIStyle.none))
+                    EditorGUIUtility.systemCopyBuffer = settings.savedPalettes[i].encodedColors;
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    bool hovered = deleteBtnRect.Contains(Event.current.mousePosition);
+                    var accent = Styles.AccentColor;
+                    EditorGUI.DrawRect(deleteBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                    GUI.Label(deleteBtnRect, "−", BindingBtnLabelStyle);
+                }
+                EditorGUIUtility.AddCursorRect(deleteBtnRect, MouseCursor.Link);
+                if (GUI.Button(deleteBtnRect, GUIContent.none, GUIStyle.none))
+                {
+                    settings.savedPalettes.RemoveAt(i);
+                    settings.Save();
+                    GUIUtility.ExitGUI();
+                }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                _paletteImportText = EditorGUILayout.TextField(_paletteImportText, GUILayout.ExpandWidth(true));
+                var applyPaletteBtnRect = GUILayoutUtility.GetRect(paletteActionBtnWidth, EditorGUIUtility.singleLineHeight, GUILayout.Width(paletteActionBtnWidth));
+                if (Event.current.type == EventType.Repaint)
+                {
+                    bool hovered = applyPaletteBtnRect.Contains(Event.current.mousePosition);
+                    var accent = Styles.AccentColor;
+                    EditorGUI.DrawRect(applyPaletteBtnRect, hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent);
+                    GUI.Label(applyPaletteBtnRect, L10n.Get("settings.misc.apply_palette"), BindingBtnLabelStyle);
+                }
+                EditorGUIUtility.AddCursorRect(applyPaletteBtnRect, MouseCursor.Link);
+                if (GUI.Button(applyPaletteBtnRect, GUIContent.none, GUIStyle.none))
+                {
+                    if (AnimatorDefaultSettings.TryDecodePalette(_paletteImportText, out var importedColors))
+                    {
+                        AnimatorDefaultSettings.ApplyPaletteColors(settings, importedColors);
+                        Styles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
+                        settings.Save();
+                        _paletteImportText = "";
+                        GUI.FocusControl(null);
+                    }
+                }
+                GUILayout.Space(paletteButtonSize);
+            }
+
+            EditorGUILayout.Space(6);
             EditorGUILayout.LabelField(L10n.Get("settings.misc.color_tags"), EditorStyles.boldLabel);
             for (int i = 0; i < settings.colorTags.Count; i++)
             {
@@ -872,6 +977,7 @@ namespace YGDR.Editor.Animation
             GUILayout.Space(8f);
 
             EditorGUILayout.BeginVertical();
+            DrawBindingRow(L10n.Get("settings.kb.duplicate"),           "kbDuplicate",          settings.kbDuplicate,          settings, 125, 85);
             DrawBindingRow(L10n.Get("settings.kb.chain_mode"),          "kbChainMode",          settings.kbChainMode,          settings, 125, 85);
             DrawBindingRow(L10n.Get("settings.kb.fan_mode"),            "kbFanMode",            settings.kbFanMode,            settings, 125, 85);
             DrawBindingRow(L10n.Get("settings.kb.multi_transition"),    "kbMultiTransition",    settings.kbMultiTransition,    settings, 125, 85);
@@ -964,6 +1070,7 @@ namespace YGDR.Editor.Animation
                 case "kbSelectAllTransitions": settings.kbSelectAllTransitions = binding; break;
                 case "kbCopy":                 settings.kbCopy                 = binding; break;
                 case "kbPaste":                settings.kbPaste                = binding; break;
+                case "kbDuplicate":            settings.kbDuplicate            = binding; break;
                 case "kbChainMode":            settings.kbChainMode            = binding; break;
                 case "kbFanMode":              settings.kbFanMode              = binding; break;
                 case "kbMultiTransition":      settings.kbMultiTransition      = binding; break;
@@ -989,6 +1096,7 @@ namespace YGDR.Editor.Animation
             "kbSelectAllTransitions" => defaults.kbSelectAllTransitions,
             "kbCopy"                 => defaults.kbCopy,
             "kbPaste"                => defaults.kbPaste,
+            "kbDuplicate"            => defaults.kbDuplicate,
             "kbChainMode"            => defaults.kbChainMode,
             "kbFanMode"              => defaults.kbFanMode,
             "kbMultiTransition"      => defaults.kbMultiTransition,

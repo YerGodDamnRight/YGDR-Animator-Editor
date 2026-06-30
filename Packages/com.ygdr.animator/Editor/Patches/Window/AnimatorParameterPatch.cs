@@ -300,6 +300,9 @@ namespace YGDR.Editor.Animation
         {
             try
             {
+                if (Event.current.type == EventType.Repaint && focused)
+                    PatchParameterContextMenu._hasFocus = true;
+
                 var parameter = Traverse.Create(__instance).Field("m_Parameter").GetValue<UnityEngine.AnimatorControllerParameter>();
                 if (parameter == null) return;
 
@@ -582,6 +585,37 @@ namespace YGDR.Editor.Animation
     [HarmonyPriority(Priority.Low)]
     internal static class PatchParameterContextMenu
     {
+        static AnimatorControllerParameter _parameterClipboard;
+        internal static bool _hasFocus;
+
+        static void PasteParameter(object instance, AnimatorController controller, string selectedParamName)
+        {
+            if (_parameterClipboard == null) return;
+            var existingNames = new HashSet<string>(controller.parameters.Select(p => p.name));
+            string uniqueName = _parameterClipboard.name;
+            int counter = 1;
+            while (existingNames.Contains(uniqueName))
+                uniqueName = $"{_parameterClipboard.name} {counter++}";
+
+            int actualIndex = Array.FindIndex(controller.parameters, p => p.name == selectedParamName);
+            int insertIndex = actualIndex >= 0 ? actualIndex + 1 : controller.parameters.Length;
+
+            AnimatorParameterOps.InsertParameterAtIndex(controller, insertIndex, uniqueName, _parameterClipboard.type);
+
+            var allParams = controller.parameters;
+            if (insertIndex < allParams.Length && allParams[insertIndex].name == uniqueName)
+            {
+                allParams[insertIndex].defaultFloat = _parameterClipboard.defaultFloat;
+                allParams[insertIndex].defaultInt   = _parameterClipboard.defaultInt;
+                allParams[insertIndex].defaultBool  = _parameterClipboard.defaultBool;
+                controller.parameters = allParams;
+            }
+            EditorUtility.SetDirty(controller);
+
+            WindowPatchReflection.ParameterRebuildListMethod?.Invoke(instance, null);
+            var paramList = PatchParameterAddMenu.ParamListField?.GetValue(instance) as UnityEditorInternal.ReorderableList;
+            if (paramList != null) paramList.index = insertIndex;
+        }
         internal static readonly (string category, string name, AnimatorControllerParameterType type)[] VrcParameters =
         {
             ("Local",    "IsLocal",              AnimatorControllerParameterType.Bool),
@@ -636,14 +670,20 @@ namespace YGDR.Editor.Animation
                     for (int j = 0; j < newNames.Length; j++)
                     {
                         if (newNames[j] == oldNames[j]) continue;
-                        AnimatorParameterOps.RemapParameterReferences(controller, oldNames[j], newNames[j]);
+                        bool shouldRemap = true;
 #if VRC_SDK_VRCSDK3
-                        if (PatchParameterRow.GetVrcComponentUsedParams().Contains(oldNames[j]))
-                            AnimatorFindUsageWindow.RemapVrcComponentParameters(oldNames[j], newNames[j]);
                         if (!_isProcessingSiblingRenames)
-                            TryRenameSiblingVariants(controller, newNames, oldNames[j], newNames[j]);
+                            shouldRemap = TryRenameSiblingVariants(controller, newNames, oldNames[j], newNames[j]);
 #endif
-                        EditorUtility.SetDirty(controller);
+                        if (shouldRemap)
+                        {
+                            AnimatorParameterOps.RemapParameterReferences(controller, oldNames[j], newNames[j]);
+#if VRC_SDK_VRCSDK3
+                            if (PatchParameterRow.GetVrcComponentUsedParams().Contains(oldNames[j]))
+                                AnimatorFindUsageWindow.RemapVrcComponentParameters(oldNames[j], newNames[j]);
+#endif
+                            EditorUtility.SetDirty(controller);
+                        }
                     }
                     _paramNameCache[controller.GetInstanceID()] = newNames;
                 }
@@ -672,8 +712,47 @@ namespace YGDR.Editor.Animation
             if (viewController != null && !_paramNameCache.ContainsKey(viewController.GetInstanceID()))
                 _paramNameCache[viewController.GetInstanceID()] = viewController.parameters.Select(parameter => parameter.name).ToArray();
 
-            if (!AnimatorDefaultSettings.Load().parameterAddMenuEnabled) return;
             var currentEvent = Event.current;
+            if (currentEvent.type == EventType.Repaint)
+                _hasFocus = false;
+
+            if (currentEvent.type == EventType.KeyDown && viewController != null && _hasFocus)
+            {
+                var kbReorderableList = FindParamList(__instance);
+                if (kbReorderableList != null && kbReorderableList.index >= 0)
+                {
+                    var kbListItem = kbReorderableList.index < kbReorderableList.list.Count
+                        ? kbReorderableList.list[kbReorderableList.index] : null;
+                    var kbParam = kbListItem != null
+                        ? Traverse.Create(kbListItem).Field("m_Parameter").GetValue<AnimatorControllerParameter>()
+                        : null;
+                    if (kbParam != null)
+                    {
+                        var kbSettings = AnimatorDefaultSettings.Load();
+                        if (kbSettings.kbCopy.Matches(currentEvent))
+                        {
+                            _parameterClipboard = kbParam;
+                            currentEvent.Use();
+                            return;
+                        }
+                        if (kbSettings.kbPaste.Matches(currentEvent) && _parameterClipboard != null)
+                        {
+                            PasteParameter(__instance, viewController, kbParam.name);
+                            currentEvent.Use();
+                            return;
+                        }
+                        if (kbSettings.kbDuplicate.Matches(currentEvent))
+                        {
+                            _parameterClipboard = kbParam;
+                            PasteParameter(__instance, viewController, kbParam.name);
+                            currentEvent.Use();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            if (!AnimatorDefaultSettings.Load().parameterAddMenuEnabled) return;
             if (currentEvent.type != EventType.MouseUp || currentEvent.button != 1) return;
 
             var reorderableList = FindParamList(__instance);
@@ -822,7 +901,7 @@ namespace YGDR.Editor.Animation
             {
                 var (remapController, fromParamName, screenPos) = ((AnimatorController, string, Vector2))data;
                 EditorApplication.delayCall += () =>
-                    new ParameterRemapDropdown(remapController, fromParamName).Show(new Rect(screenPos, Vector2.zero));
+                    new ParameterRemapDropdown(remapController, fromParamName).ShowCapped(new Rect(screenPos, Vector2.zero));
             }, (capturedFindController, capturedFindParameter.name, capturedScreenPos));
             menu.AddItem(new GUIContent(L10n.Get("params_menu.delete_and_clean")), false, static data =>
             {
@@ -842,7 +921,7 @@ namespace YGDR.Editor.Animation
             catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchParameterContextMenu.Prefix: {e}"); }
         }
 
-        static void TryRenameSiblingVariants(AnimatorController controller, string[] newNames, string oldName, string newName)
+        static bool TryRenameSiblingVariants(AnimatorController controller, string[] newNames, string oldName, string newName)
         {
 #if VRC_SDK_VRCSDK3
             string[] suffixes = null;
@@ -872,7 +951,7 @@ namespace YGDR.Editor.Animation
                     }
                 }
             }
-            if (suffixes == null) return;
+            if (suffixes == null) return true;
 
             string oldBase = oldName.Substring(0, oldName.Length - matchedSuffix.Length);
             string newBase = newName.Substring(0, newName.Length - matchedSuffix.Length);
@@ -890,19 +969,44 @@ namespace YGDR.Editor.Animation
                     }
                 }
             }
-            if (siblings.Count == 0) return;
+            if (siblings.Count == 0) return true;
 
             string siblingList = string.Join("\n", siblings.Select(sibling => $"{sibling.oldSiblingName}  →  {sibling.newSiblingName}"));
             string paramWord = siblings.Count == 1
                 ? L10n.Get("params_menu.rename_sibling_param")
                 : L10n.Get("params_menu.rename_sibling_params");
-            bool confirmed = EditorUtility.DisplayDialog(
+            // 0 = Rename All, 1 = Cancel (revert original rename), 2 = Skip
+            int dialogResult = EditorUtility.DisplayDialogComplex(
                 L10n.Get("params_menu.rename_sibling_title"),
                 string.Format(L10n.Get("params_menu.rename_sibling_body"),
                     oldBase, newBase, siblings.Count, componentTypeName, paramWord, siblingList),
                 L10n.Get("params_menu.rename_sibling_ok"),
+                L10n.Get("params_menu.rename_sibling_cancel"),
                 L10n.Get("params_menu.rename_sibling_skip"));
-            if (!confirmed) return;
+
+            if (dialogResult == 2) return true;
+
+            if (dialogResult == 1)
+            {
+                var serializedControllerForRevert = new SerializedObject(controller);
+                var parametersPropertyForRevert = serializedControllerForRevert.FindProperty("m_AnimatorParameters");
+                for (int k = 0; k < parametersPropertyForRevert.arraySize; k++)
+                {
+                    var nameProperty = parametersPropertyForRevert.GetArrayElementAtIndex(k).FindPropertyRelative("m_Name");
+                    if (nameProperty.stringValue == newName)
+                    {
+                        nameProperty.stringValue = oldName;
+                        break;
+                    }
+                }
+                serializedControllerForRevert.ApplyModifiedProperties();
+
+                int revertIndex = Array.IndexOf(newNames, newName);
+                if (revertIndex >= 0) newNames[revertIndex] = oldName;
+
+                EditorUtility.SetDirty(controller);
+                return false;
+            }
 
             foreach (var (paramIndex, _, newSiblingName) in siblings)
                 newNames[paramIndex] = newSiblingName;
@@ -942,6 +1046,9 @@ namespace YGDR.Editor.Animation
             {
                 _isProcessingSiblingRenames = false;
             }
+            return true;
+#else
+            return true;
 #endif
         }
 
@@ -950,6 +1057,9 @@ namespace YGDR.Editor.Animation
 
         class ParameterRemapDropdown : AdvancedDropdown
         {
+            static readonly System.Reflection.PropertyInfo MaximumSizeProperty =
+                AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
+
             readonly AnimatorController _controller;
             readonly string _fromParam;
 
@@ -959,6 +1069,12 @@ namespace YGDR.Editor.Animation
                 _controller = controller;
                 _fromParam = fromParam;
                 minimumSize = new Vector2(200, 250);
+            }
+
+            internal void ShowCapped(Rect rect)
+            {
+                MaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
+                Show(rect);
             }
 
             protected override AdvancedDropdownItem BuildRoot()
