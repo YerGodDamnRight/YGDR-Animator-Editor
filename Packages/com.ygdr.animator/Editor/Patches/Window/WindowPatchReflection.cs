@@ -31,18 +31,18 @@ namespace YGDR.Editor.Animation
     {
         static WindowPatchReflection()
         {
-            if (LayerControllerViewType == null)
-                Debug.LogWarning("[AnimatorTools] LayerControllerView type not found — Unity version mismatch?");
-            if (LayerScrollField == null)
-                Debug.LogWarning("[AnimatorTools] LayerControllerView.m_LayerScroll not found — Unity version mismatch?");
-            if (LayerListField == null)
-                Debug.LogWarning("[AnimatorTools] LayerControllerView.m_LayerList not found — Unity version mismatch?");
-            if (LayerSelectedIndexField == null)
-                Debug.LogWarning("[AnimatorTools] LayerControllerView.m_SelectedLayerIndex not found — Unity version mismatch?");
-            if (AnimatorControllerDirtyField == null)
-                Debug.LogWarning("[AnimatorTools] AnimatorController.OnAnimatorControllerDirty not found — Unity version mismatch?");
-            if (AnimatorControllerGetter == null)
-                Debug.LogWarning("[AnimatorTools] AnimatorControllerTool.animatorController not found — Unity version mismatch?");
+            WarnIfNull(LayerControllerViewType, "LayerControllerView type");
+            WarnIfNull(LayerScrollField, "LayerControllerView.m_LayerScroll");
+            WarnIfNull(LayerListField, "LayerControllerView.m_LayerList");
+            WarnIfNull(LayerSelectedIndexField, "LayerControllerView.m_SelectedLayerIndex");
+            WarnIfNull(AnimatorControllerDirtyField, "AnimatorController.OnAnimatorControllerDirty");
+            WarnIfNull(AnimatorControllerGetter, "AnimatorControllerTool.animatorController");
+        }
+
+        static void WarnIfNull(object value, string label)
+        {
+            if (value == null)
+                Debug.LogWarning($"[AnimatorTools] {label} not found — Unity version mismatch?");
         }
 
         // Layer view

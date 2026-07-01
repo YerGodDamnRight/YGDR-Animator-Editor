@@ -35,6 +35,22 @@ namespace YGDR.Editor.Animation
             EditorUtility.SetDirty(source);
         }
 
+        internal static void AddAnyStateChainTransition(AnimatorStateMachine sm, AnimatorState destination)
+        {
+            Undo.RegisterCompleteObjectUndo(sm, "Any State Transition");
+            Undo.RegisterCreatedObjectUndo(sm.AddAnyStateTransition(destination), "Any State Transition");
+            EditorUtility.SetDirty(sm);
+            RebuildAnimatorGraph();
+        }
+
+        internal static void AddEntryChainTransition(AnimatorStateMachine sm, AnimatorState destination)
+        {
+            Undo.RegisterCompleteObjectUndo(sm, "Entry Transition");
+            sm.AddEntryTransition(destination);
+            EditorUtility.SetDirty(sm);
+            RebuildAnimatorGraph();
+        }
+
         /* Clears all anyState, entry, and state transitions in the top-level SM.
            Does not recurse into sub state machines. */
         internal static void DeleteAllTransitions(AnimatorStateMachine stateMachine)

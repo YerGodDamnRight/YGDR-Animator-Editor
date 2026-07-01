@@ -28,16 +28,17 @@ namespace YGDR.Editor.Animation
     {
         static GraphPatchReflection()
         {
-            if (GraphGUIType == null)
-                Debug.LogWarning("[AnimatorTools] AnimationStateMachine.GraphGUI not found — Unity version mismatch?");
-            if (EdgeGUIType == null)
-                Debug.LogWarning("[AnimatorTools] AnimationStateMachine.EdgeGUI not found — Unity version mismatch?");
-            if (OnGraphGUIMethod == null)
-                Debug.LogWarning("[AnimatorTools] GraphGUI.OnGraphGUI not found — Unity version mismatch?");
-            if (DrawEdgeMethod == null)
-                Debug.LogWarning("[AnimatorTools] EdgeGUI.DrawEdge not found — Unity version mismatch?");
-            if (RebuildGraphMethod == null)
-                Debug.LogWarning("[AnimatorTools] AnimatorControllerTool.RebuildGraph not found — Unity version mismatch?");
+            WarnIfNull(GraphGUIType, "AnimationStateMachine.GraphGUI");
+            WarnIfNull(EdgeGUIType, "AnimationStateMachine.EdgeGUI");
+            WarnIfNull(OnGraphGUIMethod, "GraphGUI.OnGraphGUI");
+            WarnIfNull(DrawEdgeMethod, "EdgeGUI.DrawEdge");
+            WarnIfNull(RebuildGraphMethod, "AnimatorControllerTool.RebuildGraph");
+        }
+
+        static void WarnIfNull(object value, string label)
+        {
+            if (value == null)
+                Debug.LogWarning($"[AnimatorTools] {label} not found — Unity version mismatch?");
         }
 
         // ── Graph types ──────────────────────────────────────────────────────

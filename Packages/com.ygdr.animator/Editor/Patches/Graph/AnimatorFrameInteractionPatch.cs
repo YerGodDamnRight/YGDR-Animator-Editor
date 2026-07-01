@@ -84,10 +84,17 @@ namespace YGDR.Editor.Animation
         {
             _lastGraphGUI = __instance;
             var frameData = FrameRenderer.LastFrameData;
-            if (frameData == null) return;
-
             var currentEvent = Event.current;
             var scrollPosition = FrameRenderer.LastScrollPosition;
+
+            bool createdFrameData = false;
+            if (frameData == null)
+            {
+                bool isPasteEvent = currentEvent.type == EventType.KeyDown && currentEvent.control
+                    && currentEvent.keyCode == KeyCode.V && _copiedFrames.Count > 0;
+                if (!isPasteEvent || FrameRenderer.LastController == null) return;
+                frameData = FrameLayoutData.GetOrCreate(FrameRenderer.LastController, out createdFrameData);
+            }
 
             // Inline rename text field
             if (IsRenaming && FrameRenderer.SingleSelected != null)
@@ -231,6 +238,8 @@ namespace YGDR.Editor.Animation
                     frameData.frames.Remove(frame);
                 FrameRenderer.SelectedFrames.Clear();
                 EditorUtility.SetDirty(frameData);
+                FrameLayoutData.RemoveIfEmpty(FrameRenderer.LastController);
+                FrameRenderer.InvalidateCache();
                 currentEvent.Use();
                 return;
             }
@@ -278,6 +287,9 @@ namespace YGDR.Editor.Animation
                     FrameRenderer.SelectedFrames.Add(pastedFrame);
                 }
                 EditorUtility.SetDirty(frameData);
+                if (createdFrameData) AssetDatabase.SaveAssets();
+                FrameRenderer.InvalidateCache();
+                EditorWindow.GetWindow(AnimatorEditorInit.AnimatorControllerToolType)?.Repaint();
                 currentEvent.Use();
                 return;
             }
@@ -820,6 +832,8 @@ namespace YGDR.Editor.Animation
                     FrameRenderer.SelectedFrames.Remove(frame);
                 }
                 EditorUtility.SetDirty(frameData);
+                FrameLayoutData.RemoveIfEmpty(FrameRenderer.LastController);
+                FrameRenderer.InvalidateCache();
             });
             menu.ShowAsContext();
         }

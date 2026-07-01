@@ -26,19 +26,33 @@ namespace YGDR.Editor.Animation
     {
         public List<FrameRect> frames = new();
 
-        public static FrameLayoutData GetOrCreate(AnimatorController controller)
+        public static FrameLayoutData Get(AnimatorController controller)
         {
             var path = AssetDatabase.GetAssetPath(controller);
-            var existing = AssetDatabase.LoadAllAssetsAtPath(path)
-                .OfType<FrameLayoutData>()
-                .FirstOrDefault();
-            if (existing != null) return existing;
+            return AssetDatabase.LoadAllAssetsAtPath(path).OfType<FrameLayoutData>().FirstOrDefault();
+        }
+
+        public static FrameLayoutData GetOrCreate(AnimatorController controller, out bool created)
+        {
+            var existing = Get(controller);
+            if (existing != null) { created = false; return existing; }
 
             var data = CreateInstance<FrameLayoutData>();
             data.hideFlags = HideFlags.HideInHierarchy;
             AssetDatabase.AddObjectToAsset(data, controller);
-            AssetDatabase.SaveAssets();
+            created = true;
             return data;
+        }
+
+        public static void RemoveIfEmpty(AnimatorController controller)
+        {
+            if (controller == null) return;
+            var existing = Get(controller);
+            if (existing == null || existing.frames.Count > 0) return;
+            AssetDatabase.RemoveObjectFromAsset(existing);
+            DestroyImmediate(existing, true);
+            EditorUtility.SetDirty(controller);
+            AssetDatabase.SaveAssetIfDirty(controller);
         }
     }
 }

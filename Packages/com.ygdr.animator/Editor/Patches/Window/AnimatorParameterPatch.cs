@@ -1001,6 +1001,10 @@ namespace YGDR.Editor.Animation
                 }
                 serializedControllerForRevert.ApplyModifiedProperties();
 
+                AnimatorParameterOps.RemapParameter(controller, newName, oldName);
+                if (PatchParameterRow.GetVrcComponentUsedParams().Contains(newName))
+                    AnimatorFindUsageWindow.RemapVrcComponentParameters(newName, oldName);
+
                 int revertIndex = Array.IndexOf(newNames, newName);
                 if (revertIndex >= 0) newNames[revertIndex] = oldName;
 

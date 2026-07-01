@@ -29,16 +29,17 @@ namespace YGDR.Editor.Animation
     {
         static BlendTreePatchReflection()
         {
-            if (BlendTreeGraphGUIType == null)
-                Debug.LogWarning("[AnimatorTools] AnimationBlendTree.GraphGUI not found — Unity version mismatch?");
-            if (BlendTreeNodeType == null)
-                Debug.LogWarning("[AnimatorTools] AnimationBlendTree.Node not found — Unity version mismatch?");
-            if (NodeMotionField == null)
-                Debug.LogWarning("[AnimatorTools] AnimationBlendTree.Node.motion not found — Unity version mismatch?");
-            if (NodePositionField == null)
-                Debug.LogWarning("[AnimatorTools] AnimationBlendTree.Node.position not found — Unity version mismatch?");
-            if (BlendTreeParameterGUIMethod == null)
-                Debug.LogWarning("[AnimatorTools] BlendTreeInspector.ParameterGUI not found — Unity version mismatch?");
+            WarnIfNull(BlendTreeGraphGUIType, "AnimationBlendTree.GraphGUI");
+            WarnIfNull(BlendTreeNodeType, "AnimationBlendTree.Node");
+            WarnIfNull(NodeMotionField, "AnimationBlendTree.Node.motion");
+            WarnIfNull(NodePositionField, "AnimationBlendTree.Node.position");
+            WarnIfNull(BlendTreeParameterGUIMethod, "BlendTreeInspector.ParameterGUI");
+        }
+
+        static void WarnIfNull(object value, string label)
+        {
+            if (value == null)
+                Debug.LogWarning($"[AnimatorTools] {label} not found — Unity version mismatch?");
         }
 
         // ── Blend tree types ─────────────────────────────────────────────────

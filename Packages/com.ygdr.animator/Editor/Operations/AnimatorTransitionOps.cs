@@ -92,6 +92,15 @@ namespace YGDR.Editor.Animation
             AnimatorBulkTransitionOps.RebuildAnimatorGraph();
         }
 
+        internal static void PasteEntryTransitions(AnimatorStateMachine sm, AnimatorState destination, TransitionData[] clipboard)
+        {
+            Undo.RegisterCompleteObjectUndo(sm, "Paste Entry Transitions");
+            foreach (var template in clipboard)
+                CopySettings(sm.AddEntryTransition(destination), template);
+            EditorUtility.SetDirty(sm);
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
+        }
+
         internal static void CopySettings(AnimatorStateTransition destination, AnimatorStateTransition source)
         {
             destination.hasExitTime         = source.hasExitTime;
@@ -121,6 +130,13 @@ namespace YGDR.Editor.Animation
         }
 
         internal static void CopySettings(AnimatorStateTransition destination, AnimatorTransition source)
+        {
+            destination.mute       = source.mute;
+            destination.solo       = source.solo;
+            destination.conditions = source.conditions;
+        }
+
+        internal static void CopySettings(AnimatorTransition destination, TransitionData source)
         {
             destination.mute       = source.mute;
             destination.solo       = source.solo;

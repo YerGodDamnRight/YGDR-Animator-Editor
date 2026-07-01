@@ -1005,7 +1005,7 @@ namespace YGDR.Editor.Animation
                     var controllerPath = AssetDatabase.GetAssetPath(sm);
                     var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
                     if (controller == null) return;
-                    var frameData = FrameLayoutData.GetOrCreate(controller);
+                    var frameData = FrameLayoutData.GetOrCreate(controller, out bool createdFrameData);
                     var newFrame = new FrameRect
                     {
                         title = "New Frame",
@@ -1016,6 +1016,9 @@ namespace YGDR.Editor.Animation
                     Undo.RegisterCompleteObjectUndo(frameData, "Create Frame");
                     frameData.frames.Add(newFrame);
                     EditorUtility.SetDirty(frameData);
+                    if (createdFrameData) AssetDatabase.SaveAssets();
+                    FrameRenderer.InvalidateCache();
+                    EditorWindow.GetWindow(AnimatorEditorInit.AnimatorControllerToolType)?.Repaint();
 
                     FrameRenderer.SelectedFrames.Clear();
                     FrameRenderer.SelectedFrames.Add(newFrame);
@@ -1025,9 +1028,9 @@ namespace YGDR.Editor.Animation
 
                 var capturedController = AssetDatabase.LoadAssetAtPath<AnimatorController>(
                     AssetDatabase.GetAssetPath(FrameRenderer.LastActiveSM));
-                if (capturedController != null)
+                var capturedFrameData = capturedController != null ? FrameLayoutData.Get(capturedController) : null;
+                if (capturedFrameData != null)
                 {
-                    var capturedFrameData = FrameLayoutData.GetOrCreate(capturedController);
                     menu.AddItem(new GUIContent(L10n.Get("context_menu.delete_all_frames")), false, () =>
                     {
                         var capturedActiveSM = FrameRenderer.LastActiveSM;
@@ -1042,6 +1045,8 @@ namespace YGDR.Editor.Animation
                             FrameRenderer.SelectedFrames.Remove(removedFrame);
                         }
                         EditorUtility.SetDirty(capturedFrameData);
+                        FrameLayoutData.RemoveIfEmpty(capturedController);
+                        FrameRenderer.InvalidateCache();
                     });
                 }
 

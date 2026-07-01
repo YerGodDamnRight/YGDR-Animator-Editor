@@ -74,764 +74,889 @@ namespace YGDR.Editor.Animation
             {
                 var currentEvent = Event.current;
 
-                if (currentEvent.isMouse || currentEvent.type == EventType.MouseMove)
-                {
-                    _lastMousePosition = currentEvent.mousePosition;
-                    if (currentEvent.type == EventType.MouseDown)
-                    {
-                        PatchLayerF2Rename._panelClicked = false;
-                        PatchParameterF2Rename._panelClicked = false;
-                        PatchLayerListFocusHighlight._layerPanelActive = false;
-                    }
-                }
+                UpdateLastMousePositionAndClearPanelFlags(currentEvent);
 
-                if (currentEvent.type == EventType.MouseDown && currentEvent.button == 1
-                    && !PatchStateChainTransition.ChainActive && !PatchStateChainTransition.FanActive
-                    && !PatchTransitionCopyPaste.PasteActive && PatchStateNodeMenu._multiTransitionSources == null)
-                {
-                    _suppressNextContextClick = false;
-                    var rightDragGraph = MGraphField(__instance)?.GetValue(__instance);
-                    var rightDragNodes = GetNodes(rightDragGraph);
-                    if (rightDragNodes != null)
-                    {
-                        foreach (var node in rightDragNodes)
-                        {
-                            var rightDownNodeType = node.GetType();
-                            if (rightDownNodeType != AnimatorEditorInit.StateNodeType && rightDownNodeType != AnimatorEditorInit.AnyStateNodeType && rightDownNodeType != AnimatorEditorInit.EntryNodeType) continue;
-                            var nodePosition = Traverse.Create(node).Field("position").GetValue();
-                            if (nodePosition is not Rect nodeRect || !nodeRect.Contains(currentEvent.mousePosition)) continue;
-                            var activeSMRightDrag = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                            if (rightDownNodeType == AnimatorEditorInit.AnyStateNodeType)
-                            {
-                                PatchRightDragTransition.BeginPendingAnyState(nodeRect, activeSMRightDrag, currentEvent.mousePosition);
-                            }
-                            else if (rightDownNodeType == AnimatorEditorInit.EntryNodeType)
-                            {
-                                PatchRightDragTransition.BeginPendingEntry(nodeRect, activeSMRightDrag, currentEvent.mousePosition);
-                            }
-                            else
-                            {
-                                var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
-                                if (nodeState == null) continue;
-                                PatchRightDragTransition.BeginPending(nodeState, nodeRect, activeSMRightDrag, currentEvent.mousePosition);
-                            }
-                            if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
-                            return;
-                        }
-                    }
-                }
+                if (TryBeginChainFanFromSpecialNode(__instance, currentEvent)) return;
+                if (TryBeginRightDrag(__instance, currentEvent)) return;
+                if (TryContinueRightDrag(__instance, currentEvent)) return;
+                if (TryReleaseRightDrag(__instance, currentEvent)) return;
+                if (TrySuppressContextClick(currentEvent)) return;
 
-                if (currentEvent.type == EventType.MouseDrag && currentEvent.button == 1 && PatchRightDragTransition.IsPending)
-                {
-                    const float dragThreshold = 8f;
-                    if (!PatchRightDragTransition.DragActive &&
-                        (currentEvent.mousePosition - PatchRightDragTransition.PendingStartPos).sqrMagnitude > dragThreshold * dragThreshold)
-                        PatchRightDragTransition.ActivateDrag();
-                    if (PatchRightDragTransition.DragActive)
-                    {
-                        UpdateSnapTarget(__instance, currentEvent.mousePosition);
-                        AnimWindow?.Repaint();
-                    }
-                    currentEvent.Use();
-                    return;
-                }
+                bool isAnyRenameActive = IsAnyRenameActive();
 
-                if (currentEvent.type == EventType.MouseUp && currentEvent.button == 1 && PatchRightDragTransition.IsPending)
-                {
-                    if (PatchRightDragTransition.DragActive)
-                    {
-                        var rightDragGraph = MGraphField(__instance)?.GetValue(__instance);
-                        var rightDragNodes = GetNodes(rightDragGraph);
-                        AnimatorState rightDragDestination = null;
-                        AnimatorStateMachine rightDragDestSM = null;
-                        bool rightDragToExit = false;
-                        bool isAnyStateSrc = PatchRightDragTransition.IsAnyStateSource;
-                        bool isEntrySrc = PatchRightDragTransition.IsEntrySource;
-                        if (rightDragNodes != null)
-                        {
-                            foreach (var node in rightDragNodes)
-                            {
-                                var destNodeType = node.GetType();
-                                if (destNodeType != AnimatorEditorInit.StateNodeType
-                                    && destNodeType != AnimatorEditorInit.ExitNodeType
-                                    && destNodeType != AnimatorEditorInit.StateMachineNodeType) continue;
-                                if (destNodeType == AnimatorEditorInit.ExitNodeType && (isAnyStateSrc || isEntrySrc)) continue;
-                                var nodePosition = Traverse.Create(node).Field("position").GetValue();
-                                if (nodePosition is not Rect nodeRect || !nodeRect.Contains(currentEvent.mousePosition)) continue;
-                                if (destNodeType == AnimatorEditorInit.ExitNodeType)
-                                    rightDragToExit = true;
-                                else if (destNodeType == AnimatorEditorInit.StateMachineNodeType)
-                                    rightDragDestSM = AnimatorEditorInit.SMNodeStateMachineField?.GetValue(node) as AnimatorStateMachine;
-                                else
-                                    rightDragDestination = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
-                                break;
-                            }
-                        }
-                        var rightDragSourceState = PatchRightDragTransition._pendingSourceState;
-                        var rightDragSourceSM = PatchRightDragTransition._pendingSM;
-                        bool rightDragIsAnyState = PatchRightDragTransition.IsAnyStateSource;
-                        bool rightDragIsEntry = PatchRightDragTransition.IsEntrySource;
-                        PatchRightDragTransition.Clear();
-                        _suppressNextContextClick = true;
-                        if (rightDragIsAnyState)
-                        {
-                            if (rightDragDestination != null)
-                            {
-                                Undo.RegisterCompleteObjectUndo(rightDragSourceSM, "Any State Transition");
-                                Undo.RegisterCreatedObjectUndo(rightDragSourceSM.AddAnyStateTransition(rightDragDestination), "Any State Transition");
-                                EditorUtility.SetDirty(rightDragSourceSM);
-                                AnimatorBulkTransitionOps.RebuildAnimatorGraph();
-                            }
-                        }
-                        else if (rightDragIsEntry)
-                        {
-                            if (rightDragDestination != null)
-                            {
-                                Undo.RegisterCompleteObjectUndo(rightDragSourceSM, "Entry Transition");
-                                rightDragSourceSM.AddEntryTransition(rightDragDestination);
-                                EditorUtility.SetDirty(rightDragSourceSM);
-                                AnimatorBulkTransitionOps.RebuildAnimatorGraph();
-                            }
-                            else if (rightDragDestSM != null)
-                            {
-                                Undo.RegisterCompleteObjectUndo(rightDragSourceSM, "Entry Sub-State Machine Transition");
-                                rightDragSourceSM.AddEntryTransition(rightDragDestSM);
-                                EditorUtility.SetDirty(rightDragSourceSM);
-                                AnimatorBulkTransitionOps.RebuildAnimatorGraph();
-                            }
-                        }
-                        else if (rightDragSourceState != null)
-                        {
-                            if (rightDragToExit)
-                            {
-                                Undo.RegisterCompleteObjectUndo(rightDragSourceState, "Exit Transition");
-                                rightDragSourceState.AddExitTransition();
-                                EditorUtility.SetDirty(rightDragSourceState);
-                            }
-                            else if (rightDragDestSM != null)
-                            {
-                                Undo.RegisterCompleteObjectUndo(rightDragSourceState, "Sub-State Machine Transition");
-                                rightDragSourceState.AddTransition(rightDragDestSM);
-                                EditorUtility.SetDirty(rightDragSourceState);
-                            }
-                            else if (rightDragDestination != null && rightDragDestination != rightDragSourceState)
-                            {
-                                AnimatorBulkTransitionOps.AddChainTransition(rightDragSourceState, rightDragDestination);
-                            }
-                        }
-                        currentEvent.Use();
-                        return;
-                    }
-                    PatchRightDragTransition.Clear();
-                    return;
-                }
-
-                if (currentEvent.type == EventType.ContextClick && _suppressNextContextClick)
-                {
-                    _suppressNextContextClick = false;
-                    currentEvent.Use();
-                    return;
-                }
-
-                bool isAnyRenameActive = StateRenameState.RenameTarget != null
-                    || SubSMRenameState.RenameTarget != null
-                    || MotionRenameState.RenameTargetState != null;
-
-                if (currentEvent.type == EventType.ExecuteCommand && currentEvent.commandName == "Duplicate")
-                {
-                    var kbD = AnimatorDefaultSettings.Load();
-                    bool isDefaultDuplicate = kbD.kbDuplicate.key == KeyCode.D && kbD.kbDuplicate.ctrl && !kbD.kbDuplicate.shift && !kbD.kbDuplicate.alt;
-                    if (!isDefaultDuplicate && !_duplicateCommandFromKeybind) { currentEvent.Use(); return; }
-                    _duplicateCommandFromKeybind = false;
-                }
-
-                if (currentEvent.type == EventType.ExecuteCommand && currentEvent.commandName == "Paste")
-                {
-                    var kbP = AnimatorDefaultSettings.Load();
-                    bool isDefaultPaste = kbP.kbPaste.key == KeyCode.V && kbP.kbPaste.ctrl && !kbP.kbPaste.shift && !kbP.kbPaste.alt;
-                    if (!isDefaultPaste && !_pasteCommandFromKeybind) { currentEvent.Use(); return; }
-                    _pasteCommandFromKeybind = false;
-
-                    if (PatchStateChainTransition.FanActive || PatchStateChainTransition.ChainActive || PatchStateNodeMenu._multiTransitionSources != null)
-                    {
-                        currentEvent.Use();
-                        return;
-                    }
-
-                    var getActiveSM = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
-                    var activeSM = getActiveSM?.Invoke(__instance, null) as AnimatorStateMachine;
-                    if (activeSM != null)
-                    {
-                        _pasteSM = activeSM;
-                        _prepasteStateSet = new HashSet<AnimatorState>(activeSM.states.Select(childState => childState.state));
-                        _prepasteSubSMSet = new HashSet<AnimatorStateMachine>(activeSM.stateMachines.Select(childStateMachine => childStateMachine.stateMachine));
-                    }
-                }
-
-                if (!isAnyRenameActive && currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F2)
-                {
-                    var selectedState = Selection.activeObject as AnimatorState;
-                    if (selectedState != null)
-                    {
-                        MotionRenameState.Cancel();
-                        SubSMRenameState.Cancel();
-                        var additionalStates = Selection.objects.OfType<AnimatorState>()
-                            .Where(state => state != selectedState).ToArray();
-                        var renameActiveSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod
-                            ?.Invoke(__instance, null) as AnimatorStateMachine;
-                        StateRenameState.Begin(selectedState, additionalStates.Length > 0 ? additionalStates : null, renameActiveSM);
-                        currentEvent.Use();
-                        return;
-                    }
-                    var selectedSubSM = Selection.activeObject as AnimatorStateMachine;
-                    if (selectedSubSM != null)
-                    {
-                        MotionRenameState.Cancel();
-                        StateRenameState.Cancel();
-                        SubSMRenameState.Begin(selectedSubSM);
-                        currentEvent.Use();
-                        return;
-                    }
-                }
-
-                if (!isAnyRenameActive && currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F3)
-                {
-                    var selectedState = Selection.activeObject as AnimatorState;
-                    if (selectedState != null && selectedState.motion != null)
-                    {
-                        StateRenameState.Cancel();
-                        SubSMRenameState.Cancel();
-                        MotionRenameState.Begin(selectedState.motion, selectedState);
-                        currentEvent.Use();
-                        return;
-                    }
-                }
-
-                if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.Escape)
-                {
-                    if (PatchStateChainTransition.ChainActive) { PatchStateChainTransition.Clear(); currentEvent.Use(); return; }
-                    if (PatchStateChainTransition.FanActive) { PatchStateChainTransition.ClearFan(); currentEvent.Use(); return; }
-                    if (PatchTransitionCopyPaste.PasteActive) { PatchTransitionCopyPaste.ClearPaste(); currentEvent.Use(); return; }
-                    if (PatchRightDragTransition.IsPending) { PatchRightDragTransition.Clear(); currentEvent.Use(); return; }
-                    if (PatchStateNodeMenu._multiTransitionSources != null || PatchStateNodeMenu._redirectTransitions != null || PatchStateNodeMenu._replicateTransitions != null || PatchStateNodeMenu._redirectEntryTransitions != null)
-                    {
-                        PatchStateNodeMenu.CancelPending();
-                        currentEvent.Use();
-                        return;
-                    }
-                }
-
-                if (currentEvent.type == EventType.KeyDown && (currentEvent.keyCode == KeyCode.Return || currentEvent.keyCode == KeyCode.KeypadEnter))
-                {
-                    if (PatchStateNodeMenu._multiTransitionSources != null)
-                    {
-                        var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                        var multiSources = PatchStateNodeMenu._multiTransitionSources;
-                        var multiSM = PatchStateNodeMenu._multiTransitionSM;
-                        var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
-                        var fromEntry = PatchStateNodeMenu._multiTransitionFromEntry;
-                        PatchStateNodeMenu._multiTransitionSources = null;
-                        PatchStateNodeMenu._multiTransitionSM = null;
-                        PatchStateNodeMenu._multiTransitionFromAnyState = false;
-                        PatchStateNodeMenu._multiTransitionFromEntry = false;
-                        if (destinationStates.Length > 0)
-                        {
-                            if (fromAnyState)
-                                AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, destinationStates);
-                            else if (fromEntry)
-                                AnimatorBulkTransitionOps.MultiTransitionFromEntry(multiSM, destinationStates);
-                            else
-                                AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, destinationStates);
-                        }
-                        currentEvent.Use();
-                        return;
-                    }
-                    if (PatchStateNodeMenu._redirectTransitions != null)
-                    {
-                        var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                        bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
-                        var redirectTransitions = PatchStateNodeMenu._redirectTransitions;
-                        var redirectSM = PatchStateNodeMenu._redirectSM;
-                        PatchStateNodeMenu._redirectTransitions = null;
-                        PatchStateNodeMenu._redirectSM = null;
-                        if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
-                        else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
-                        currentEvent.Use();
-                        return;
-                    }
-                    if (PatchStateNodeMenu._redirectEntryTransitions != null)
-                    {
-                        var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                        var redirectTransitions = PatchStateNodeMenu._redirectEntryTransitions;
-                        var redirectSM = PatchStateNodeMenu._redirectEntrySM;
-                        PatchStateNodeMenu._redirectEntryTransitions = null;
-                        PatchStateNodeMenu._redirectEntrySM = null;
-                        if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectEntryTransitions(redirectSM, redirectTransitions, destinationStates);
-                        currentEvent.Use();
-                        return;
-                    }
-                    if (PatchStateNodeMenu._replicateTransitions != null)
-                    {
-                        var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                        bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
-                        var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
-                        var replicateSM = PatchStateNodeMenu._replicateSM;
-                        PatchStateNodeMenu._replicateTransitions = null;
-                        PatchStateNodeMenu._replicateSM = null;
-                        if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
-                        else if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
-                        currentEvent.Use();
-                        return;
-                    }
-                }
+                if (TryGateDuplicateExecuteCommand(currentEvent)) return;
+                if (TryHandlePasteExecuteCommand(__instance, currentEvent)) return;
+                if (TryHandleF2Rename(__instance, currentEvent, isAnyRenameActive)) return;
+                if (TryHandleF3Rename(currentEvent, isAnyRenameActive)) return;
+                if (TryHandleEscape(currentEvent)) return;
+                if (TryHandleEnterFinalize(currentEvent)) return;
 
                 if (isAnyRenameActive) return;
 
-                if (AnimatorDefaultSettings.Load().kbSelectAll.Matches(currentEvent))
-                {
-                    var activeStateMachineA = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                    if (activeStateMachineA != null)
-                    {
-                        var allStates = activeStateMachineA.states.Select(childState => (UnityEngine.Object)childState.state);
-                        var allSubSMs = activeStateMachineA.stateMachines.Select(childStateMachine => (UnityEngine.Object)childStateMachine.stateMachine);
-                        Selection.objects = allStates.Concat(allSubSMs).ToArray();
-                        currentEvent.Use();
-                    }
-                    return;
-                }
+                if (TryHandleSelectAll(__instance, currentEvent)) return;
+                if (TryHandleSelectAllTransitions(__instance, currentEvent)) return;
+                if (TryHandleKeyDownSelectionAndBulkOps(__instance, currentEvent)) return;
+                if (TryHandleCopy(__instance, currentEvent)) return;
+                if (TryGateCopyExecuteCommand(currentEvent)) return;
+                if (TryHandlePasteWithClipboard(__instance, currentEvent)) return;
+                if (TryForwardPasteToExecuteCommand(__instance, currentEvent)) return;
+                if (TryForwardDuplicateToExecuteCommand(currentEvent)) return;
 
-                if (AnimatorDefaultSettings.Load().kbSelectAllTransitions.Matches(currentEvent))
-                {
-                    var activeStateMachineA = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                    if (activeStateMachineA != null)
-                    {
-                        var allTransitions = activeStateMachineA.states
-                            .SelectMany(childState => childState.state.transitions)
-                            .Concat<UnityEngine.Object>(activeStateMachineA.anyStateTransitions)
-                            .Concat(activeStateMachineA.entryTransitions)
-                            .ToArray();
-                        Selection.objects = allTransitions;
-                        currentEvent.Use();
-                    }
-                    return;
-                }
+                UpdateSnapTargetOnMouseMove(__instance, currentEvent);
 
-                if (currentEvent.type == EventType.KeyDown)
-                {
-                    var selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                    var kb = AnimatorDefaultSettings.Load();
+                if (TryHandlePasteExitClick(__instance, currentEvent)) return;
 
-                    if (selectedStates.Length > 0)
-                    {
-                        var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(selectedStates[0]));
-                        if (kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingTransitions(controller, selectedStates); currentEvent.Use(); return; }
-                        if (kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingTransitions(selectedStates); currentEvent.Use(); return; }
-                        if (kb.kbSelectBoth.Matches(currentEvent))     { AnimationEditorWindow.SelectBothTransitions(controller, selectedStates); currentEvent.Use(); return; }
-                    }
-
-                    bool isAnyStateKb = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
-                    bool isExitKb     = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
-                    bool isEntryKb    = Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
-                    if (isAnyStateKb || isExitKb || isEntryKb)
-                    {
-                        var activeSMKb = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                        if (activeSMKb != null)
-                        {
-                            var controllerKb = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(activeSMKb));
-                            if (isAnyStateKb && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromAnyState(controllerKb); currentEvent.Use(); return; }
-                            if (isExitKb     && kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingToExit(controllerKb);        currentEvent.Use(); return; }
-                            if (isEntryKb    && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromEntry(controllerKb);     currentEvent.Use(); return; }
-                        }
-                    }
-
-                    if (kb.kbMultiTransition.Matches(currentEvent))
-                    {
-                        if (PatchStateNodeMenu._multiTransitionSources == null)
-                        {
-                            var activeSMmt = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                            if (activeSMmt != null)
-                            {
-                                if (selectedStates.Length > 0)
-                                {
-                                    PatchStateNodeMenu.CancelPending();
-                                    PatchStateNodeMenu._multiTransitionSources      = selectedStates;
-                                    PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
-                                    PatchStateNodeMenu._multiTransitionFromAnyState = false;
-                                    PatchStateNodeMenu._multiTransitionFromEntry    = false;
-                                }
-                                else if (isAnyStateKb)
-                                {
-                                    PatchStateNodeMenu.CancelPending();
-                                    PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
-                                    PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
-                                    PatchStateNodeMenu._multiTransitionFromAnyState = true;
-                                    PatchStateNodeMenu._multiTransitionFromEntry    = false;
-                                }
-                                else if (isEntryKb)
-                                {
-                                    PatchStateNodeMenu.CancelPending();
-                                    PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
-                                    PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
-                                    PatchStateNodeMenu._multiTransitionFromAnyState = false;
-                                    PatchStateNodeMenu._multiTransitionFromEntry    = true;
-                                }
-                            }
-                        }
-                        else if (!(PatchStateNodeMenu._multiTransitionFromAnyState && isExitKb)
-                              && !(PatchStateNodeMenu._multiTransitionFromEntry    && isExitKb))
-                        {
-                            var multiSources = PatchStateNodeMenu._multiTransitionSources;
-                            var multiSM      = PatchStateNodeMenu._multiTransitionSM;
-                            var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
-                            var fromEntry    = PatchStateNodeMenu._multiTransitionFromEntry;
-                            PatchStateNodeMenu._multiTransitionSources      = null;
-                            PatchStateNodeMenu._multiTransitionSM           = null;
-                            PatchStateNodeMenu._multiTransitionFromAnyState = false;
-                            PatchStateNodeMenu._multiTransitionFromEntry    = false;
-                            if (isExitKb && !fromAnyState && !fromEntry)
-                                AnimatorBulkTransitionOps.MultiTransitionToExit(multiSM, multiSources);
-                            else if (fromAnyState && selectedStates.Length > 0)
-                                AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, selectedStates);
-                            else if (fromEntry && selectedStates.Length > 0)
-                                AnimatorBulkTransitionOps.MultiTransitionFromEntry(multiSM, selectedStates);
-                            else if (selectedStates.Length > 0)
-                                AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, selectedStates);
-                        }
-                        currentEvent.Use();
-                        return;
-                    }
-
-                    var selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
-                    if (selectedTransitions.Length > 0 && kb.kbReverseTransitions.Matches(currentEvent))
-                    {
-                        var activeSMrt = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                        if (activeSMrt != null) AnimatorBulkTransitionOps.ReverseNegateTransitions(activeSMrt, selectedTransitions);
-                        currentEvent.Use();
-                        return;
-                    }
-
-                    if (kb.kbReplicate.Matches(currentEvent))
-                    {
-                        if (PatchStateNodeMenu._replicateTransitions != null)
-                        {
-                            var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                            bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
-                            bool isEntrySelected    = Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
-                            var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
-                            var replicateSM = PatchStateNodeMenu._replicateSM;
-                            PatchStateNodeMenu._replicateTransitions = null;
-                            PatchStateNodeMenu._replicateSM = null;
-                            if (isAnyStateSelected)               AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
-                            else if (isEntrySelected)             AnimatorBulkTransitionOps.ReplicateTransitionsFromEntry(replicateSM, replicateTransitions);
-                            else if (newSourceStates.Length > 0)  AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
-                        }
-                        else if (PatchStateNodeMenu._replicateEntryTransitions != null)
-                        {
-                            var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                            var templates = PatchStateNodeMenu._replicateEntryTransitions;
-                            var replicateSM = PatchStateNodeMenu._replicateEntrySM;
-                            PatchStateNodeMenu._replicateEntryTransitions = null;
-                            PatchStateNodeMenu._replicateEntrySM = null;
-                            if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitionsFromEntryTransitions(replicateSM, templates, newSourceStates);
-                        }
-                        else if (selectedTransitions.Length > 0)
-                        {
-                            var activeSMrep = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                            if (activeSMrep != null)
-                            {
-                                PatchStateNodeMenu.CancelPending();
-                                PatchStateNodeMenu._replicateTransitions = selectedTransitions;
-                                PatchStateNodeMenu._replicateSM = activeSMrep;
-                            }
-                        }
-                        else
-                        {
-                            var entryTransitionsKb = Selection.objects.OfType<AnimatorTransition>().ToArray();
-                            if (entryTransitionsKb.Length > 0)
-                            {
-                                var activeSMrep = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                                if (activeSMrep != null)
-                                {
-                                    PatchStateNodeMenu.CancelPending();
-                                    PatchStateNodeMenu._replicateEntryTransitions = entryTransitionsKb;
-                                    PatchStateNodeMenu._replicateEntrySM = activeSMrep;
-                                }
-                            }
-                        }
-                        currentEvent.Use();
-                        return;
-                    }
-
-                    var selectedEntryTransitions = Selection.objects.OfType<AnimatorTransition>().ToArray();
-                    if (kb.kbRedirect.Matches(currentEvent))
-                    {
-                        if (PatchStateNodeMenu._redirectTransitions != null)
-                        {
-                            var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                            bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
-                            var redirectTransitions = PatchStateNodeMenu._redirectTransitions;
-                            var redirectSM = PatchStateNodeMenu._redirectSM;
-                            PatchStateNodeMenu._redirectTransitions = null;
-                            PatchStateNodeMenu._redirectSM = null;
-                            if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
-                            else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
-                        }
-                        else if (PatchStateNodeMenu._redirectEntryTransitions != null)
-                        {
-                            var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                            var redirectTransitions = PatchStateNodeMenu._redirectEntryTransitions;
-                            var redirectSM = PatchStateNodeMenu._redirectEntrySM;
-                            PatchStateNodeMenu._redirectEntryTransitions = null;
-                            PatchStateNodeMenu._redirectEntrySM = null;
-                            if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectEntryTransitions(redirectSM, redirectTransitions, destinationStates);
-                        }
-                        else if (selectedTransitions.Length > 0)
-                        {
-                            var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                            if (activeSMred != null)
-                            {
-                                PatchStateNodeMenu.CancelPending();
-                                PatchStateNodeMenu._redirectTransitions = selectedTransitions;
-                                PatchStateNodeMenu._redirectSM = activeSMred;
-                            }
-                        }
-                        else if (selectedEntryTransitions.Length > 0)
-                        {
-                            var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
-                            if (activeSMred != null)
-                            {
-                                PatchStateNodeMenu.CancelPending();
-                                PatchStateNodeMenu._redirectEntryTransitions = selectedEntryTransitions;
-                                PatchStateNodeMenu._redirectEntrySM = activeSMred;
-                            }
-                        }
-                        currentEvent.Use();
-                        return;
-                    }
-                }
-
-                if (AnimatorDefaultSettings.Load().kbCopy.Matches(currentEvent))
-                {
-                    var selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
-                    var selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                    if (selectedTransitions.Length > 0 && selectedStates.Length == 0) { PatchTransitionCopyPaste.SetClipboard(selectedTransitions); PatchCopySelectionToPasteboard.ClearCopy(); currentEvent.Use(); return; }
-                    GraphPatchReflection.CopySelectionToPasteboardMethod?.Invoke(__instance, null);
-                    currentEvent.Use();
-                    return;
-                }
-                // Swallow native ExecuteCommand("Copy") when binding is not Ctrl+C (we handled it via KeyDown above)
-                if (currentEvent.type == EventType.ExecuteCommand && currentEvent.commandName == "Copy")
-                {
-                    var kbC = AnimatorDefaultSettings.Load();
-                    if (!(kbC.kbCopy.key == KeyCode.C && kbC.kbCopy.ctrl && !kbC.kbCopy.shift && !kbC.kbCopy.alt))
-                    { currentEvent.Use(); return; }
-                }
-
-                if (AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent)
-                    && PatchTransitionCopyPaste.HasClipboard)
-                {
-                    if (PatchStateChainTransition.FanActive)
-                    {
-                        PatchStateChainTransition.ToggleSeededFan();
-                        currentEvent.Use();
-                        return;
-                    }
-
-                    if (PatchStateNodeMenu._multiTransitionSources != null)
-                    {
-                        var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
-                        bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
-                        var multiSources = PatchStateNodeMenu._multiTransitionSources;
-                        var multiSM = PatchStateNodeMenu._multiTransitionSM;
-                        var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
-                        PatchStateNodeMenu._multiTransitionSources = null;
-                        PatchStateNodeMenu._multiTransitionSM = null;
-                        PatchStateNodeMenu._multiTransitionFromAnyState = false;
-                        var clipboard = PatchTransitionCopyPaste.GetClipboard();
-                        if (isExitSelected && !fromAnyState)
-                        {
-                            AnimatorTransitionOps.PasteExitTransitions(multiSM, multiSources, clipboard);
-                        }
-                        else if (!isExitSelected && fromAnyState && destinationStates.Length > 0)
-                        {
-                            foreach (var destinationState in destinationStates)
-                                AnimatorTransitionOps.PasteAnyStateTransitions(multiSM, destinationState, clipboard);
-                        }
-                        else if (!isExitSelected && !fromAnyState && destinationStates.Length > 0)
-                        {
-                            foreach (var sourceState in multiSources)
-                                foreach (var destinationState in destinationStates)
-                                    AnimatorTransitionOps.PasteTransitions(sourceState, destinationState, clipboard);
-                        }
-                        currentEvent.Use();
-                        return;
-                    }
-
-                    var pasteSource = Selection.activeObject as AnimatorState;
-                    if (pasteSource != null)
-                    {
-                        var pasteGraph = MGraphField(__instance)?.GetValue(__instance);
-                        foreach (var node in GetNodes(pasteGraph) ?? System.Array.Empty<object>())
-                        {
-                            if (node.GetType() != AnimatorEditorInit.StateNodeType) continue;
-                            var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
-                            if (nodeState != pasteSource) continue;
-                            var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
-                            var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
-                            var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
-                            PatchTransitionCopyPaste.BeginPaste(pasteSource, sourceRect, activeSMForPaste);
-                            if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
-                            currentEvent.Use();
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        bool isAnyStatePaste = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
-                        if (isAnyStatePaste)
-                        {
-                            var pasteGraph = MGraphField(__instance)?.GetValue(__instance);
-                            foreach (var node in GetNodes(pasteGraph) ?? System.Array.Empty<object>())
-                            {
-                                if (node.GetType() != AnimatorEditorInit.AnyStateNodeType) continue;
-                                var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
-                                var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
-                                var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
-                                if (activeSMForPaste == null) break;
-                                PatchTransitionCopyPaste.BeginAnyStatePaste(activeSMForPaste, sourceRect);
-                                if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
-                                currentEvent.Use();
-                                break;
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                if (AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent) && !PatchTransitionCopyPaste.HasClipboard
-                    && !PatchStateChainTransition.FanActive && !PatchStateChainTransition.ChainActive
-                    && PatchStateNodeMenu._multiTransitionSources == null)
-                {
-                    var getActiveSMK = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
-                    var activeSMK = getActiveSMK?.Invoke(__instance, null) as AnimatorStateMachine;
-                    if (activeSMK != null)
-                    {
-                        _pasteSM = activeSMK;
-                        _prepasteStateSet = new HashSet<AnimatorState>(activeSMK.states.Select(cs => cs.state));
-                        _prepasteSubSMSet = new HashSet<AnimatorStateMachine>(activeSMK.stateMachines.Select(csm => csm.stateMachine));
-                    }
-                    _pasteCommandFromKeybind = true;
-                    AnimWindow?.SendEvent(EditorGUIUtility.CommandEvent("Paste"));
-                    currentEvent.Use();
-                    return;
-                }
-
-                if (AnimatorDefaultSettings.Load().kbDuplicate.Matches(currentEvent))
-                {
-                    _duplicateCommandFromKeybind = true;
-                    AnimWindow?.SendEvent(EditorGUIUtility.CommandEvent("Duplicate"));
-                    currentEvent.Use();
-                    return;
-                }
-
-                if ((PatchStateChainTransition.ChainActive || PatchStateChainTransition.FanActive || PatchTransitionCopyPaste.PasteActive || PatchRightDragTransition.DragActive)
-                    && currentEvent.type == EventType.MouseMove)
-                    UpdateSnapTarget(__instance, currentEvent.mousePosition);
-
-                if (PatchTransitionCopyPaste.PasteActive && !PatchTransitionCopyPaste.PasteFromAnyState
-                    && currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && currentEvent.clickCount == 1)
-                {
-                    var exitGraph = MGraphField(__instance)?.GetValue(__instance);
-                    foreach (var node in GetNodes(exitGraph) ?? System.Array.Empty<object>())
-                    {
-                        if (node.GetType() != AnimatorEditorInit.ExitNodeType) continue;
-                        var pos = Traverse.Create(node).Field("position").GetValue();
-                        if (!(pos is Rect exitRect) || !exitRect.Contains(currentEvent.mousePosition)) continue;
-                        var sm = PatchTransitionCopyPaste.PasteSM;
-                        var source = PatchTransitionCopyPaste.PasteSource;
-                        if (sm == null || source == null) break;
-                        AnimatorTransitionOps.PasteExitTransitions(sm, new[] { source }, PatchTransitionCopyPaste.GetClipboard());
-                        PatchTransitionCopyPaste.ClearPaste();
-                        currentEvent.Use();
-                        return;
-                    }
-                }
-
-                if (currentEvent.type != EventType.MouseDown || currentEvent.clickCount != 2 || currentEvent.button != 0 || currentEvent.shift || (!currentEvent.control && !currentEvent.alt))
-                    return;
-
-                var mousePos = currentEvent.mousePosition;
-                var graph = MGraphField(__instance)?.GetValue(__instance);
-                if (graph == null) return;
-
-                var nodes = GetNodes(graph);
-                if (nodes != null)
-                {
-                    foreach (var node in nodes)
-                    {
-                        var pos = Traverse.Create(node).Field("position").GetValue();
-                        if (pos is Rect rect && rect.Contains(mousePos))
-                        {
-                            if (!PatchStateChainTransition.ChainActive && !PatchTransitionCopyPaste.PasteActive && currentEvent.alt && !currentEvent.control)
-                            {
-                                var nodeType = node.GetType();
-                                MethodInfo makeTransitionCallback = null;
-                                if (nodeType == AnimatorEditorInit.StateNodeType)
-                                {
-                                    var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
-                                    if (nodeState?.motion is not BlendTree)
-                                        makeTransitionCallback = GraphPatchReflection.MakeTransitionCallbackMethod;
-                                }
-                                else if (nodeType == AnimatorEditorInit.AnyStateNodeType)
-                                    makeTransitionCallback = GraphPatchReflection.AnyStateMakeTransitionCallbackMethod;
-                                else if (nodeType == AnimatorEditorInit.EntryNodeType)
-                                    makeTransitionCallback = GraphPatchReflection.EntryMakeTransitionCallbackMethod;
-                                if (makeTransitionCallback != null)
-                                {
-                                    makeTransitionCallback.Invoke(node, null);
-                                    currentEvent.Use();
-                                }
-                            }
-                            return;
-                        }
-                    }
-                }
-
-                if (!currentEvent.control) return;
-
-                var getActiveStateMachine = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
-                var activeStateMachine = getActiveStateMachine?.Invoke(__instance, null) as AnimatorStateMachine;
-                if (activeStateMachine == null) return;
-
-                Undo.RegisterCompleteObjectUndo(activeStateMachine, "Create State");
-                var newState = activeStateMachine.AddState("New State");
-
-                var states = activeStateMachine.states;
-                for (int i = 0; i < states.Length; i++)
-                {
-                    if (states[i].state != newState) continue;
-                    var childAnimatorState = states[i];
-                    childAnimatorState.position = new Vector3(mousePos.x - 100, mousePos.y - 22, 0);
-                    states[i] = childAnimatorState;
-                    break;
-                }
-                activeStateMachine.states = states;
-                EditorUtility.SetDirty(activeStateMachine);
-
-                var bufferClip = FindBufferClip();
-                if (bufferClip != null)
-                {
-                    Undo.RegisterCompleteObjectUndo(newState, "Create State");
-                    newState.motion = bufferClip;
-                    EditorUtility.SetDirty(newState);
-                }
-
-                currentEvent.Use();
+                HandleDoubleClickOnGraph(__instance, currentEvent);
             }
             catch (Exception e)
             {
                 Debug.LogError($"[YGDR] Double-click create state error: {e}");
             }
+        }
+
+        static void UpdateLastMousePositionAndClearPanelFlags(Event currentEvent)
+        {
+            if (currentEvent.isMouse || currentEvent.type == EventType.MouseMove)
+            {
+                _lastMousePosition = currentEvent.mousePosition;
+                if (currentEvent.type == EventType.MouseDown)
+                {
+                    PatchLayerF2Rename._panelClicked = false;
+                    PatchParameterF2Rename._panelClicked = false;
+                    PatchLayerListFocusHighlight._layerPanelActive = false;
+                }
+            }
+        }
+
+        /* Ctrl/Shift-doubleclick or chain/fan keybind while hovering an AnyState/Entry node begins chain/fan mode anchored on that SM hub. */
+        static bool TryBeginChainFanFromSpecialNode(object __instance, Event currentEvent)
+        {
+            if (!((currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && currentEvent.clickCount == 2 && (currentEvent.control || currentEvent.shift))
+                || currentEvent.type == EventType.KeyDown))
+                return false;
+
+            var kbSpecial = AnimatorDefaultSettings.Load();
+            bool specialEligible = !PatchStateChainTransition.ChainActive && !PatchStateChainTransition.FanActive;
+            bool wantsChainBegin = (currentEvent.type == EventType.MouseDown && currentEvent.control && currentEvent.clickCount == 2)
+                || (currentEvent.type == EventType.KeyDown && specialEligible && kbSpecial.kbChainMode.Matches(currentEvent));
+            bool wantsFanBegin = (currentEvent.type == EventType.MouseDown && currentEvent.shift && currentEvent.clickCount == 2)
+                || (currentEvent.type == EventType.KeyDown && specialEligible && kbSpecial.kbFanMode.Matches(currentEvent));
+
+            if (!wantsChainBegin && !wantsFanBegin) return false;
+
+            var hitPos = currentEvent.type == EventType.MouseDown ? currentEvent.mousePosition : _lastMousePosition;
+            var specialGraph = MGraphField(__instance)?.GetValue(__instance);
+            var specialNodes = GetNodes(specialGraph);
+            if (specialNodes == null) return false;
+
+            foreach (var node in specialNodes)
+            {
+                var specialNodeType = node.GetType();
+                bool isAnyStateNode = specialNodeType == AnimatorEditorInit.AnyStateNodeType;
+                bool isEntryNode = specialNodeType == AnimatorEditorInit.EntryNodeType;
+                if (!isAnyStateNode && !isEntryNode) continue;
+                var specialNodePosition = Traverse.Create(node).Field("position").GetValue();
+                if (specialNodePosition is not Rect specialNodeRect || !specialNodeRect.Contains(hitPos)) continue;
+                var specialSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                if (specialSM == null) break;
+                if (wantsChainBegin)
+                    PatchStateChainTransition.BeginChainSpecial(specialSM, specialNodeRect, isAnyStateNode);
+                else
+                    PatchStateChainTransition.BeginFanSpecial(specialSM, specialNodeRect, isAnyStateNode);
+                currentEvent.Use();
+                return true;
+            }
+            return false;
+        }
+
+        static bool TryBeginRightDrag(object __instance, Event currentEvent)
+        {
+            if (!(currentEvent.type == EventType.MouseDown && currentEvent.button == 1
+                && !PatchStateChainTransition.ChainActive && !PatchStateChainTransition.FanActive
+                && !PatchTransitionCopyPaste.PasteActive && PatchStateNodeMenu._multiTransitionSources == null))
+                return false;
+
+            _suppressNextContextClick = false;
+            var rightDragGraph = MGraphField(__instance)?.GetValue(__instance);
+            var rightDragNodes = GetNodes(rightDragGraph);
+            if (rightDragNodes == null) return false;
+
+            foreach (var node in rightDragNodes)
+            {
+                var rightDownNodeType = node.GetType();
+                if (rightDownNodeType != AnimatorEditorInit.StateNodeType && rightDownNodeType != AnimatorEditorInit.AnyStateNodeType && rightDownNodeType != AnimatorEditorInit.EntryNodeType) continue;
+                var nodePosition = Traverse.Create(node).Field("position").GetValue();
+                if (nodePosition is not Rect nodeRect || !nodeRect.Contains(currentEvent.mousePosition)) continue;
+                var activeSMRightDrag = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                if (rightDownNodeType == AnimatorEditorInit.AnyStateNodeType)
+                {
+                    PatchRightDragTransition.BeginPendingAnyState(nodeRect, activeSMRightDrag, currentEvent.mousePosition);
+                }
+                else if (rightDownNodeType == AnimatorEditorInit.EntryNodeType)
+                {
+                    PatchRightDragTransition.BeginPendingEntry(nodeRect, activeSMRightDrag, currentEvent.mousePosition);
+                }
+                else
+                {
+                    var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
+                    if (nodeState == null) continue;
+                    PatchRightDragTransition.BeginPending(nodeState, nodeRect, activeSMRightDrag, currentEvent.mousePosition);
+                }
+                if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
+                return true;
+            }
+            return false;
+        }
+
+        static bool TryContinueRightDrag(object __instance, Event currentEvent)
+        {
+            if (!(currentEvent.type == EventType.MouseDrag && currentEvent.button == 1 && PatchRightDragTransition.IsPending))
+                return false;
+
+            const float dragThreshold = 8f;
+            if (!PatchRightDragTransition.DragActive &&
+                (currentEvent.mousePosition - PatchRightDragTransition.PendingStartPos).sqrMagnitude > dragThreshold * dragThreshold)
+                PatchRightDragTransition.ActivateDrag();
+            if (PatchRightDragTransition.DragActive)
+            {
+                UpdateSnapTarget(__instance, currentEvent.mousePosition);
+                AnimWindow?.Repaint();
+            }
+            currentEvent.Use();
+            return true;
+        }
+
+        static bool TryReleaseRightDrag(object __instance, Event currentEvent)
+        {
+            if (!(currentEvent.type == EventType.MouseUp && currentEvent.button == 1 && PatchRightDragTransition.IsPending))
+                return false;
+
+            if (PatchRightDragTransition.DragActive)
+            {
+                var rightDragGraph = MGraphField(__instance)?.GetValue(__instance);
+                var rightDragNodes = GetNodes(rightDragGraph);
+                AnimatorState rightDragDestination = null;
+                AnimatorStateMachine rightDragDestSM = null;
+                bool rightDragToExit = false;
+                bool isAnyStateSrc = PatchRightDragTransition.IsAnyStateSource;
+                bool isEntrySrc = PatchRightDragTransition.IsEntrySource;
+                if (rightDragNodes != null)
+                {
+                    foreach (var node in rightDragNodes)
+                    {
+                        var destNodeType = node.GetType();
+                        if (destNodeType != AnimatorEditorInit.StateNodeType
+                            && destNodeType != AnimatorEditorInit.ExitNodeType
+                            && destNodeType != AnimatorEditorInit.StateMachineNodeType) continue;
+                        if (destNodeType == AnimatorEditorInit.ExitNodeType && (isAnyStateSrc || isEntrySrc)) continue;
+                        var nodePosition = Traverse.Create(node).Field("position").GetValue();
+                        if (nodePosition is not Rect nodeRect || !nodeRect.Contains(currentEvent.mousePosition)) continue;
+                        if (destNodeType == AnimatorEditorInit.ExitNodeType)
+                            rightDragToExit = true;
+                        else if (destNodeType == AnimatorEditorInit.StateMachineNodeType)
+                            rightDragDestSM = AnimatorEditorInit.SMNodeStateMachineField?.GetValue(node) as AnimatorStateMachine;
+                        else
+                            rightDragDestination = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
+                        break;
+                    }
+                }
+                var rightDragSourceState = PatchRightDragTransition._pendingSourceState;
+                var rightDragSourceSM = PatchRightDragTransition._pendingSM;
+                bool rightDragIsAnyState = PatchRightDragTransition.IsAnyStateSource;
+                bool rightDragIsEntry = PatchRightDragTransition.IsEntrySource;
+                PatchRightDragTransition.Clear();
+                _suppressNextContextClick = true;
+                if (rightDragIsAnyState)
+                {
+                    if (rightDragDestination != null)
+                        AnimatorBulkTransitionOps.AddAnyStateChainTransition(rightDragSourceSM, rightDragDestination);
+                }
+                else if (rightDragIsEntry)
+                {
+                    if (rightDragDestination != null)
+                    {
+                        AnimatorBulkTransitionOps.AddEntryChainTransition(rightDragSourceSM, rightDragDestination);
+                    }
+                    else if (rightDragDestSM != null)
+                    {
+                        Undo.RegisterCompleteObjectUndo(rightDragSourceSM, "Entry Sub-State Machine Transition");
+                        rightDragSourceSM.AddEntryTransition(rightDragDestSM);
+                        EditorUtility.SetDirty(rightDragSourceSM);
+                        AnimatorBulkTransitionOps.RebuildAnimatorGraph();
+                    }
+                }
+                else if (rightDragSourceState != null)
+                {
+                    if (rightDragToExit)
+                    {
+                        Undo.RegisterCompleteObjectUndo(rightDragSourceState, "Exit Transition");
+                        rightDragSourceState.AddExitTransition();
+                        EditorUtility.SetDirty(rightDragSourceState);
+                    }
+                    else if (rightDragDestSM != null)
+                    {
+                        Undo.RegisterCompleteObjectUndo(rightDragSourceState, "Sub-State Machine Transition");
+                        rightDragSourceState.AddTransition(rightDragDestSM);
+                        EditorUtility.SetDirty(rightDragSourceState);
+                    }
+                    else if (rightDragDestination != null && rightDragDestination != rightDragSourceState)
+                    {
+                        AnimatorBulkTransitionOps.AddChainTransition(rightDragSourceState, rightDragDestination);
+                    }
+                }
+                currentEvent.Use();
+                return true;
+            }
+            PatchRightDragTransition.Clear();
+            return true;
+        }
+
+        static bool TrySuppressContextClick(Event currentEvent)
+        {
+            if (currentEvent.type != EventType.ContextClick || !_suppressNextContextClick) return false;
+            _suppressNextContextClick = false;
+            currentEvent.Use();
+            return true;
+        }
+
+        static bool IsAnyRenameActive() =>
+            StateRenameState.RenameTarget != null
+            || SubSMRenameState.RenameTarget != null
+            || MotionRenameState.RenameTargetState != null;
+
+        static bool TryGateDuplicateExecuteCommand(Event currentEvent)
+        {
+            if (currentEvent.type != EventType.ExecuteCommand || currentEvent.commandName != "Duplicate") return false;
+            var kbD = AnimatorDefaultSettings.Load();
+            bool isDefaultDuplicate = kbD.kbDuplicate.key == KeyCode.D && kbD.kbDuplicate.ctrl && !kbD.kbDuplicate.shift && !kbD.kbDuplicate.alt;
+            if (!isDefaultDuplicate && !_duplicateCommandFromKeybind) { currentEvent.Use(); return true; }
+            _duplicateCommandFromKeybind = false;
+            return false;
+        }
+
+        static bool TryHandlePasteExecuteCommand(object __instance, Event currentEvent)
+        {
+            if (currentEvent.type != EventType.ExecuteCommand || currentEvent.commandName != "Paste") return false;
+
+            var kbP = AnimatorDefaultSettings.Load();
+            bool isDefaultPaste = kbP.kbPaste.key == KeyCode.V && kbP.kbPaste.ctrl && !kbP.kbPaste.shift && !kbP.kbPaste.alt;
+            if (!isDefaultPaste && !_pasteCommandFromKeybind) { currentEvent.Use(); return true; }
+            _pasteCommandFromKeybind = false;
+
+            if (PatchStateChainTransition.FanActive || PatchStateChainTransition.ChainActive || PatchStateNodeMenu._multiTransitionSources != null)
+            {
+                currentEvent.Use();
+                return true;
+            }
+
+            var getActiveSM = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+            var activeSM = getActiveSM?.Invoke(__instance, null) as AnimatorStateMachine;
+            if (activeSM != null)
+            {
+                _pasteSM = activeSM;
+                _prepasteStateSet = new HashSet<AnimatorState>(activeSM.states.Select(childState => childState.state));
+                _prepasteSubSMSet = new HashSet<AnimatorStateMachine>(activeSM.stateMachines.Select(childStateMachine => childStateMachine.stateMachine));
+            }
+            return false;
+        }
+
+        static bool TryHandleF2Rename(object __instance, Event currentEvent, bool isAnyRenameActive)
+        {
+            if (isAnyRenameActive || currentEvent.type != EventType.KeyDown || currentEvent.keyCode != KeyCode.F2) return false;
+
+            var selectedState = Selection.activeObject as AnimatorState;
+            if (selectedState != null)
+            {
+                MotionRenameState.Cancel();
+                SubSMRenameState.Cancel();
+                var additionalStates = Selection.objects.OfType<AnimatorState>()
+                    .Where(state => state != selectedState).ToArray();
+                var renameActiveSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod
+                    ?.Invoke(__instance, null) as AnimatorStateMachine;
+                StateRenameState.Begin(selectedState, additionalStates.Length > 0 ? additionalStates : null, renameActiveSM);
+                currentEvent.Use();
+                return true;
+            }
+            var selectedSubSM = Selection.activeObject as AnimatorStateMachine;
+            if (selectedSubSM != null)
+            {
+                MotionRenameState.Cancel();
+                StateRenameState.Cancel();
+                SubSMRenameState.Begin(selectedSubSM);
+                currentEvent.Use();
+                return true;
+            }
+            return false;
+        }
+
+        static bool TryHandleF3Rename(Event currentEvent, bool isAnyRenameActive)
+        {
+            if (isAnyRenameActive || currentEvent.type != EventType.KeyDown || currentEvent.keyCode != KeyCode.F3) return false;
+
+            var selectedState = Selection.activeObject as AnimatorState;
+            if (selectedState != null && selectedState.motion != null)
+            {
+                StateRenameState.Cancel();
+                SubSMRenameState.Cancel();
+                MotionRenameState.Begin(selectedState.motion, selectedState);
+                currentEvent.Use();
+                return true;
+            }
+            return false;
+        }
+
+        static bool TryHandleEscape(Event currentEvent)
+        {
+            if (currentEvent.type != EventType.KeyDown || currentEvent.keyCode != KeyCode.Escape) return false;
+
+            if (PatchStateChainTransition.ChainActive) { PatchStateChainTransition.Clear(); currentEvent.Use(); return true; }
+            if (PatchStateChainTransition.FanActive) { PatchStateChainTransition.ClearFan(); currentEvent.Use(); return true; }
+            if (PatchTransitionCopyPaste.PasteActive) { PatchTransitionCopyPaste.ClearPaste(); currentEvent.Use(); return true; }
+            if (PatchRightDragTransition.IsPending) { PatchRightDragTransition.Clear(); currentEvent.Use(); return true; }
+            if (PatchStateNodeMenu._multiTransitionSources != null || PatchStateNodeMenu._redirectTransitions != null || PatchStateNodeMenu._replicateTransitions != null || PatchStateNodeMenu._redirectEntryTransitions != null)
+            {
+                PatchStateNodeMenu.CancelPending();
+                currentEvent.Use();
+                return true;
+            }
+            return false;
+        }
+
+        static bool TryHandleEnterFinalize(Event currentEvent)
+        {
+            if (currentEvent.type != EventType.KeyDown || (currentEvent.keyCode != KeyCode.Return && currentEvent.keyCode != KeyCode.KeypadEnter)) return false;
+
+            if (PatchStateNodeMenu._multiTransitionSources != null)
+            {
+                var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                var multiSources = PatchStateNodeMenu._multiTransitionSources;
+                var multiSM = PatchStateNodeMenu._multiTransitionSM;
+                var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
+                var fromEntry = PatchStateNodeMenu._multiTransitionFromEntry;
+                PatchStateNodeMenu._multiTransitionSources = null;
+                PatchStateNodeMenu._multiTransitionSM = null;
+                PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                PatchStateNodeMenu._multiTransitionFromEntry = false;
+                if (destinationStates.Length > 0)
+                {
+                    if (fromAnyState)
+                        AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, destinationStates);
+                    else if (fromEntry)
+                        AnimatorBulkTransitionOps.MultiTransitionFromEntry(multiSM, destinationStates);
+                    else
+                        AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, destinationStates);
+                }
+                currentEvent.Use();
+                return true;
+            }
+            if (PatchStateNodeMenu._redirectTransitions != null)
+            {
+                var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                var redirectTransitions = PatchStateNodeMenu._redirectTransitions;
+                var redirectSM = PatchStateNodeMenu._redirectSM;
+                PatchStateNodeMenu._redirectTransitions = null;
+                PatchStateNodeMenu._redirectSM = null;
+                if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
+                else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
+                currentEvent.Use();
+                return true;
+            }
+            if (PatchStateNodeMenu._redirectEntryTransitions != null)
+            {
+                var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                var redirectTransitions = PatchStateNodeMenu._redirectEntryTransitions;
+                var redirectSM = PatchStateNodeMenu._redirectEntrySM;
+                PatchStateNodeMenu._redirectEntryTransitions = null;
+                PatchStateNodeMenu._redirectEntrySM = null;
+                if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectEntryTransitions(redirectSM, redirectTransitions, destinationStates);
+                currentEvent.Use();
+                return true;
+            }
+            if (PatchStateNodeMenu._replicateTransitions != null)
+            {
+                var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
+                var replicateSM = PatchStateNodeMenu._replicateSM;
+                PatchStateNodeMenu._replicateTransitions = null;
+                PatchStateNodeMenu._replicateSM = null;
+                if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                else if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
+                currentEvent.Use();
+                return true;
+            }
+            return false;
+        }
+
+        static bool TryHandleSelectAll(object __instance, Event currentEvent)
+        {
+            if (!AnimatorDefaultSettings.Load().kbSelectAll.Matches(currentEvent)) return false;
+            var activeStateMachineA = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+            if (activeStateMachineA != null)
+            {
+                var allStates = activeStateMachineA.states.Select(childState => (UnityEngine.Object)childState.state);
+                var allSubSMs = activeStateMachineA.stateMachines.Select(childStateMachine => (UnityEngine.Object)childStateMachine.stateMachine);
+                Selection.objects = allStates.Concat(allSubSMs).ToArray();
+                currentEvent.Use();
+            }
+            return true;
+        }
+
+        static bool TryHandleSelectAllTransitions(object __instance, Event currentEvent)
+        {
+            if (!AnimatorDefaultSettings.Load().kbSelectAllTransitions.Matches(currentEvent)) return false;
+            var activeStateMachineA = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+            if (activeStateMachineA != null)
+            {
+                var allTransitions = activeStateMachineA.states
+                    .SelectMany(childState => childState.state.transitions)
+                    .Concat<UnityEngine.Object>(activeStateMachineA.anyStateTransitions)
+                    .Concat(activeStateMachineA.entryTransitions)
+                    .ToArray();
+                Selection.objects = allTransitions;
+                currentEvent.Use();
+            }
+            return true;
+        }
+
+        /* Selection-scoped keyboard shortcuts: select-incoming/outgoing/both, multi-transition, reverse, replicate, redirect. */
+        static bool TryHandleKeyDownSelectionAndBulkOps(object __instance, Event currentEvent)
+        {
+            if (currentEvent.type != EventType.KeyDown) return false;
+
+            var selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
+            var kb = AnimatorDefaultSettings.Load();
+
+            if (selectedStates.Length > 0)
+            {
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(selectedStates[0]));
+                if (kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingTransitions(controller, selectedStates); currentEvent.Use(); return true; }
+                if (kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingTransitions(selectedStates); currentEvent.Use(); return true; }
+                if (kb.kbSelectBoth.Matches(currentEvent))     { AnimationEditorWindow.SelectBothTransitions(controller, selectedStates); currentEvent.Use(); return true; }
+            }
+
+            bool isAnyStateKb = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+            bool isExitKb     = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+            bool isEntryKb    = Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
+            if (isAnyStateKb || isExitKb || isEntryKb)
+            {
+                var activeSMKb = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                if (activeSMKb != null)
+                {
+                    var controllerKb = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(activeSMKb));
+                    if (isAnyStateKb && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromAnyState(controllerKb); currentEvent.Use(); return true; }
+                    if (isExitKb     && kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingToExit(controllerKb);        currentEvent.Use(); return true; }
+                    if (isEntryKb    && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromEntry(controllerKb);     currentEvent.Use(); return true; }
+                }
+            }
+
+            if (kb.kbMultiTransition.Matches(currentEvent))
+            {
+                if (PatchStateNodeMenu._multiTransitionSources == null)
+                {
+                    var activeSMmt = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                    if (activeSMmt != null)
+                    {
+                        if (selectedStates.Length > 0)
+                        {
+                            PatchStateNodeMenu.CancelPending();
+                            PatchStateNodeMenu._multiTransitionSources      = selectedStates;
+                            PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                            PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                            PatchStateNodeMenu._multiTransitionFromEntry    = false;
+                        }
+                        else if (isAnyStateKb)
+                        {
+                            PatchStateNodeMenu.CancelPending();
+                            PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
+                            PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                            PatchStateNodeMenu._multiTransitionFromAnyState = true;
+                            PatchStateNodeMenu._multiTransitionFromEntry    = false;
+                        }
+                        else if (isEntryKb)
+                        {
+                            PatchStateNodeMenu.CancelPending();
+                            PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
+                            PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                            PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                            PatchStateNodeMenu._multiTransitionFromEntry    = true;
+                        }
+                    }
+                }
+                else if (!(PatchStateNodeMenu._multiTransitionFromAnyState && isExitKb)
+                      && !(PatchStateNodeMenu._multiTransitionFromEntry    && isExitKb))
+                {
+                    var multiSources = PatchStateNodeMenu._multiTransitionSources;
+                    var multiSM      = PatchStateNodeMenu._multiTransitionSM;
+                    var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
+                    var fromEntry    = PatchStateNodeMenu._multiTransitionFromEntry;
+                    PatchStateNodeMenu._multiTransitionSources      = null;
+                    PatchStateNodeMenu._multiTransitionSM           = null;
+                    PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                    PatchStateNodeMenu._multiTransitionFromEntry    = false;
+                    if (isExitKb && !fromAnyState && !fromEntry)
+                        AnimatorBulkTransitionOps.MultiTransitionToExit(multiSM, multiSources);
+                    else if (fromAnyState && selectedStates.Length > 0)
+                        AnimatorBulkTransitionOps.MultiTransitionFromAnyState(multiSM, selectedStates);
+                    else if (fromEntry && selectedStates.Length > 0)
+                        AnimatorBulkTransitionOps.MultiTransitionFromEntry(multiSM, selectedStates);
+                    else if (selectedStates.Length > 0)
+                        AnimatorBulkTransitionOps.MultiTransition(multiSM, multiSources, selectedStates);
+                }
+                currentEvent.Use();
+                return true;
+            }
+
+            var selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
+            if (selectedTransitions.Length > 0 && kb.kbReverseTransitions.Matches(currentEvent))
+            {
+                var activeSMrt = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                if (activeSMrt != null) AnimatorBulkTransitionOps.ReverseNegateTransitions(activeSMrt, selectedTransitions);
+                currentEvent.Use();
+                return true;
+            }
+
+            if (kb.kbReplicate.Matches(currentEvent))
+            {
+                if (PatchStateNodeMenu._replicateTransitions != null)
+                {
+                    var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                    bool isAnyStateSelected = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                    bool isEntrySelected    = Selection.objects.Any(o => AnimatorEditorInit.EntryNodeType?.IsInstanceOfType(o) ?? false);
+                    var replicateTransitions = PatchStateNodeMenu._replicateTransitions;
+                    var replicateSM = PatchStateNodeMenu._replicateSM;
+                    PatchStateNodeMenu._replicateTransitions = null;
+                    PatchStateNodeMenu._replicateSM = null;
+                    if (isAnyStateSelected)               AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                    else if (isEntrySelected)             AnimatorBulkTransitionOps.ReplicateTransitionsFromEntry(replicateSM, replicateTransitions);
+                    else if (newSourceStates.Length > 0)  AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
+                }
+                else if (PatchStateNodeMenu._replicateEntryTransitions != null)
+                {
+                    var newSourceStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                    var templates = PatchStateNodeMenu._replicateEntryTransitions;
+                    var replicateSM = PatchStateNodeMenu._replicateEntrySM;
+                    PatchStateNodeMenu._replicateEntryTransitions = null;
+                    PatchStateNodeMenu._replicateEntrySM = null;
+                    if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitionsFromEntryTransitions(replicateSM, templates, newSourceStates);
+                }
+                else if (selectedTransitions.Length > 0)
+                {
+                    var activeSMrep = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                    if (activeSMrep != null)
+                    {
+                        PatchStateNodeMenu.CancelPending();
+                        PatchStateNodeMenu._replicateTransitions = selectedTransitions;
+                        PatchStateNodeMenu._replicateSM = activeSMrep;
+                    }
+                }
+                else
+                {
+                    var entryTransitionsKb = Selection.objects.OfType<AnimatorTransition>().ToArray();
+                    if (entryTransitionsKb.Length > 0)
+                    {
+                        var activeSMrep = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                        if (activeSMrep != null)
+                        {
+                            PatchStateNodeMenu.CancelPending();
+                            PatchStateNodeMenu._replicateEntryTransitions = entryTransitionsKb;
+                            PatchStateNodeMenu._replicateEntrySM = activeSMrep;
+                        }
+                    }
+                }
+                currentEvent.Use();
+                return true;
+            }
+
+            var selectedEntryTransitions = Selection.objects.OfType<AnimatorTransition>().ToArray();
+            if (kb.kbRedirect.Matches(currentEvent))
+            {
+                if (PatchStateNodeMenu._redirectTransitions != null)
+                {
+                    var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                    bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                    var redirectTransitions = PatchStateNodeMenu._redirectTransitions;
+                    var redirectSM = PatchStateNodeMenu._redirectSM;
+                    PatchStateNodeMenu._redirectTransitions = null;
+                    PatchStateNodeMenu._redirectSM = null;
+                    if (isExitSelected) AnimatorBulkTransitionOps.RedirectTransitionsToExit(redirectSM, redirectTransitions);
+                    else if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectTransitions(redirectSM, redirectTransitions, destinationStates);
+                }
+                else if (PatchStateNodeMenu._redirectEntryTransitions != null)
+                {
+                    var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                    var redirectTransitions = PatchStateNodeMenu._redirectEntryTransitions;
+                    var redirectSM = PatchStateNodeMenu._redirectEntrySM;
+                    PatchStateNodeMenu._redirectEntryTransitions = null;
+                    PatchStateNodeMenu._redirectEntrySM = null;
+                    if (destinationStates.Length > 0) AnimatorBulkTransitionOps.RedirectEntryTransitions(redirectSM, redirectTransitions, destinationStates);
+                }
+                else if (selectedTransitions.Length > 0)
+                {
+                    var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                    if (activeSMred != null)
+                    {
+                        PatchStateNodeMenu.CancelPending();
+                        PatchStateNodeMenu._redirectTransitions = selectedTransitions;
+                        PatchStateNodeMenu._redirectSM = activeSMred;
+                    }
+                }
+                else if (selectedEntryTransitions.Length > 0)
+                {
+                    var activeSMred = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                    if (activeSMred != null)
+                    {
+                        PatchStateNodeMenu.CancelPending();
+                        PatchStateNodeMenu._redirectEntryTransitions = selectedEntryTransitions;
+                        PatchStateNodeMenu._redirectEntrySM = activeSMred;
+                    }
+                }
+                currentEvent.Use();
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool TryHandleCopy(object __instance, Event currentEvent)
+        {
+            if (!AnimatorDefaultSettings.Load().kbCopy.Matches(currentEvent)) return false;
+            var selectedTransitions = Selection.objects.OfType<AnimatorStateTransition>().ToArray();
+            var selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
+            if (selectedTransitions.Length > 0 && selectedStates.Length == 0) { PatchTransitionCopyPaste.SetClipboard(selectedTransitions); PatchCopySelectionToPasteboard.ClearCopy(); currentEvent.Use(); return true; }
+            GraphPatchReflection.CopySelectionToPasteboardMethod?.Invoke(__instance, null);
+            currentEvent.Use();
+            return true;
+        }
+
+        // Swallow native ExecuteCommand("Copy") when binding is not Ctrl+C (we handled it via KeyDown above)
+        static bool TryGateCopyExecuteCommand(Event currentEvent)
+        {
+            if (currentEvent.type != EventType.ExecuteCommand || currentEvent.commandName != "Copy") return false;
+            var kbC = AnimatorDefaultSettings.Load();
+            if (!(kbC.kbCopy.key == KeyCode.C && kbC.kbCopy.ctrl && !kbC.kbCopy.shift && !kbC.kbCopy.alt))
+            { currentEvent.Use(); return true; }
+            return false;
+        }
+
+        static bool TryHandlePasteWithClipboard(object __instance, Event currentEvent)
+        {
+            if (!(AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent)
+                && PatchTransitionCopyPaste.HasClipboard))
+                return false;
+
+            if (PatchStateChainTransition.FanActive)
+            {
+                PatchStateChainTransition.ToggleSeededFan();
+                currentEvent.Use();
+                return true;
+            }
+
+            if (PatchStateNodeMenu._multiTransitionSources != null)
+            {
+                var destinationStates = Selection.objects.OfType<AnimatorState>().ToArray();
+                bool isExitSelected = Selection.objects.Any(o => AnimatorEditorInit.ExitNodeType?.IsInstanceOfType(o) ?? false);
+                var multiSources = PatchStateNodeMenu._multiTransitionSources;
+                var multiSM = PatchStateNodeMenu._multiTransitionSM;
+                var fromAnyState = PatchStateNodeMenu._multiTransitionFromAnyState;
+                PatchStateNodeMenu._multiTransitionSources = null;
+                PatchStateNodeMenu._multiTransitionSM = null;
+                PatchStateNodeMenu._multiTransitionFromAnyState = false;
+                var clipboard = PatchTransitionCopyPaste.GetClipboard();
+                if (isExitSelected && !fromAnyState)
+                {
+                    AnimatorTransitionOps.PasteExitTransitions(multiSM, multiSources, clipboard);
+                }
+                else if (!isExitSelected && fromAnyState && destinationStates.Length > 0)
+                {
+                    foreach (var destinationState in destinationStates)
+                        AnimatorTransitionOps.PasteAnyStateTransitions(multiSM, destinationState, clipboard);
+                }
+                else if (!isExitSelected && !fromAnyState && destinationStates.Length > 0)
+                {
+                    foreach (var sourceState in multiSources)
+                        foreach (var destinationState in destinationStates)
+                            AnimatorTransitionOps.PasteTransitions(sourceState, destinationState, clipboard);
+                }
+                currentEvent.Use();
+                return true;
+            }
+
+            var pasteSource = Selection.activeObject as AnimatorState;
+            if (pasteSource != null)
+            {
+                var pasteGraph = MGraphField(__instance)?.GetValue(__instance);
+                foreach (var node in GetNodes(pasteGraph) ?? System.Array.Empty<object>())
+                {
+                    if (node.GetType() != AnimatorEditorInit.StateNodeType) continue;
+                    var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
+                    if (nodeState != pasteSource) continue;
+                    var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
+                    var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+                    var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
+                    PatchTransitionCopyPaste.BeginPaste(pasteSource, sourceRect, activeSMForPaste);
+                    if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
+                    currentEvent.Use();
+                    break;
+                }
+            }
+            else
+            {
+                bool isAnyStatePaste = Selection.objects.Any(o => AnimatorEditorInit.AnyStateNodeType?.IsInstanceOfType(o) ?? false);
+                if (isAnyStatePaste)
+                {
+                    var pasteGraph = MGraphField(__instance)?.GetValue(__instance);
+                    foreach (var node in GetNodes(pasteGraph) ?? System.Array.Empty<object>())
+                    {
+                        if (node.GetType() != AnimatorEditorInit.AnyStateNodeType) continue;
+                        var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
+                        var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+                        var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
+                        if (activeSMForPaste == null) break;
+                        PatchTransitionCopyPaste.BeginAnyStatePaste(activeSMForPaste, sourceRect);
+                        if (AnimWindow != null) AnimWindow.wantsMouseMove = true;
+                        currentEvent.Use();
+                        break;
+                    }
+                }
+            }
+            return true;
+        }
+
+        static bool TryForwardPasteToExecuteCommand(object __instance, Event currentEvent)
+        {
+            if (!(AnimatorDefaultSettings.Load().kbPaste.Matches(currentEvent) && !PatchTransitionCopyPaste.HasClipboard
+                && !PatchStateChainTransition.FanActive && !PatchStateChainTransition.ChainActive
+                && PatchStateNodeMenu._multiTransitionSources == null))
+                return false;
+
+            var getActiveSMK = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+            var activeSMK = getActiveSMK?.Invoke(__instance, null) as AnimatorStateMachine;
+            if (activeSMK != null)
+            {
+                _pasteSM = activeSMK;
+                _prepasteStateSet = new HashSet<AnimatorState>(activeSMK.states.Select(cs => cs.state));
+                _prepasteSubSMSet = new HashSet<AnimatorStateMachine>(activeSMK.stateMachines.Select(csm => csm.stateMachine));
+            }
+            _pasteCommandFromKeybind = true;
+            AnimWindow?.SendEvent(EditorGUIUtility.CommandEvent("Paste"));
+            currentEvent.Use();
+            return true;
+        }
+
+        static bool TryForwardDuplicateToExecuteCommand(Event currentEvent)
+        {
+            if (!AnimatorDefaultSettings.Load().kbDuplicate.Matches(currentEvent)) return false;
+            _duplicateCommandFromKeybind = true;
+            AnimWindow?.SendEvent(EditorGUIUtility.CommandEvent("Duplicate"));
+            currentEvent.Use();
+            return true;
+        }
+
+        static void UpdateSnapTargetOnMouseMove(object __instance, Event currentEvent)
+        {
+            if ((PatchStateChainTransition.ChainActive || PatchStateChainTransition.FanActive || PatchTransitionCopyPaste.PasteActive || PatchRightDragTransition.DragActive)
+                && currentEvent.type == EventType.MouseMove)
+                UpdateSnapTarget(__instance, currentEvent.mousePosition);
+        }
+
+        static bool TryHandlePasteExitClick(object __instance, Event currentEvent)
+        {
+            if (!(PatchTransitionCopyPaste.PasteActive && !PatchTransitionCopyPaste.PasteFromAnyState
+                && currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && currentEvent.clickCount == 1))
+                return false;
+
+            var exitGraph = MGraphField(__instance)?.GetValue(__instance);
+            foreach (var node in GetNodes(exitGraph) ?? System.Array.Empty<object>())
+            {
+                if (node.GetType() != AnimatorEditorInit.ExitNodeType) continue;
+                var pos = Traverse.Create(node).Field("position").GetValue();
+                if (!(pos is Rect exitRect) || !exitRect.Contains(currentEvent.mousePosition)) continue;
+                var sm = PatchTransitionCopyPaste.PasteSM;
+                var source = PatchTransitionCopyPaste.PasteSource;
+                if (sm == null || source == null) break;
+                AnimatorTransitionOps.PasteExitTransitions(sm, new[] { source }, PatchTransitionCopyPaste.GetClipboard());
+                PatchTransitionCopyPaste.ClearPaste();
+                currentEvent.Use();
+                return true;
+            }
+            return false;
+        }
+
+        /* Ctrl/Alt-doubleclick on an existing node makes a transition from it; Ctrl-doubleclick on empty space creates a new state. */
+        static void HandleDoubleClickOnGraph(object __instance, Event currentEvent)
+        {
+            if (currentEvent.type != EventType.MouseDown || currentEvent.clickCount != 2 || currentEvent.button != 0 || currentEvent.shift || (!currentEvent.control && !currentEvent.alt))
+                return;
+
+            var mousePos = currentEvent.mousePosition;
+            var graph = MGraphField(__instance)?.GetValue(__instance);
+            if (graph == null) return;
+
+            var nodes = GetNodes(graph);
+            if (nodes != null)
+            {
+                foreach (var node in nodes)
+                {
+                    var pos = Traverse.Create(node).Field("position").GetValue();
+                    if (pos is Rect rect && rect.Contains(mousePos))
+                    {
+                        if (!PatchStateChainTransition.ChainActive && !PatchTransitionCopyPaste.PasteActive && currentEvent.alt && !currentEvent.control)
+                        {
+                            var nodeType = node.GetType();
+                            MethodInfo makeTransitionCallback = null;
+                            if (nodeType == AnimatorEditorInit.StateNodeType)
+                            {
+                                var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
+                                if (nodeState?.motion is not BlendTree)
+                                    makeTransitionCallback = GraphPatchReflection.MakeTransitionCallbackMethod;
+                            }
+                            else if (nodeType == AnimatorEditorInit.AnyStateNodeType)
+                                makeTransitionCallback = GraphPatchReflection.AnyStateMakeTransitionCallbackMethod;
+                            else if (nodeType == AnimatorEditorInit.EntryNodeType)
+                                makeTransitionCallback = GraphPatchReflection.EntryMakeTransitionCallbackMethod;
+                            if (makeTransitionCallback != null)
+                            {
+                                makeTransitionCallback.Invoke(node, null);
+                                currentEvent.Use();
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+
+            if (!currentEvent.control) return;
+
+            var getActiveStateMachine = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
+            var activeStateMachine = getActiveStateMachine?.Invoke(__instance, null) as AnimatorStateMachine;
+            if (activeStateMachine == null) return;
+
+            Undo.RegisterCompleteObjectUndo(activeStateMachine, "Create State");
+            var newState = activeStateMachine.AddState("New State");
+
+            var states = activeStateMachine.states;
+            for (int i = 0; i < states.Length; i++)
+            {
+                if (states[i].state != newState) continue;
+                var childAnimatorState = states[i];
+                childAnimatorState.position = new Vector3(mousePos.x - 100, mousePos.y - 22, 0);
+                states[i] = childAnimatorState;
+                break;
+            }
+            activeStateMachine.states = states;
+            EditorUtility.SetDirty(activeStateMachine);
+
+            var bufferClip = FindBufferClip();
+            if (bufferClip != null)
+            {
+                Undo.RegisterCompleteObjectUndo(newState, "Create State");
+                newState.motion = bufferClip;
+                EditorUtility.SetDirty(newState);
+            }
+
+            currentEvent.Use();
         }
 
         [HarmonyPostfix]
@@ -1053,20 +1178,28 @@ namespace YGDR.Editor.Animation
     [HarmonyPatch]
     internal static class PatchStateChainTransition
     {
+        private enum SourceKind { State, AnyState, Entry }
+
         internal static bool ChainActive { get; private set; }
         internal static Rect ChainSourceRect { get; private set; }
         internal static Vector2? SnapTarget { get; set; }
         private static AnimatorState _chainSource;
+        private static AnimatorStateMachine _chainSourceSM;
+        private static SourceKind _chainSourceKind;
 
         internal static bool FanActive { get; private set; }
         internal static Rect FanSourceRect { get; private set; }
         internal static bool SeededFanActive { get; private set; }
         private static AnimatorState _fanSource;
+        private static AnimatorStateMachine _fanSourceSM;
+        private static SourceKind _fanSourceKind;
 
         internal static void Clear()
         {
             ChainActive = false;
             _chainSource = null;
+            _chainSourceSM = null;
+            _chainSourceKind = SourceKind.State;
             ChainSourceRect = Rect.zero;
             SnapTarget = null;
         }
@@ -1076,6 +1209,8 @@ namespace YGDR.Editor.Animation
             FanActive = false;
             SeededFanActive = false;
             _fanSource = null;
+            _fanSourceSM = null;
+            _fanSourceKind = SourceKind.State;
             FanSourceRect = Rect.zero;
             SnapTarget = null;
         }
@@ -1085,6 +1220,22 @@ namespace YGDR.Editor.Animation
             ClearFan();
             ChainActive = true;
             _chainSource = source;
+            _chainSourceSM = null;
+            _chainSourceKind = SourceKind.State;
+            ChainSourceRect = sourceRect;
+            SnapTarget = null;
+            if (PatchGraphInputHandler.AnimWindow != null)
+                PatchGraphInputHandler.AnimWindow.wantsMouseMove = true;
+        }
+
+        /* Begins chain mode anchored on AnyState/Entry; first click transitions from the SM hub, then advances to a normal state-to-state chain. */
+        internal static void BeginChainSpecial(AnimatorStateMachine sm, Rect sourceRect, bool isAnyState)
+        {
+            ClearFan();
+            ChainActive = true;
+            _chainSource = null;
+            _chainSourceSM = sm;
+            _chainSourceKind = isAnyState ? SourceKind.AnyState : SourceKind.Entry;
             ChainSourceRect = sourceRect;
             SnapTarget = null;
             if (PatchGraphInputHandler.AnimWindow != null)
@@ -1096,6 +1247,22 @@ namespace YGDR.Editor.Animation
             Clear();
             FanActive = true;
             _fanSource = source;
+            _fanSourceSM = null;
+            _fanSourceKind = SourceKind.State;
+            FanSourceRect = sourceRect;
+            SnapTarget = null;
+            if (PatchGraphInputHandler.AnimWindow != null)
+                PatchGraphInputHandler.AnimWindow.wantsMouseMove = true;
+        }
+
+        /* Begins fan mode anchored on AnyState/Entry; source stays fixed at the SM hub for every subsequent click. */
+        internal static void BeginFanSpecial(AnimatorStateMachine sm, Rect sourceRect, bool isAnyState)
+        {
+            Clear();
+            FanActive = true;
+            _fanSource = null;
+            _fanSourceSM = sm;
+            _fanSourceKind = isAnyState ? SourceKind.AnyState : SourceKind.Entry;
             FanSourceRect = sourceRect;
             SnapTarget = null;
             if (PatchGraphInputHandler.AnimWindow != null)
@@ -1105,6 +1272,40 @@ namespace YGDR.Editor.Animation
         internal static void ToggleSeededFan()
         {
             SeededFanActive = !SeededFanActive;
+        }
+
+        /* Shared dispatch for chain/fan "add transition" clicks, keyed on which kind of node the source is. */
+        private static void DispatchAddTransition(SourceKind kind, AnimatorStateMachine sm, AnimatorState source, AnimatorState destination)
+        {
+            switch (kind)
+            {
+                case SourceKind.AnyState:
+                    AnimatorBulkTransitionOps.AddAnyStateChainTransition(sm, destination);
+                    break;
+                case SourceKind.Entry:
+                    AnimatorBulkTransitionOps.AddEntryChainTransition(sm, destination);
+                    break;
+                default:
+                    AnimatorBulkTransitionOps.AddChainTransition(source, destination);
+                    break;
+            }
+        }
+
+        /* Shared dispatch for seeded-fan paste clicks, keyed on which kind of node the source is. */
+        private static void DispatchPasteTransition(SourceKind kind, AnimatorStateMachine sm, AnimatorState source, AnimatorState destination, AnimatorTransitionOps.TransitionData[] clipboard)
+        {
+            switch (kind)
+            {
+                case SourceKind.AnyState:
+                    AnimatorTransitionOps.PasteAnyStateTransitions(sm, destination, clipboard);
+                    break;
+                case SourceKind.Entry:
+                    AnimatorTransitionOps.PasteEntryTransitions(sm, destination, clipboard);
+                    break;
+                default:
+                    AnimatorTransitionOps.PasteTransitions(source, destination, clipboard);
+                    break;
+            }
         }
 
         [HarmonyTargetMethod]
@@ -1138,8 +1339,10 @@ namespace YGDR.Editor.Animation
 
                 if (isClick && ChainActive && currentEvent.clickCount == 1 && !currentEvent.control && !currentEvent.shift)
                 {
-                    AnimatorBulkTransitionOps.AddChainTransition(_chainSource, nodeState);
+                    DispatchAddTransition(_chainSourceKind, _chainSourceSM, _chainSource, nodeState);
                     _chainSource = nodeState;
+                    _chainSourceSM = null;
+                    _chainSourceKind = SourceKind.State;
                     ChainSourceRect = nodeRect;
                     SnapTarget = null;
                     currentEvent.Use();
@@ -1157,9 +1360,9 @@ namespace YGDR.Editor.Animation
                 if (isClick && FanActive && currentEvent.clickCount == 1 && !currentEvent.control && !currentEvent.shift)
                 {
                     if (SeededFanActive)
-                        AnimatorTransitionOps.PasteTransitions(_fanSource, nodeState, PatchTransitionCopyPaste.GetClipboard());
+                        DispatchPasteTransition(_fanSourceKind, _fanSourceSM, _fanSource, nodeState, PatchTransitionCopyPaste.GetClipboard());
                     else
-                        AnimatorBulkTransitionOps.AddChainTransition(_fanSource, nodeState);
+                        DispatchAddTransition(_fanSourceKind, _fanSourceSM, _fanSource, nodeState);
                     SnapTarget = null;
                     currentEvent.Use();
                 }
@@ -1397,8 +1600,8 @@ namespace YGDR.Editor.Animation
                 var destinationController = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(destinationSM));
                 if (sourceController == null || destinationController == null) return;
 
-                var sourceData = FrameLayoutData.GetOrCreate(sourceController);
-                var destinationData = FrameLayoutData.GetOrCreate(destinationController);
+                var sourceData = FrameLayoutData.GetOrCreate(sourceController, out _);
+                var destinationData = FrameLayoutData.GetOrCreate(destinationController, out _);
 
                 bool dirty = false;
                 foreach (var frame in sourceData.frames.ToArray())
@@ -1423,6 +1626,7 @@ namespace YGDR.Editor.Animation
                 {
                     EditorUtility.SetDirty(destinationData);
                     AssetDatabase.SaveAssets();
+                    FrameRenderer.InvalidateCache();
                 }
             }
             catch (Exception e)

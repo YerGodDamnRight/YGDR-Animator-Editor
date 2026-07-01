@@ -454,13 +454,13 @@ namespace YGDR.Editor.Animation
             var destinationController = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(destinationSM));
             if (sourceController == null || destinationController == null) return;
 
-            var sourceData = FrameLayoutData.GetOrCreate(sourceController);
+            var sourceData = FrameLayoutData.GetOrCreate(sourceController, out _);
             if (!sourceData.frames.Any(frame => frame.layerStateMachine == sourceSM)) return;
 
             var smMap = new Dictionary<AnimatorStateMachine, AnimatorStateMachine>();
             BuildSMMap(sourceSM, destinationSM, smMap);
 
-            var destinationData = FrameLayoutData.GetOrCreate(destinationController);
+            var destinationData = FrameLayoutData.GetOrCreate(destinationController, out _);
             bool dirty = false;
 
             foreach (var frame in sourceData.frames.ToArray())
@@ -486,6 +486,7 @@ namespace YGDR.Editor.Animation
             {
                 EditorUtility.SetDirty(destinationData);
                 AssetDatabase.SaveAssets();
+                FrameRenderer.InvalidateCache();
             }
         }
 

@@ -39,6 +39,7 @@ namespace YGDR.Editor.Animation
         internal static float LastZoomLevel;
         internal static Vector2 LastScrollPosition;
         internal static FrameLayoutData LastFrameData;
+        internal static AnimatorController LastController;
         internal static AnimatorStateMachine LastRootLayerSM;
         internal static AnimatorStateMachine LastActiveSM;
 
@@ -60,8 +61,8 @@ namespace YGDR.Editor.Animation
         {
             Undo.postprocessModifications -= OnPostprocessModifications;
             Undo.postprocessModifications += OnPostprocessModifications;
-            Undo.undoRedoPerformed -= InvalidateCache;
-            Undo.undoRedoPerformed += InvalidateCache;
+            Undo.undoRedoPerformed -= OnUndoRedoPerformed;
+            Undo.undoRedoPerformed += OnUndoRedoPerformed;
         }
 
         static UndoPropertyModification[] OnPostprocessModifications(UndoPropertyModification[] modifications)
@@ -78,7 +79,14 @@ namespace YGDR.Editor.Animation
             return modifications;
         }
 
-        static void InvalidateCache() { _cacheValid = false; _cleanedControllers.Clear(); }
+        internal static void InvalidateCache() { _cacheValid = false; _cleanedControllers.Clear(); }
+
+        static void OnUndoRedoPerformed()
+        {
+            var controllerToCheck = LastController;
+            InvalidateCache();
+            FrameLayoutData.RemoveIfEmpty(controllerToCheck);
+        }
 
         static void EnsureReflection(object graphGUI)
         {
@@ -91,10 +99,10 @@ namespace YGDR.Editor.Animation
 
         static FrameLayoutData GetFrameData(AnimatorController controller)
         {
-            if (_cacheValid && controller == _cachedController && _cachedFrameData != null)
+            if (_cacheValid && controller == _cachedController)
                 return _cachedFrameData;
             _cachedController = controller;
-            _cachedFrameData = FrameLayoutData.GetOrCreate(controller);
+            _cachedFrameData = FrameLayoutData.Get(controller);
             _cacheValid = true;
             return _cachedFrameData;
         }
@@ -154,20 +162,19 @@ namespace YGDR.Editor.Animation
                 var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
                 if (controller == null) return;
 
+                LastGridRect = gridRect;
+                LastZoomLevel = zoomLevel;
+                LastScrollPosition = scrollPosition;
+                LastController = controller;
+                LastRootLayerSM = GetRootLayerSM(controller, activeSM);
+                LastActiveSM = activeSM;
+
                 var frameData = GetFrameData(controller);
+                LastFrameData = frameData;
                 if (frameData == null) return;
 
                 if (_cleanedControllers.Add(controller))
                     CleanupDeletedLayers(controller, frameData);
-
-                var rootLayerSM = GetRootLayerSM(controller, activeSM);
-
-                LastGridRect = gridRect;
-                LastZoomLevel = zoomLevel;
-                LastScrollPosition = scrollPosition;
-                LastFrameData = frameData;
-                LastRootLayerSM = rootLayerSM;
-                LastActiveSM = activeSM;
 
                 if (frameData.frames.Count == 0) return;
 
