@@ -37,6 +37,9 @@ namespace YGDR.Editor.Animation
             WarnIfNull(LayerSelectedIndexField, "LayerControllerView.m_SelectedLayerIndex");
             WarnIfNull(AnimatorControllerDirtyField, "AnimatorController.OnAnimatorControllerDirty");
             WarnIfNull(AnimatorControllerGetter, "AnimatorControllerTool.animatorController");
+            WarnIfNull(AnimationWindowStateProperty, "AnimationWindow.state");
+            WarnIfNull(ActiveAnimationClipProperty, "AnimationWindowState.activeAnimationClip");
+            WarnIfNull(ActiveRootGameObjectProperty, "AnimationWindowState.activeRootGameObject");
         }
 
         static void WarnIfNull(object value, string label)
@@ -106,6 +109,20 @@ namespace YGDR.Editor.Animation
         internal static readonly MethodInfo AnimationWindowEditAnimationClipMethod =
             AccessTools.Method(typeof(AnimationWindow), "EditAnimationClip", new[] { typeof(AnimationClip) });
 
+        // AnimationWindow.state internals (shared)
+        internal static readonly PropertyInfo AnimationWindowStateProperty =
+            AccessTools.Property(typeof(AnimationWindow), "state");
+        internal static readonly Type AnimationWindowStateType =
+            AnimationWindowStateProperty?.PropertyType;
+        internal static readonly PropertyInfo ActiveAnimationClipProperty =
+            AccessTools.Property(AnimationWindowStateType, "activeAnimationClip");
+        internal static readonly PropertyInfo ActiveRootGameObjectProperty =
+            AccessTools.Property(AnimationWindowStateType, "activeRootGameObject");
+
+        // AdvancedDropdown internals (shared)
+        internal static readonly PropertyInfo AdvancedDropdownMaximumSizeProperty =
+            AccessTools.Property(typeof(UnityEditor.IMGUI.Controls.AdvancedDropdown), "maximumSize");
+
         // RenameOverlay (shared)
         internal static readonly Type RenameOverlayType =
             AccessTools.TypeByName("UnityEditor.RenameOverlay");
@@ -136,6 +153,23 @@ namespace YGDR.Editor.Animation
                 LayerSelectedIndexField != null ? (int)(LayerSelectedIndexField.GetValue(_instance) ?? -1) : -1;
         }
 
+
+        internal readonly struct AnimationWindowStateProxy
+        {
+            readonly object _state;
+
+            internal AnimationWindowStateProxy(AnimationWindow window) =>
+                _state = AnimationWindowStateProperty?.GetValue(window);
+
+            internal AnimationClip ActiveAnimationClip
+            {
+                get => ActiveAnimationClipProperty?.GetValue(_state) as AnimationClip;
+                set => ActiveAnimationClipProperty?.SetValue(_state, value);
+            }
+
+            internal GameObject ActiveRootGameObject =>
+                ActiveRootGameObjectProperty?.GetValue(_state) as GameObject;
+        }
 
         static FieldInfo FindReorderableListField(Type type)
         {

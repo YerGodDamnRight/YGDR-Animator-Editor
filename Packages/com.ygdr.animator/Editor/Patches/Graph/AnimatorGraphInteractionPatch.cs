@@ -155,7 +155,7 @@ namespace YGDR.Editor.Animation
                 bool isAnyStateNode = specialNodeType == AnimatorEditorInit.AnyStateNodeType;
                 bool isEntryNode = specialNodeType == AnimatorEditorInit.EntryNodeType;
                 if (!isAnyStateNode && !isEntryNode) continue;
-                var specialNodePosition = Traverse.Create(node).Field("position").GetValue();
+                var specialNodePosition = GraphPatchReflection.NodePositionField?.GetValue(node);
                 if (specialNodePosition is not Rect specialNodeRect || !specialNodeRect.Contains(hitPos)) continue;
                 var specialSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                 if (specialSM == null) break;
@@ -185,7 +185,7 @@ namespace YGDR.Editor.Animation
             {
                 var rightDownNodeType = node.GetType();
                 if (rightDownNodeType != AnimatorEditorInit.StateNodeType && rightDownNodeType != AnimatorEditorInit.AnyStateNodeType && rightDownNodeType != AnimatorEditorInit.EntryNodeType) continue;
-                var nodePosition = Traverse.Create(node).Field("position").GetValue();
+                var nodePosition = GraphPatchReflection.NodePositionField?.GetValue(node);
                 if (nodePosition is not Rect nodeRect || !nodeRect.Contains(currentEvent.mousePosition)) continue;
                 var activeSMRightDrag = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                 if (rightDownNodeType == AnimatorEditorInit.AnyStateNodeType)
@@ -249,7 +249,7 @@ namespace YGDR.Editor.Animation
                             && destNodeType != AnimatorEditorInit.ExitNodeType
                             && destNodeType != AnimatorEditorInit.StateMachineNodeType) continue;
                         if (destNodeType == AnimatorEditorInit.ExitNodeType && (isAnyStateSrc || isEntrySrc)) continue;
-                        var nodePosition = Traverse.Create(node).Field("position").GetValue();
+                        var nodePosition = GraphPatchReflection.NodePositionField?.GetValue(node);
                         if (nodePosition is not Rect nodeRect || !nodeRect.Contains(currentEvent.mousePosition)) continue;
                         if (destNodeType == AnimatorEditorInit.ExitNodeType)
                             rightDragToExit = true;
@@ -792,7 +792,7 @@ namespace YGDR.Editor.Animation
                     if (node.GetType() != AnimatorEditorInit.StateNodeType) continue;
                     var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(node) as AnimatorState;
                     if (nodeState != pasteSource) continue;
-                    var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
+                    var sourceRect = (Rect)(GraphPatchReflection.NodePositionField?.GetValue(node) ?? default(Rect));
                     var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
                     var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
                     PatchTransitionCopyPaste.BeginPaste(pasteSource, sourceRect, activeSMForPaste);
@@ -810,7 +810,7 @@ namespace YGDR.Editor.Animation
                     foreach (var node in GetNodes(pasteGraph) ?? System.Array.Empty<object>())
                     {
                         if (node.GetType() != AnimatorEditorInit.AnyStateNodeType) continue;
-                        var sourceRect = Traverse.Create(node).Field("position").GetValue<Rect>();
+                        var sourceRect = (Rect)(GraphPatchReflection.NodePositionField?.GetValue(node) ?? default(Rect));
                         var getActiveSMForPaste = AccessTools.Method(__instance.GetType(), "get_activeStateMachine");
                         var activeSMForPaste = getActiveSMForPaste?.Invoke(__instance, null) as AnimatorStateMachine;
                         if (activeSMForPaste == null) break;
@@ -871,7 +871,7 @@ namespace YGDR.Editor.Animation
             foreach (var node in GetNodes(exitGraph) ?? System.Array.Empty<object>())
             {
                 if (node.GetType() != AnimatorEditorInit.ExitNodeType) continue;
-                var pos = Traverse.Create(node).Field("position").GetValue();
+                var pos = GraphPatchReflection.NodePositionField?.GetValue(node);
                 if (!(pos is Rect exitRect) || !exitRect.Contains(currentEvent.mousePosition)) continue;
                 var sm = PatchTransitionCopyPaste.PasteSM;
                 var source = PatchTransitionCopyPaste.PasteSource;
@@ -899,7 +899,7 @@ namespace YGDR.Editor.Animation
             {
                 foreach (var node in nodes)
                 {
-                    var pos = Traverse.Create(node).Field("position").GetValue();
+                    var pos = GraphPatchReflection.NodePositionField?.GetValue(node);
                     if (pos is Rect rect && rect.Contains(mousePos))
                     {
                         if (!PatchStateChainTransition.ChainActive && !PatchTransitionCopyPaste.PasteActive && currentEvent.alt && !currentEvent.control)
@@ -1053,7 +1053,7 @@ namespace YGDR.Editor.Animation
                 bool isExitNode  = canSnapToExit  && nodeType == AnimatorEditorInit.ExitNodeType;
                 bool isSubSMNode = canSnapToSubSM && nodeType == AnimatorEditorInit.StateMachineNodeType;
                 if (!isStateNode && !isExitNode && !isSubSMNode) continue;
-                var pos = Traverse.Create(node).Field("position").GetValue();
+                var pos = GraphPatchReflection.NodePositionField?.GetValue(node);
                 if (pos is Rect rect && rect.Contains(mousePos))
                 {
                     PatchStateChainTransition.SnapTarget = rect.center;
@@ -1326,7 +1326,7 @@ namespace YGDR.Editor.Animation
                 var nodeState = GraphPatchReflection.StateNodeStateField?.GetValue(__instance) as AnimatorState;
                 if (nodeState == null) return;
 
-                var nodeRect = Traverse.Create(__instance).Field("position").GetValue<Rect>();
+                var nodeRect = (Rect)(GraphPatchReflection.NodePositionField?.GetValue(__instance) ?? default(Rect));
                 var kb = AnimatorDefaultSettings.Load();
 
                 if ((isClick && currentEvent.control && currentEvent.clickCount == 2)

@@ -55,7 +55,7 @@ namespace YGDR.Editor.Animation
                 && activeGameObject.GetComponentInParent<Animator>(true) != null)
                 CachedAnimatorGameObject = activeGameObject;
 
-            if (Selection.activeObject is not UnityEditor.Animations.AnimatorState selectedState) return;
+            if (Selection.activeObject is not AnimatorState selectedState) return;
             if (selectedState.motion is not AnimationClip clip) return;
 
             var animationWindow = Resources.FindObjectsOfTypeAll<AnimationWindow>().FirstOrDefault();
@@ -87,13 +87,13 @@ namespace YGDR.Editor.Animation
             var animatorGameObject = GetOrFindAnimatorGameObject();
             if (animatorGameObject == null) return;
 
-            var activeRootGameObject = Traverse.Create(__instance).Property("state").Property("activeRootGameObject").GetValue<GameObject>();
-            if (activeRootGameObject == animatorGameObject) return;
+            var stateProxy = new WindowPatchReflection.AnimationWindowStateProxy(__instance);
+            if (stateProxy.ActiveRootGameObject == animatorGameObject) return;
 
             try
             {
                 _editGameObjectArgs[0] = animatorGameObject; EditGameObjectMethod?.Invoke(__instance, _editGameObjectArgs);
-                Traverse.Create(__instance).Property("state").Property("activeAnimationClip").SetValue(animationClip);
+                new WindowPatchReflection.AnimationWindowStateProxy(__instance).ActiveAnimationClip = animationClip;
             }
             catch (Exception e)
             {
@@ -128,49 +128,12 @@ namespace YGDR.Editor.Animation
         }
     }
 
-    // Format clip dropdown with '.' → '/' so clips appear as nested submenus + inject "Create New Clip..."
-    [HarmonyPatch]
-    [HarmonyPriority(Priority.Low)]
-    internal static class PatchClipMenuNesting
-    {
-        [HarmonyTargetMethod]
-        static MethodBase TargetMethod() =>
-            AccessTools.Method(WindowPatchReflection.AnimationWindowClipPopupType, "GetClipMenuContent");
-
-        [HarmonyPostfix]
-        static void Postfix(ref GUIContent[] __result)
-        {
-            if (!AnimatorDefaultSettings.Load().clipMenuNestingEnabled) return;
-            if (__result == null) return;
-
-            // Detect Unity's separator + "Create New Clip..." tail (added when canCreateClips).
-            // Must check BEFORE replacing dots — "Create New Clip..." contains dots that would
-            // become slashes and corrupt the entry into a nested submenu path.
-            bool unityAddedCreate = __result.Length >= 2
-                && __result[^2] == GUIContent.none
-                && __result[^1]?.text == "Create New Clip...";
-
-            int clipCount = unityAddedCreate ? __result.Length - 2 : __result.Length;
-            for (int i = 0; i < clipCount; i++)
-            {
-                if (__result[i]?.text is { Length: > 0 } text)
-                    __result[i] = new GUIContent(text.Replace('.', '/'), __result[i].tooltip);
-            }
-
-            if (unityAddedCreate) return;
-
-            var withCreate = new GUIContent[__result.Length + 2];
-            __result.CopyTo(withCreate, 0);
-            withCreate[__result.Length]     = GUIContent.none;
-            withCreate[__result.Length + 1] = new GUIContent("Create New Clip...");
-            __result = withCreate;
-        }
-    }
-
     // Replaces the clip popup OnGUI with a searchable AdvancedDropdown backed by controller clips.
     [HarmonyPatch]
     internal static class PatchClipMenuAdvancedDropdown
     {
+        internal const string CreateNewClipLabel = "Create New Clip...";
+
         static AnimatorController  _cachedController;
         static List<AnimationClip> _cachedClips;
 
@@ -195,20 +158,41 @@ namespace YGDR.Editor.Animation
                 _cachedClips      = CollectClips(controller);
             }
 
-            var activeClip = Traverse.Create(animWindow)
-                .Property("state").Property("activeAnimationClip").GetValue<AnimationClip>();
+            var activeClip = new WindowPatchReflection.AnimationWindowStateProxy(animWindow).ActiveAnimationClip;
             string label = activeClip != null ? activeClip.name : "None";
 
-            var rect        = GUILayoutUtility.GetRect(205f, EditorGUIUtility.singleLineHeight, EditorStyles.toolbarPopup);
-            var capturedWin = animWindow;
+            var rect = GUILayoutUtility.GetRect(205f, EditorGUIUtility.singleLineHeight, EditorStyles.toolbarPopup);
             if (EditorGUI.DropdownButton(rect, new GUIContent(label), FocusType.Passive, EditorStyles.toolbarPopup))
-                new ClipMenuDropdown(_cachedClips, activeClip, clip =>
+            {
+                void SelectClip(AnimationClip clip)
                 {
-                    try { WindowPatchReflection.AnimationWindowEditAnimationClipMethod?.Invoke(capturedWin, new object[] { clip }); }
+                    try { WindowPatchReflection.AnimationWindowEditAnimationClipMethod?.Invoke(animWindow, new object[] { clip }); }
                     catch (Exception e) { Debug.LogError($"[AnimatorTools] ClipMenuDropdown select: {e}"); }
+                }
+
+                new ClipMenuDropdown(_cachedClips, activeClip, SelectClip, () =>
+                {
+                    var newClip = CreateNewClipAsset();
+                    if (newClip == null) return;
+                    InvalidateClipCache();
+                    SelectClip(newClip);
                 }).ShowDropdown(rect);
+            }
 
             return false;
+        }
+
+        internal static void InvalidateClipCache() => _cachedController = null;
+
+        static AnimationClip CreateNewClipAsset()
+        {
+            var path = EditorUtility.SaveFilePanelInProject("Create New Animation", "New Animation", "anim", "Create a new animation clip.");
+            if (string.IsNullOrEmpty(path)) return null;
+
+            var clip = new AnimationClip();
+            AssetDatabase.CreateAsset(clip, path);
+            AssetDatabase.SaveAssets();
+            return clip;
         }
 
         static List<AnimationClip> CollectClips(AnimatorController controller)
@@ -235,7 +219,6 @@ namespace YGDR.Editor.Animation
 
     internal class ClipMenuDropdown : AdvancedDropdown
     {
-        static readonly PropertyInfo MaximumSizeProperty = AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
         static readonly FieldInfo    DataSourceField     = AccessTools.Field(typeof(AdvancedDropdown), "m_DataSource");
         static readonly FieldInfo    ItemIdField         = AccessTools.Field(typeof(AdvancedDropdownItem), "m_Id");
         static FieldInfo _selectedIDsField;
@@ -243,20 +226,22 @@ namespace YGDR.Editor.Animation
         readonly List<AnimationClip>   _clips;
         readonly AnimationClip         _currentClip;
         readonly Action<AnimationClip> _onSelected;
+        readonly Action                _onCreateNew;
         ClipItem                       _currentItem;
 
-        internal ClipMenuDropdown(List<AnimationClip> clips, AnimationClip currentClip, Action<AnimationClip> onSelected)
+        internal ClipMenuDropdown(List<AnimationClip> clips, AnimationClip currentClip, Action<AnimationClip> onSelected, Action onCreateNew)
             : base(new AdvancedDropdownState())
         {
             _clips       = clips;
             _currentClip = currentClip;
             _onSelected  = onSelected;
+            _onCreateNew = onCreateNew;
             minimumSize  = new Vector2(220, 150);
         }
 
         internal void ShowDropdown(Rect rect)
         {
-            MaximumSizeProperty?.SetValue(this, new Vector2(10000f, 500f));
+            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 500f));
             Show(rect);
 
             if (_currentItem == null || ItemIdField == null || DataSourceField == null) return;
@@ -279,9 +264,10 @@ namespace YGDR.Editor.Animation
             var root   = new AdvancedDropdownItem("Clips");
             var groups = new Dictionary<string, AdvancedDropdownItem>();
 
+            var delimiter = AnimatorDefaultSettings.Load().clipMenuNestingDelimiter;
             foreach (var clip in _clips)
             {
-                var parts  = clip.name.Replace('.', '/').Split('/');
+                var parts  = clip.name.Replace(delimiter, '/').Split('/');
                 var parent = root;
 
                 for (int i = 0; i < parts.Length - 1; i++)
@@ -301,12 +287,17 @@ namespace YGDR.Editor.Animation
                 parent.AddChild(item);
             }
 
+            root.AddSeparator();
+            root.AddChild(new ClipItem(PatchClipMenuAdvancedDropdown.CreateNewClipLabel, null));
+
             return root;
         }
 
         protected override void ItemSelected(AdvancedDropdownItem item)
         {
-            if (item is ClipItem ci) _onSelected?.Invoke(ci.Clip);
+            if (item is not ClipItem ci) return;
+            if (ci.Clip != null) _onSelected?.Invoke(ci.Clip);
+            else _onCreateNew?.Invoke();
         }
 
         class ClipItem : AdvancedDropdownItem
@@ -323,7 +314,7 @@ namespace YGDR.Editor.Animation
         {
             var gameObject = Selection.activeGameObject;
             var animator = gameObject.GetComponentInParent<Animator>(true);
-            var controller = (animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController)
+            var controller = (animator.runtimeAnimatorController as AnimatorController)
                 ?? WindowPatchReflection.GetOpenController();
             var relativePath = GetRelativePath(animator.transform, gameObject.transform);
             if (relativePath == null) return;
@@ -337,14 +328,14 @@ namespace YGDR.Editor.Animation
             if (gameObject == null) return false;
             var animator = gameObject.GetComponentInParent<Animator>(true);
             if (animator == null) return false;
-            if ((animator.runtimeAnimatorController as UnityEditor.Animations.AnimatorController) != null) return true;
+            if ((animator.runtimeAnimatorController as AnimatorController) != null) return true;
             var activeController = WindowPatchReflection.GetOpenController();
             if (activeController == null) return false;
 #if VRC_SDK_VRCSDK3
             var descriptor = gameObject.GetComponentInParent<VRCAvatarDescriptor>(true);
             if (descriptor == null) return false;
             return descriptor.baseAnimationLayers.Concat(descriptor.specialAnimationLayers)
-                .Any(layer => layer.animatorController as UnityEditor.Animations.AnimatorController == activeController);
+                .Any(layer => layer.animatorController as AnimatorController == activeController);
 #else
             return false;
 #endif
@@ -353,7 +344,7 @@ namespace YGDR.Editor.Animation
         static string GetRelativePath(Transform root, Transform target)
         {
             if (target == root) return "";
-            var parts = new System.Collections.Generic.List<string>();
+            var parts = new List<string>();
             var current = target;
             while (current != null && current != root)
             {

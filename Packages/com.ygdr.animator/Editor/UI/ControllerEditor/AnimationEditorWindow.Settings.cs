@@ -402,7 +402,7 @@ namespace YGDR.Editor.Animation
             {
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField(L10n.Get("settings.node_colors.visual_style"), GUILayout.Width(115));
+                    EditorGUILayout.LabelField(L10n.Get("settings.node_colors.visual_style"), GUILayout.Width(150));
                     EditorGUI.BeginChangeCheck();
                     bool is3D = EditorGUILayout.ToggleLeft(L10n.Get("settings.node_colors.flat_3d"), settings.nodeColor3DEnabled);
                     if (EditorGUI.EndChangeCheck())
@@ -434,6 +434,50 @@ namespace YGDR.Editor.Animation
             bool newValue = EditorGUI.ToggleLeft(rect, label, value);
             if (EditorGUI.EndChangeCheck()) { value = newValue; settings.Save(); }
             EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+        }
+
+        static readonly char[] ClipMenuNestingDelimiters = { '-', '.', '_' };
+
+        static void DrawBorderRect(Rect rect, Color color, float thickness = 1f)
+        {
+            EditorGUI.DrawRect(new Rect(rect.x, rect.y, rect.width, thickness), color);
+            EditorGUI.DrawRect(new Rect(rect.x, rect.yMax - thickness, rect.width, thickness), color);
+            EditorGUI.DrawRect(new Rect(rect.x, rect.y, thickness, rect.height), color);
+            EditorGUI.DrawRect(new Rect(rect.xMax - thickness, rect.y, thickness, rect.height), color);
+        }
+
+        static void DrawClipMenuNestingDelimiterButtons(Rect rect, AnimatorDefaultSettings settings, bool enabled)
+        {
+            const float btnSize = 20f;
+            const float gap     = 4f;
+
+            for (int i = 0; i < ClipMenuNestingDelimiters.Length; i++)
+            {
+                char delimiter = ClipMenuNestingDelimiters[i];
+                var btnRect = new Rect(rect.x + i * (btnSize + gap), rect.y, btnSize, btnSize);
+                bool active = settings.clipMenuNestingDelimiter == delimiter;
+
+                if (Event.current.type == EventType.Repaint)
+                {
+                    bool hovered = enabled && btnRect.Contains(Event.current.mousePosition);
+                    var accent = Styles.AccentColor;
+                    Color fill = active
+                        ? (hovered ? new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f) : accent)
+                        : (hovered ? new Color(accent.r, accent.g, accent.b, 0.5f) : new Color(accent.r, accent.g, accent.b, 0.25f));
+                    if (!enabled) fill.a *= 0.4f;
+                    EditorGUI.DrawRect(btnRect, fill);
+                    GUI.Label(btnRect, delimiter.ToString(), BindingBtnLabelStyle);
+                }
+
+                if (!enabled) continue;
+
+                EditorGUIUtility.AddCursorRect(btnRect, MouseCursor.Link);
+                if (GUI.Button(btnRect, GUIContent.none, GUIStyle.none))
+                {
+                    settings.clipMenuNestingDelimiter = delimiter;
+                    settings.Save();
+                }
+            }
         }
 
         static void DrawFeatureToggle(string featureId, string label, string tooltip)
@@ -718,17 +762,26 @@ namespace YGDR.Editor.Animation
             float miscLineHeight = EditorGUIUtility.singleLineHeight;
             var miscRow1Rect = EditorGUILayout.GetControlRect(false, miscLineHeight);
             var miscRow2Rect = EditorGUILayout.GetControlRect(false, miscLineHeight);
-            float miscColWidth = miscRow1Rect.width / 4f;
+            var miscRow3Rect = EditorGUILayout.GetControlRect(false, miscLineHeight);
+            float miscColWidth = miscRow1Rect.width / 3f;
 
             DrawOverlayToggle(new Rect(miscRow1Rect.x + 0 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.wd_blend_trees"),       ref settings.wdIncludeBlendTreeStates,   settings);
             DrawOverlayToggle(new Rect(miscRow1Rect.x + 1 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.prevent_layer_scroll"), ref settings.preventLayerScroll,         settings);
             DrawOverlayToggle(new Rect(miscRow1Rect.x + 2 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.prevent_param_scroll"), ref settings.preventParameterScroll,     settings);
-            DrawOverlayToggle(new Rect(miscRow1Rect.x + 3 * miscColWidth, miscRow1Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.layer_weight_1"),       ref settings.newLayerWeightOne,          settings);
 
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 0 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.clip_menu_nesting"), ref settings.clipMenuNestingEnabled,     settings);
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 1 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.layer_templates"),   ref settings.layerTemplateButtonEnabled, settings);
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 2 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.param_add_menu"),    ref settings.parameterAddMenuEnabled,    settings);
-            DrawOverlayToggle(new Rect(miscRow2Rect.x + 3 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.frames"),            ref settings.framesEnabled,              settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 0 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.layer_weight_1"),       ref settings.newLayerWeightOne,          settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 1 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.layer_templates"),     ref settings.layerTemplateButtonEnabled, settings);
+            DrawOverlayToggle(new Rect(miscRow2Rect.x + 2 * miscColWidth, miscRow2Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.param_add_menu"),      ref settings.parameterAddMenuEnabled,    settings);
+
+            DrawOverlayToggle(new Rect(miscRow3Rect.x + 0 * miscColWidth, miscRow3Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.frames"),              ref settings.framesEnabled,              settings);
+
+            const float clipGroupPad = 3f;
+            var clipGroupRect = new Rect(miscRow3Rect.x + 1 * miscColWidth - clipGroupPad, miscRow3Rect.y - clipGroupPad, 2 * miscColWidth + clipGroupPad * 2, miscLineHeight + clipGroupPad * 2);
+            if (Event.current.type == EventType.Repaint)
+                DrawBorderRect(clipGroupRect, new Color(1f, 1f, 1f, 0.15f));
+
+            DrawOverlayToggle(new Rect(miscRow3Rect.x + 1 * miscColWidth, miscRow3Rect.y, miscColWidth, miscLineHeight), L10n.Get("settings.misc.clip_menu_nesting"),   ref settings.clipMenuNestingEnabled,     settings);
+            DrawClipMenuNestingDelimiterButtons(new Rect(miscRow3Rect.x + 2 * miscColWidth, miscRow3Rect.y, miscColWidth, miscLineHeight), settings, settings.clipMenuNestingEnabled);
 
             EditorGUILayout.Space(6);
             EditorGUILayout.LabelField(L10n.Get("settings.misc.palettes"), EditorStyles.boldLabel);

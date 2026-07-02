@@ -355,6 +355,7 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool preventLayerScroll        = true;
         [SerializeField] internal bool preventParameterScroll    = true;
         [SerializeField] internal bool clipMenuNestingEnabled  = true;
+        [SerializeField] internal char clipMenuNestingDelimiter = '.';
         [SerializeField] internal bool layerTemplateButtonEnabled = true;
         [SerializeField] internal bool parameterAddMenuEnabled   = true;
 

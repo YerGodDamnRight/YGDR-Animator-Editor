@@ -1061,9 +1061,6 @@ namespace YGDR.Editor.Animation
 
         class ParameterRemapDropdown : AdvancedDropdown
         {
-            static readonly System.Reflection.PropertyInfo MaximumSizeProperty =
-                AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
-
             readonly AnimatorController _controller;
             readonly string _fromParam;
 
@@ -1077,7 +1074,7 @@ namespace YGDR.Editor.Animation
 
             internal void ShowCapped(Rect rect)
             {
-                MaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
+                WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
                 Show(rect);
             }
 

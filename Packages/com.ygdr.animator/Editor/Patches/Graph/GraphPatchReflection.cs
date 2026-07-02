@@ -33,6 +33,7 @@ namespace YGDR.Editor.Animation
             WarnIfNull(OnGraphGUIMethod, "GraphGUI.OnGraphGUI");
             WarnIfNull(DrawEdgeMethod, "EdgeGUI.DrawEdge");
             WarnIfNull(RebuildGraphMethod, "AnimatorControllerTool.RebuildGraph");
+            WarnIfNull(NodePositionField, "Node.position");
         }
 
         static void WarnIfNull(object value, string label)
@@ -86,6 +87,10 @@ namespace YGDR.Editor.Animation
                 new[] { typeof(bool) });
 
         // ── Node fields ──────────────────────────────────────────────────────
+        internal static readonly System.Type NodeType =
+            AccessTools.TypeByName("UnityEditor.Graphs.Node");
+        internal static readonly FieldInfo NodePositionField =
+            AccessTools.Field(NodeType, "position");
         internal static readonly FieldInfo StateNodeStateField =
             AccessTools.Field(AnimatorEditorInit.StateNodeType, "state");
         internal static readonly FieldInfo StateMachineNodeStateMachineField =
