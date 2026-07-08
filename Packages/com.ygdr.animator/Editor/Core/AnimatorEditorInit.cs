@@ -19,6 +19,7 @@
 
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
@@ -64,17 +65,30 @@ namespace YGDR.Editor.Animation
         static AnimatorEditorInit()
         {
             // Layer 1 crash guard: if a feature's PendingEnable flag survived shutdown it caused a lockup
+            List<string> lockedUp = null;
             foreach (var featureId in FeatureHarmony.AllFeatureIds)
             {
                 if (EditorPrefs.GetBool($"AnimatorTools.PendingEnable.{featureId}", false))
                 {
-                    Debug.LogWarning($"[AnimatorTools] {featureId} may have caused a lockup — auto-disabled. Re-enable in Compatibility settings.");
+                    (lockedUp ??= new List<string>()).Add(featureId);
                     EditorPrefs.SetBool($"AnimatorTools.Feature.{featureId}", false);
                     EditorPrefs.DeleteKey($"AnimatorTools.PendingEnable.{featureId}");
                 }
             }
+            if (lockedUp != null)
+            {
+                var msg = $"[AnimatorTools] {string.Join(", ", lockedUp)} may have caused a lockup — auto-disabled. Re-enable in Compatibility settings.";
+                Debug.LogWarning(msg);
+                EditorApplication.delayCall += () => EditorUtility.DisplayDialog(
+                    "AnimatorTools — features auto-disabled",
+                    $"The following features were auto-disabled after an editor crash/freeze was detected:\n\n{string.Join("\n", lockedUp)}\n\nRe-enable them in YGDR Editor Window → Settings → Compatibility if the crash wasn't caused by them.",
+                    "OK");
+            }
 
+            // Reaching a graceful reload/quit proves there was no lockup — clear guard flags so they don't strand.
             AssemblyReloadEvents.beforeAssemblyReload += FeatureHarmony.UnpatchAll;
+            AssemblyReloadEvents.beforeAssemblyReload += FeatureHarmony.ClearPendingFlags;
+            EditorApplication.quitting += FeatureHarmony.ClearPendingFlags;
 
             EditorApplication.update -= DoPatches;
             EditorApplication.update += DoPatches;
@@ -137,11 +151,26 @@ namespace YGDR.Editor.Animation
         }
 
         // Layer 3: emergency recovery — reverts all IL in place if the Animator window is frozen
-        [MenuItem("YGDR/Animator Editor/Emergency: Unpatch All")]
+        [MenuItem("YGDR/Animator Editor/Emergency: Unpatch All", priority = 1)]
         static void EmergencyUnpatch()
         {
             FeatureHarmony.UnpatchAll();
             Debug.Log("[AnimatorTools] All patches Disabled. Re-enable features via YGDR Editor Window Settings Tab → Compatibility.");
+        }
+
+        // Recovery: clears stuck crash-guard/feature prefs and re-enables everything. For prefs poisoned by a past crash.
+        [MenuItem("YGDR/Animator Editor/Reset All Feature Prefs (Recovery)", priority = 2)]
+        static void ResetAllFeaturePrefs()
+        {
+            if (!EditorUtility.DisplayDialog(
+                "Reset All Feature Prefs",
+                "Wipes all AnimatorTools feature prefs (including any stuck after a crash) and re-enables every feature. Use this if the tool stopped working after an editor crash or freeze.",
+                "Reset", "Cancel"))
+                return;
+
+            FeatureHarmony.ResetAll();
+            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+            Debug.Log("[AnimatorTools] All feature prefs reset and features re-enabled.");
         }
     }
 }

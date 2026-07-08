@@ -39,6 +39,7 @@ namespace YGDR.Editor.Animation
         static GameObject _cachedSelectedGO;
         static Dictionary<string, bool> _syncMap;
         static Dictionary<string, VRCExpressionParameters.ValueType> _valueTypeMap;
+        static Dictionary<string, VRCExpressionParameters.Parameter> _paramMap;
         static bool _isVrcFurySource;
         static VRCExpressionParameters _vrcFuryParams;
         static AnimatorController _vrcFuryController;
@@ -187,6 +188,7 @@ namespace YGDR.Editor.Animation
         {
             _syncMap = null;
             _valueTypeMap = null;
+            _paramMap = null;
             _cachedAvatarRoot = null;
             _cachedSelectedGO = null;
             _isVrcFurySource = false;
@@ -199,12 +201,14 @@ namespace YGDR.Editor.Animation
         {
             _syncMap = new Dictionary<string, bool>(parameters.Length);
             _valueTypeMap = new Dictionary<string, VRCExpressionParameters.ValueType>(parameters.Length);
+            _paramMap = new Dictionary<string, VRCExpressionParameters.Parameter>(parameters.Length);
             foreach (var expressionParameter in parameters)
             {
                 if (!string.IsNullOrEmpty(expressionParameter.name))
                 {
                     _syncMap[expressionParameter.name] = expressionParameter.networkSynced;
                     _valueTypeMap[expressionParameter.name] = expressionParameter.valueType;
+                    _paramMap[expressionParameter.name] = expressionParameter;
                 }
             }
         }
@@ -308,6 +312,13 @@ namespace YGDR.Editor.Animation
             valueType = default;
             if (_valueTypeMap == null) return false;
             return _valueTypeMap.TryGetValue(paramName, out valueType);
+        }
+
+        internal static bool TryGetParameter(string paramName, out VRCExpressionParameters.Parameter parameter)
+        {
+            parameter = null;
+            if (_paramMap == null) return false;
+            return _paramMap.TryGetValue(paramName, out parameter);
         }
 
         internal static GameObject GetVrcFuryComponentHost() =>

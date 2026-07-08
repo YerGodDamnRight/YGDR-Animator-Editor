@@ -77,6 +77,11 @@ namespace YGDR.Editor.Animation
         static GUIContent SyncedIcon   => _syncedIcon   ??= EditorGUIUtility.IconContent("soloon");
         static GUIContent UnsyncedIcon => _unsyncedIcon ??= EditorGUIUtility.IconContent("solonormal");
 
+        static GUIContent _savedIcon;
+        static GUIContent _unsavedIcon;
+        static GUIContent SavedIcon   => _savedIcon   ??= EditorGUIUtility.IconContent("bypasson");
+        static GUIContent UnsavedIcon => _unsavedIcon ??= EditorGUIUtility.IconContent("bypassnormal");
+
         static GUIStyle _vrcBuiltinStyle;
         static GUIStyle VrcBuiltinStyle => _vrcBuiltinStyle ??= new GUIStyle(EditorStyles.miniLabel)
         {
@@ -122,6 +127,7 @@ namespace YGDR.Editor.Animation
             {
                 _clipCacheControllerId = -1;
                 InvalidateConditionCache();
+                PruneStaleDefaultCache();
             };
 #if VRC_SDK_VRCSDK3
             EditorApplication.hierarchyChanged += () => _vrcComponentNeedsRebuild = true;
@@ -223,6 +229,17 @@ namespace YGDR.Editor.Animation
             _conditionCacheControllerId = -1;
         }
 
+        static void PruneStaleDefaultCache()
+        {
+            if (_lastKnownDefaultByName.Count == 0) return;
+            var controller = ViewFrameController;
+            if (controller == null) return;
+            var currentNames = new HashSet<string>(controller.parameters.Select(p => p.name));
+            var staleKeys = _lastKnownDefaultByName.Keys.Where(k => !currentNames.Contains(k)).ToList();
+            foreach (var key in staleKeys)
+                _lastKnownDefaultByName.Remove(key);
+        }
+
         static void CollectConditionParams(AnimatorStateMachine stateMachine, HashSet<string> result)
         {
             foreach (var transition in stateMachine.anyStateTransitions)
@@ -281,6 +298,7 @@ namespace YGDR.Editor.Animation
 #endif
 
         static readonly Dictionary<int, string> _elementParamNameCache = new();
+        static readonly Dictionary<string, float> _lastKnownDefaultByName = new();
         static readonly GUIContent _tempContent = new GUIContent();
 
         [HarmonyTargetMethod]
@@ -312,8 +330,61 @@ namespace YGDR.Editor.Animation
                     if (controller != null)
                         AnimatorParameterOps.RemapParameterReferences(controller, oldName, parameter.name);
                     _elementParamNameCache[__instance.GetHashCode()] = parameter.name;
-                    EditorApplication.delayCall += () => ActiveEditorTracker.sharedTracker.ForceRebuild();
+                    EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
                 }
+
+#if VRC_SDK_VRCSDK3
+                if (parameter.type != AnimatorControllerParameterType.Trigger)
+                {
+                    float currentDefault = parameter.type switch
+                    {
+                        AnimatorControllerParameterType.Float => parameter.defaultFloat,
+                        AnimatorControllerParameterType.Int   => parameter.defaultInt,
+                        AnimatorControllerParameterType.Bool  => parameter.defaultBool ? 1f : 0f,
+                        _ => 0f
+                    };
+
+                    if (VRCSyncCache.TryGetParameter(parameter.name, out var vrcParamForDefault))
+                    {
+                        bool hasLastKnown = _lastKnownDefaultByName.TryGetValue(parameter.name, out float lastKnown);
+                        if (!hasLastKnown)
+                        {
+                            _lastKnownDefaultByName[parameter.name] = currentDefault;
+                        }
+                        else if (vrcParamForDefault.defaultValue != lastKnown)
+                        {
+                            var controller = ViewFrameController;
+                            if (controller != null)
+                            {
+                                var allParams = controller.parameters;
+                                int paramIndex = System.Array.FindIndex(allParams, p => p.name == parameter.name);
+                                if (paramIndex >= 0)
+                                {
+                                    Undo.RecordObject(controller, "Sync Parameter Default From VRC");
+                                    switch (parameter.type)
+                                    {
+                                        case AnimatorControllerParameterType.Float: allParams[paramIndex].defaultFloat = vrcParamForDefault.defaultValue; break;
+                                        case AnimatorControllerParameterType.Int:   allParams[paramIndex].defaultInt   = (int)vrcParamForDefault.defaultValue; break;
+                                        case AnimatorControllerParameterType.Bool:  allParams[paramIndex].defaultBool  = vrcParamForDefault.defaultValue != 0f; break;
+                                    }
+                                    controller.parameters = allParams;
+                                    EditorUtility.SetDirty(controller);
+                                }
+                            }
+                            _lastKnownDefaultByName[parameter.name] = vrcParamForDefault.defaultValue;
+                        }
+                        else if (currentDefault != lastKnown)
+                        {
+                            var expParamsForDefault = VRCSyncCache.GetExpressionParameters();
+                            Undo.RecordObject(expParamsForDefault, "Sync VRC Parameter Default");
+                            vrcParamForDefault.defaultValue = currentDefault;
+                            EditorUtility.SetDirty(expParamsForDefault);
+                            EditorApplication.delayCall += () => WindowPatchReflection.RebuildInspectorsShowing(expParamsForDefault);
+                            _lastKnownDefaultByName[parameter.name] = currentDefault;
+                        }
+                    }
+                }
+#endif
 
                 var settings = ViewFrameSettings ?? AnimatorDefaultSettings.Load();
                 bool showType = settings.showParamTypeIcons;
@@ -348,26 +419,39 @@ namespace YGDR.Editor.Animation
                 const float iconSize = 14f;
                 if (hasSyncData && showVrcComponent)
                 {
+                    var expParams = VRCSyncCache.GetExpressionParameters();
+                    VRCExpressionParameters.Parameter vrcParam = null;
+                    if (expParams != null) VRCSyncCache.TryGetParameter(parameter.name, out vrcParam);
+
                     cursorX -= iconSize + iconPadding;
                     var syncIconRect = new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
                     GUI.Label(syncIconRect, isSynced ? SyncedIcon : UnsyncedIcon);
                     if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && syncIconRect.Contains(Event.current.mousePosition))
                     {
                         Event.current.Use();
-                        var expParams = VRCSyncCache.GetExpressionParameters();
-                        if (expParams?.parameters != null)
+                        if (vrcParam != null)
                         {
-                            var vrcParam = System.Array.Find(expParams.parameters, p => p.name == parameter.name);
-                            if (vrcParam != null)
-                            {
-                                Undo.RecordObject(expParams, "Toggle VRC Parameter Sync");
-                                vrcParam.networkSynced = !vrcParam.networkSynced;
-                                EditorUtility.SetDirty(expParams);
-                                EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
-                            }
+                            AnimatorParameterOps.SetVrcSynced(expParams, parameter.name, !isSynced);
+                            EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
                         }
                     }
                     cursorX -= iconPadding;
+
+                    if (vrcParam != null)
+                    {
+                        cursorX -= iconSize;
+                        var savedIconRect = new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
+                        GUI.Label(savedIconRect, vrcParam.saved ? SavedIcon : UnsavedIcon);
+                        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && savedIconRect.Contains(Event.current.mousePosition))
+                        {
+                            Event.current.Use();
+                            Undo.RecordObject(expParams, "Toggle VRC Parameter Saved");
+                            vrcParam.saved = !vrcParam.saved;
+                            EditorUtility.SetDirty(expParams);
+                            EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
+                        }
+                        cursorX -= iconPadding;
+                    }
                 }
 #endif
 

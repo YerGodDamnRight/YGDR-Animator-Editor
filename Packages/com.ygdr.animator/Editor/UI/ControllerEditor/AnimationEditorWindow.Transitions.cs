@@ -401,7 +401,7 @@ namespace YGDR.Editor.Animation
                 _cachedForOwners = allOwners;
                 _cachedForSharedMode = _showSharedConditions;
                 _danglingParamResolution = BuildDanglingResolution();
-                _cachedParameterNames = _controller?.parameters.Select(parameter => parameter.name).ToArray() ?? Array.Empty<string>();
+                _cachedParameterNames = _controller != null ? _controller.parameters.Select(parameter => parameter.name).ToArray() : Array.Empty<string>();
                 _cachedParamNameSet   = new HashSet<string>(_cachedParameterNames);
                 _conditionCacheDirty = false;
             }
@@ -645,7 +645,8 @@ namespace YGDR.Editor.Animation
         /* Looks up the parameter type by name from the active controller, defaulting to Float if not found. */
         AnimatorControllerParameterType GetParamType(string paramName)
         {
-            var parameter = _controller?.parameters.FirstOrDefault(x => x.name == paramName);
+            if (_controller == null) return AnimatorControllerParameterType.Float;
+            var parameter = _controller.parameters.FirstOrDefault(x => x.name == paramName);
             return parameter?.type ?? AnimatorControllerParameterType.Float;
         }
 

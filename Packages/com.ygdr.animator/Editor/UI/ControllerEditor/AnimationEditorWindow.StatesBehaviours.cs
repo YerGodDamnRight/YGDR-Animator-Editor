@@ -671,7 +671,7 @@ void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
         {
             if (_selectedStates.Length > 1) EnsureUniqueDrivers();
             string defaultName = string.Empty;
-            if (_controller?.parameters.Length > 0)
+            if (_controller != null && _controller.parameters.Length > 0)
             {
                 var defaultParam = _controller.parameters[0];
                 var usedNames = new HashSet<string>(_selectedStates.SelectMany(state =>

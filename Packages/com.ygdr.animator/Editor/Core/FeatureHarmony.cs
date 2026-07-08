@@ -152,11 +152,21 @@ namespace YGDR.Editor.Animation
                 // Layer 1: write crash guard flag; cleared next frame if no lockup
                 EditorPrefs.SetBool($"AnimatorTools.PendingEnable.{featureId}", true);
                 var harmony = new Harmony(featureId);
-                _instances[featureId] = harmony;
-                foreach (var type in _featureClasses[featureId])
-                    harmony.CreateClassProcessor(type).Patch();
-                // Clear pending flag next frame — proves patch survived without crash
-                EditorApplication.delayCall += () => EditorPrefs.DeleteKey($"AnimatorTools.PendingEnable.{featureId}");
+                try
+                {
+                    foreach (var type in _featureClasses[featureId])
+                        harmony.CreateClassProcessor(type).Patch();
+                    _instances[featureId] = harmony;
+                    // Clear pending flag next frame — proves patch survived without crash
+                    EditorApplication.delayCall += () => EditorPrefs.DeleteKey($"AnimatorTools.PendingEnable.{featureId}");
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[AnimatorTools] Failed to enable {featureId}, disabling it: {e}");
+                    harmony.UnpatchAll(harmony.Id);
+                    EditorPrefs.DeleteKey($"AnimatorTools.PendingEnable.{featureId}");
+                    EditorPrefs.SetBool($"AnimatorTools.Feature.{featureId}", false);
+                }
             }
             else
             {
@@ -182,6 +192,14 @@ namespace YGDR.Editor.Animation
         {
             foreach (var featureId in AllFeatureIds)
                 EditorPrefs.DeleteKey($"AnimatorTools.PendingEnable.{featureId}");
+        }
+
+        // Nuclear reset: wipes all feature + crash-guard prefs and re-enables everything. User-triggered recovery for poisoned prefs.
+        internal static void ResetAll()
+        {
+            ClearPendingFlags();
+            foreach (var featureId in AllFeatureIds)
+                SetEnabled(featureId, true);
         }
 
         // Warn if another tool's transpiler conflicts on the same method

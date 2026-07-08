@@ -34,7 +34,7 @@ namespace YGDR.Editor.Animation
     {
         static readonly string[] _tabs    = { "Transitions", "States", "Controller", "Settings" };
         static readonly string[] _tabKeys = { "tabs.transitions", "tabs.states", "tabs.controller", "tabs.settings" };
-        bool[] _tabOpen = { true, false, false, false };
+        [SerializeField] bool[] _tabOpen = { true, false, false, false };
         Vector2 _scrollPosition;
 
         AnimatorStateTransition[] _selectedTransitions = Array.Empty<AnimatorStateTransition>();
@@ -60,7 +60,7 @@ namespace YGDR.Editor.Animation
         Action _helpSettings;
         static Action _helpDocs;
 
-        [MenuItem("YGDR/Animator Editor/Open")]
+        [MenuItem("YGDR/Animator Editor/Open", priority = 0)]
         static void Open()
         {
             var window = GetWindow<AnimationEditorWindow>("YGDR Animator Editor");
