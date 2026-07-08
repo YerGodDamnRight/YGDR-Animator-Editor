@@ -159,9 +159,9 @@ namespace YGDR.Editor.Animation
             }
 
             var activeClip = new WindowPatchReflection.AnimationWindowStateProxy(animWindow).ActiveAnimationClip;
-            string label = activeClip != null ? activeClip.name : "None";
+            string label = activeClip != null ? activeClip.name : "[No Clip]";
 
-            var rect = GUILayoutUtility.GetRect(205f, EditorGUIUtility.singleLineHeight, EditorStyles.toolbarPopup);
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight, EditorStyles.toolbarPopup);
             if (EditorGUI.DropdownButton(rect, new GUIContent(label), FocusType.Passive, EditorStyles.toolbarPopup))
             {
                 void SelectClip(AnimationClip clip)
@@ -172,7 +172,7 @@ namespace YGDR.Editor.Animation
 
                 new ClipMenuDropdown(_cachedClips, activeClip, SelectClip, () =>
                 {
-                    var newClip = CreateNewClipAsset();
+                    var newClip = CreateNewClipAsset(controller);
                     if (newClip == null) return;
                     InvalidateClipCache();
                     SelectClip(newClip);
@@ -182,17 +182,45 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
+        static PatchClipMenuAdvancedDropdown() => ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream _) => InvalidateClipCache();
+
         internal static void InvalidateClipCache() => _cachedController = null;
 
-        static AnimationClip CreateNewClipAsset()
+        // In-memory only: reset every editor session, seeded from the controller's own folder.
+        static string _lastClipCreationFolder;
+
+        static AnimationClip CreateNewClipAsset(AnimatorController controller)
         {
-            var path = EditorUtility.SaveFilePanelInProject("Create New Animation", "New Animation", "anim", "Create a new animation clip.");
+            if (_lastClipCreationFolder == null || !AssetDatabase.IsValidFolder(_lastClipCreationFolder))
+            {
+                var controllerPath = AssetDatabase.GetAssetPath(controller);
+                _lastClipCreationFolder = string.IsNullOrEmpty(controllerPath)
+                    ? "Assets" : System.IO.Path.GetDirectoryName(controllerPath).Replace('\\', '/');
+            }
+
+            var path = EditorUtility.SaveFilePanelInProject("Create New Animation", "New Animation", "anim", "Create a new animation clip.", _lastClipCreationFolder);
             if (string.IsNullOrEmpty(path)) return null;
+
+            _lastClipCreationFolder = System.IO.Path.GetDirectoryName(path).Replace('\\', '/');
 
             var clip = new AnimationClip();
             AssetDatabase.CreateAsset(clip, path);
             AssetDatabase.SaveAssets();
+
+            AddClipToBaseLayer(controller, clip);
             return clip;
+        }
+
+        static void AddClipToBaseLayer(AnimatorController controller, AnimationClip clip)
+        {
+            var stateMachine = controller.layers[0].stateMachine;
+            var states       = stateMachine.states;
+            var position     = states.Length > 0 ? states[^1].position + new Vector3(0f, 60f, 0f) : Vector3.zero;
+
+            var newState = stateMachine.AddState(clip.name, position);
+            Undo.RegisterCompleteObjectUndo(newState, "Create New Clip");
+            newState.motion = clip;
+            EditorUtility.SetDirty(newState);
         }
 
         static List<AnimationClip> CollectClips(AnimatorController controller)

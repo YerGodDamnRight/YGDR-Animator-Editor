@@ -19,6 +19,7 @@
 
 #if UNITY_EDITOR
 using System;
+using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using UnityEditor;
@@ -91,6 +92,26 @@ namespace YGDR.Editor.Animation
             AccessTools.Property(LayerControllerViewType, "renameOverlay");
         internal static readonly MethodInfo LayerRenameEndMethod =
             AccessTools.Method(LayerControllerViewType, "RenameEnd");
+
+        // InspectorWindow (for scoped tracker rebuilds)
+        internal static readonly Type InspectorWindowType =
+            AccessTools.TypeByName("UnityEditor.InspectorWindow");
+        internal static readonly PropertyInfo InspectorTrackerProperty =
+            AccessTools.Property(InspectorWindowType, "tracker");
+
+        // Rebuilds only the inspector(s) currently showing `target`, avoiding
+        // a global ForceRebuild that tears down and re-inits unrelated editors.
+        internal static void RebuildInspectorsShowing(UnityEngine.Object target)
+        {
+            if (InspectorWindowType == null) return;
+            foreach (var win in Resources.FindObjectsOfTypeAll(InspectorWindowType))
+            {
+                var tracker = InspectorTrackerProperty?.GetValue(win) as ActiveEditorTracker;
+                if (tracker == null) continue;
+                if (tracker.activeEditors.Any(editor => editor.target == target))
+                    tracker.ForceRebuild();
+            }
+        }
 
         // ParameterControllerView rename
         internal static readonly FieldInfo ParameterRenameOverlayField =

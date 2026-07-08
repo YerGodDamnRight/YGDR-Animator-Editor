@@ -185,7 +185,7 @@ UI toggles.
 - **VRC Icons** — VRC parameter icons (same color pickers)
 - **AAP Icons** — Marks parameters controlled by a clip → click to find affected states/clips
 - **Graph Footer** — Shows selected node/transition count + current operation mode
-- **VRC Comp Icons** — Marks parameters bound to VRC contact / physbone / raycast components → click to locate component. Also shows sync status.
+- **VRC Comp Icons** — Marks parameters bound to VRC contact / physbone / raycast components → click to locate component. Also shows sync status and saved status → click either icon to toggle that flag on the VRC expression parameter. Parameter default value stays linked both ways with its VRC expression parameter (editing either side updates the other); if both change at once, the VRC expression parameter's value wins.
 - **Param Budget** — Displays current parameters, synced count, total allowed
 - **Empty Params** — Highlights parameters with no usages in the controller
 
@@ -233,7 +233,7 @@ See [Rebindable Shortcuts](#rebindable-shortcuts-defaults) for the full action l
 - **Prevent Layer Scroll** — Stops Unity scrolling layer list to top on new layer creation.
 - **Prevent Param Scroll** — Same behavior for parameters list.
 - **Default Weight 1** — New layers auto-set weight to `1`.
-- **Clip Menu Nesting** — Nest Animation window clips in sub-menus by name using a searchable advanced dropdown. Use `parent.child.name` with `.` as separator.
+- **Clip Menu Nesting** — Nest Animation window clips in sub-menus by name using a searchable advanced dropdown. Choose the separator character — `-`, `.`, or `_` — and name clips `parent<sep>child<sep>name`. Disabling falls back to Unity's stock clip popup.
 - **Layer Templates** — Replaces layer `+` button with dropdown ([see below](#layer-templates)).
 - **Param Add Menu** — Parameter `+` button gains quick options for VRC built-in parameters. Right-click parameter adds:
   - Add parameter below
