@@ -38,8 +38,10 @@ namespace YGDR.Editor.Animation
     [HarmonyPatch]
     internal static class PatchStateNodeMenu
     {
-        // Behavior clipboard.
+        // Behavior clipboard. _copiedInstanceName == null means "all instances of type";
+        // otherwise the clipboard holds exactly one named instance (upsert-by-name on paste).
         static Type _copiedBehaviorType;
+        static string _copiedInstanceName;
         static readonly List<string> _copiedBehaviorJsons = new List<string>();
 #if VRC_SDK_VRCSDK3
         static readonly (string label, Type type)[] _behaviorTypes =
@@ -255,12 +257,26 @@ namespace YGDR.Editor.Animation
                     var copyState = selectedStates[0];
                     foreach (var (label, type) in _behaviorTypes)
                     {
-                        if (copyState.behaviours.Any(b => b.GetType() == type))
+                        var instances = copyState.behaviours.Where(b => b.GetType() == type).ToArray();
+                        if (instances.Length == 0) continue;
+
+                        if (instances.Length == 1)
+                        {
                             menu.AddItem(new GUIContent($"{L10n.Get("context_menu.copy_behaviors")}/{label}"), false,
                                 static data => { var (t, s) = ((Type, AnimatorState))data; CopyBehavior(s, t); },
                                 (type, copyState));
+                        }
                         else
-                            menu.AddDisabledItem(new GUIContent($"{L10n.Get("context_menu.copy_behaviors")}/{label}"));
+                        {
+                            foreach (var instance in instances)
+                                menu.AddItem(new GUIContent($"{L10n.Get("context_menu.copy_behaviors")}/{label}/{instance.name}"), false,
+                                    static data => { var (t, b) = ((Type, StateMachineBehaviour))data; CopyBehaviorInstance(t, b); },
+                                    (type, instance));
+
+                            menu.AddItem(new GUIContent($"{L10n.Get("context_menu.copy_behaviors")}/{label}/{L10n.Get("context_menu.all_instances")}"), false,
+                                static data => { var (t, s) = ((Type, AnimatorState))data; CopyBehavior(s, t); },
+                                (type, copyState));
+                        }
                     }
                 }
 
@@ -268,7 +284,10 @@ namespace YGDR.Editor.Animation
                 {
                     var match = _behaviorTypes.FirstOrDefault(x => x.type == _copiedBehaviorType);
                     var typeName = match.label ?? _copiedBehaviorType.Name;
-                    menu.AddItem(new GUIContent($"{L10n.Get("context_menu.paste_behaviors")} ({typeName})"), false,
+                    var pasteLabel = _copiedInstanceName != null
+                        ? $"{L10n.Get("context_menu.paste_behaviors")} ({typeName} — {_copiedInstanceName})"
+                        : $"{L10n.Get("context_menu.paste_behaviors")} ({typeName})";
+                    menu.AddItem(new GUIContent(pasteLabel), false,
                         static data => PasteBehaviors((AnimatorState[])data),
                         selectedStates);
                 }
@@ -559,19 +578,53 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
-        /* Snapshots all behaviours of the given type from state into the JSON clipboard for later paste. */
+        /* Snapshots all behaviours of the given type from state into the JSON clipboard for later paste ("all instances" mode). */
         static void CopyBehavior(AnimatorState state, Type type)
         {
             _copiedBehaviorType = type;
+            _copiedInstanceName = null;
             _copiedBehaviorJsons.Clear();
             foreach (var b in state.behaviours.Where(b => b.GetType() == type))
                 _copiedBehaviorJsons.Add(EditorJsonUtility.ToJson(b));
         }
 
-        /* Replaces all behaviours of the clipboard type on each state with JSON-deserialized copies of the clipboard data. */
+        /* Snapshots a single named instance into the clipboard (named-instance mode — paste upserts by name only). */
+        static void CopyBehaviorInstance(Type type, StateMachineBehaviour behaviour)
+        {
+            _copiedBehaviorType = type;
+            _copiedInstanceName = behaviour.name;
+            _copiedBehaviorJsons.Clear();
+            _copiedBehaviorJsons.Add(EditorJsonUtility.ToJson(behaviour));
+        }
+
+        /* Pastes the clipboard onto each state. "All instances" mode replaces every behaviour of the clipboard
+           type on the target; named-instance mode only touches the instance matching the copied name (updates
+           it if present, otherwise adds it) — other instances of the same type on the target are left alone. */
         static void PasteBehaviors(AnimatorState[] states)
         {
             if (_copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
+
+            if (_copiedInstanceName != null)
+            {
+                foreach (var state in states)
+                {
+                    var existing = state.behaviours.FirstOrDefault(b => b.GetType() == _copiedBehaviorType && b.name == _copiedInstanceName);
+                    if (existing != null)
+                    {
+                        PasteBehaviourValuesOnto(existing);
+                        continue;
+                    }
+
+                    Undo.RegisterCompleteObjectUndo(state, "Paste Behavior Instance");
+                    var newBehavior = state.AddStateMachineBehaviour(_copiedBehaviorType);
+                    Undo.RegisterCreatedObjectUndo(newBehavior, "Paste Behavior Instance");
+                    newBehavior.name = _copiedInstanceName;
+                    PasteBehaviourValuesOnto(newBehavior);
+                    EditorUtility.SetDirty(state);
+                }
+                return;
+            }
+
             foreach (var state in states)
             {
                 var existing = state.behaviours.Where(b => b.GetType() == _copiedBehaviorType).ToArray();
@@ -590,16 +643,20 @@ namespace YGDR.Editor.Animation
         }
 
         internal static void CopyBehaviourDirect(StateMachineBehaviour behaviour)
-        {
-            _copiedBehaviorType = behaviour.GetType();
-            _copiedBehaviorJsons.Clear();
-            _copiedBehaviorJsons.Add(EditorJsonUtility.ToJson(behaviour));
-        }
+            => CopyBehaviorInstance(behaviour.GetType(), behaviour);
 
-        internal static void PasteBehavioursToActiveState()
+        /* Overwrites target's own values from the clipboard directly, regardless of name —
+           used by the inspector CONTEXT menu where target is the exact component right-clicked. */
+        internal static void PasteBehaviourValuesOnto(StateMachineBehaviour target)
         {
-            var state = Selection.activeObject as AnimatorState;
-            if (state != null) PasteBehaviors(new[] { state });
+            if (target == null || _copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
+            if (target.GetType() != _copiedBehaviorType) return;
+
+            var originalName = target.name;
+            Undo.RecordObject(target, "Paste Behavior Values");
+            EditorJsonUtility.FromJsonOverwrite(_copiedBehaviorJsons[0], target);
+            target.name = originalName;
+            EditorUtility.SetDirty(target);
         }
 
         internal static bool CanPaste(Type type) =>

@@ -40,6 +40,11 @@ namespace YGDR.Editor.Animation
         internal bool anyStateTransitions;
         internal bool packIntoSubSM;
         internal bool preserveTransitionProperties;
+        /* false (default): merge the sync parameter into whichever VRCAvatarParameterDriver instance
+           already exists on the state (or create one if none exists) — matches pre-multi-instance behavior.
+           true: always use/create a dedicated driver instance named "Network", leaving any other driver
+           instances on the state untouched. */
+        internal bool useOwnNetworkInstance;
     }
 
     internal static class AnimatorNetworkSync
@@ -104,7 +109,9 @@ namespace YGDR.Editor.Animation
                 var state = entry.state;
                 int value = stateValues[state];
 
-                var existingDriver = state.behaviours.OfType<VRCAvatarParameterDriver>().FirstOrDefault();
+                var existingDriver = config.useOwnNetworkInstance
+                    ? state.behaviours.OfType<VRCAvatarParameterDriver>().FirstOrDefault(d => d.name == "Network")
+                    : state.behaviours.OfType<VRCAvatarParameterDriver>().FirstOrDefault();
                 VRCAvatarParameterDriver driver;
                 if (existingDriver != null)
                 {
@@ -116,6 +123,7 @@ namespace YGDR.Editor.Animation
                     driver = state.AddStateMachineBehaviour<VRCAvatarParameterDriver>();
                     Undo.RegisterCreatedObjectUndo(driver, "Network Sync");
                     driver.localOnly = false;
+                    if (config.useOwnNetworkInstance) driver.name = "Network";
                 }
 
                 if (!config.useBool)
@@ -148,12 +156,17 @@ namespace YGDR.Editor.Animation
             var bbox = GetBoundingBox(entries);
             float verticalOffset = bbox.height + 150f;
 
-            var switchStatePosition = new Vector3(parentSM.entryPosition.x - 20f, parentSM.entryPosition.y + 80f, 0f);
+            var occupied = entries.Select(entry => entry.position).ToList();
+
+            var switchStatePosition = ResolveNonOverlappingPosition(
+                new Vector3(parentSM.entryPosition.x - 20f, parentSM.entryPosition.y + 80f, 0f), occupied, NodeSize);
+            occupied.Add(switchStatePosition);
 
             AnimatorStateMachine targetSM;
             if (config.packIntoSubSM)
             {
-                var subStateMachinePosition = new Vector3(switchStatePosition.x, switchStatePosition.y + 150f, 0f);
+                var subStateMachinePosition = ResolveNonOverlappingPosition(
+                    new Vector3(switchStatePosition.x, switchStatePosition.y + 150f, 0f), occupied, NodeSize);
                 targetSM = parentSM.AddStateMachine("Network Sync", subStateMachinePosition);
                 Undo.RegisterCreatedObjectUndo(targetSM, "Network Sync");
             }
@@ -175,6 +188,18 @@ namespace YGDR.Editor.Animation
                 copy.motion = entry.state.motion;
                 copy.speed = entry.state.speed;
                 copy.writeDefaultValues = entry.state.writeDefaultValues;
+                copy.mirror = entry.state.mirror;
+                copy.cycleOffset = entry.state.cycleOffset;
+                copy.iKOnFeet = entry.state.iKOnFeet;
+                copy.tag = entry.state.tag;
+                copy.speedParameterActive = entry.state.speedParameterActive;
+                copy.speedParameter = entry.state.speedParameter;
+                copy.mirrorParameterActive = entry.state.mirrorParameterActive;
+                copy.mirrorParameter = entry.state.mirrorParameter;
+                copy.cycleOffsetParameterActive = entry.state.cycleOffsetParameterActive;
+                copy.cycleOffsetParameter = entry.state.cycleOffsetParameter;
+                copy.timeParameterActive = entry.state.timeParameterActive;
+                copy.timeParameter = entry.state.timeParameter;
 
                 if (priorBehaviors.TryGetValue(entry.state, out var behaviors))
                 {
@@ -379,6 +404,21 @@ namespace YGDR.Editor.Animation
             int bits = 0, remaining = n - 1;
             while (remaining > 0) { bits++; remaining >>= 1; }
             return bits;
+        }
+
+        static readonly Vector2 NodeSize = new Vector2(130f, 40f);
+
+        /* Shifts desired sideways (in NodeSize.x + margin steps) until its node box overlaps none of existingPositions. */
+        static Vector3 ResolveNonOverlappingPosition(Vector3 desired, IReadOnlyList<Vector3> existingPositions, Vector2 size)
+        {
+            var pos = desired;
+            var rect = new Rect(pos.x, pos.y, size.x, size.y);
+            while (existingPositions.Any(existing => new Rect(existing.x, existing.y, size.x, size.y).Overlaps(rect)))
+            {
+                pos.x += size.x + 20f;
+                rect = new Rect(pos.x, pos.y, size.x, size.y);
+            }
+            return pos;
         }
 
         /* Computes the axis-aligned bounding rectangle of the given state node positions. */

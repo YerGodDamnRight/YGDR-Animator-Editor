@@ -221,10 +221,24 @@ namespace YGDR.Editor.Animation
                         result.Add(condition.parameter);
 
                 CollectMotionParameters(childState.state.motion, result);
+                CollectStateParameters(childState.state, result);
             }
 
             foreach (var childStateMachine in stateMachine.stateMachines)
                 CollectUsedParameters(childStateMachine.stateMachine, result);
+        }
+
+        /* Collects params driven by per-state fields (speed/mirror/cycleOffset/time), which don't show up in transition conditions or motions. */
+        static void CollectStateParameters(AnimatorState state, HashSet<string> result)
+        {
+            if (state.speedParameterActive && !string.IsNullOrEmpty(state.speedParameter))
+                result.Add(state.speedParameter);
+            if (state.mirrorParameterActive && !string.IsNullOrEmpty(state.mirrorParameter))
+                result.Add(state.mirrorParameter);
+            if (state.cycleOffsetParameterActive && !string.IsNullOrEmpty(state.cycleOffsetParameter))
+                result.Add(state.cycleOffsetParameter);
+            if (state.timeParameterActive && !string.IsNullOrEmpty(state.timeParameter))
+                result.Add(state.timeParameter);
         }
 
         static void CollectMotionParameters(UnityEngine.Motion motion, HashSet<string> result)
@@ -405,17 +419,41 @@ namespace YGDR.Editor.Animation
                 RemapBehavioursInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
         }
 
-        internal static void AddAllToVrcParameters(VRCExpressionParameters expressionParameters,
-            AnimatorController controller)
+        internal static (List<string> toAdd, List<string> toRemove) PreviewVrcParameterSync(
+            VRCExpressionParameters expressionParameters, AnimatorController controller)
         {
-            Undo.RecordObject(expressionParameters, "Add All Parameters to VRC");
+            var controllerNames = new HashSet<string>(
+                controller.parameters.Select(animatorParameter => animatorParameter.name));
             var existingNames = new HashSet<string>(
                 expressionParameters.parameters.Select(expressionParameter => expressionParameter.name));
-            var paramsList = expressionParameters.parameters.ToList();
 
+            var toAdd = controller.parameters
+                .Select(animatorParameter => animatorParameter.name)
+                .Where(name => !existingNames.Contains(name))
+                .ToList();
+            var toRemove = expressionParameters.parameters
+                .Select(expressionParameter => expressionParameter.name)
+                .Where(name => !controllerNames.Contains(name))
+                .ToList();
+
+            return (toAdd, toRemove);
+        }
+
+        internal static void SyncVrcParameters(VRCExpressionParameters expressionParameters,
+            AnimatorController controller)
+        {
+            Undo.RecordObject(expressionParameters, "Sync VRC Parameters Asset");
+            var existingByName = expressionParameters.parameters
+                .ToDictionary(expressionParameter => expressionParameter.name);
+
+            var paramsList = new List<VRCExpressionParameters.Parameter>(controller.parameters.Length);
             foreach (var animatorParameter in controller.parameters)
             {
-                if (existingNames.Contains(animatorParameter.name)) continue;
+                if (existingByName.TryGetValue(animatorParameter.name, out var existingParameter))
+                {
+                    paramsList.Add(existingParameter);
+                    continue;
+                }
                 paramsList.Add(new VRCExpressionParameters.Parameter
                 {
                     name          = animatorParameter.name,

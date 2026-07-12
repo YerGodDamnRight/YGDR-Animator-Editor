@@ -39,6 +39,7 @@ namespace YGDR.Editor.Animation
             internal string conditionLabel;
             internal AnimatorStateTransition transition;
             internal AnimatorState state;
+            internal BlendTree blendTree;
         }
 
         const int TabTransitions = 0;
@@ -331,10 +332,39 @@ namespace YGDR.Editor.Animation
                         conditionLabel  = L10n.Get("states.cycle_offset"),
                         state           = state
                     });
+                if (state.motion is BlendTree blendTree)
+                    SearchBlendTreeForParameter(blendTree, state);
             }
 
             foreach (var childStateMachine in sm.stateMachines)
                 SearchSMForParameter(childStateMachine.stateMachine);
+        }
+
+        void SearchBlendTreeForParameter(BlendTree blendTree, AnimatorState state)
+        {
+            string typeLabel = PatchBlendTreeNodeGUI.BlendTypeLabel(blendTree.blendType);
+            bool isDirect = blendTree.blendType == BlendTreeType.Direct;
+
+            void AddRow(string targetLabel) => _behaviorRows.Add(new UsageRow
+            {
+                transitionLabel = $"{state.name}  →  {blendTree.name}",
+                conditionLabel  = $"{typeLabel}  →  {targetLabel}",
+                state           = state,
+                blendTree       = blendTree
+            });
+
+            if (!isDirect && blendTree.blendParameter == _parameterName)
+                AddRow(L10n.Get("find_usage.behavior.blend_x"));
+            if (!isDirect && blendTree.blendType != BlendTreeType.Simple1D && blendTree.blendParameterY == _parameterName)
+                AddRow(L10n.Get("find_usage.behavior.blend_y"));
+
+            foreach (var child in blendTree.children)
+            {
+                if (isDirect && child.directBlendParameter == _parameterName)
+                    AddRow(child.motion != null ? child.motion.name : "?");
+                if (child.motion is BlendTree childTree)
+                    SearchBlendTreeForParameter(childTree, state);
+            }
         }
 
         void CheckTransition(AnimatorStateTransition transition, string sourceName, string destinationName)
@@ -687,6 +717,8 @@ namespace YGDR.Editor.Animation
                 {
                     if (row.transition != null)
                         AnimationEditorWindow.FocusTransition(row.transition, _controller);
+                    else if (row.blendTree != null)
+                        AnimationEditorWindow.FocusAsset(row.blendTree, _controller);
                     else if (row.state != null)
                         AnimationEditorWindow.FocusState(row.state, _controller);
                 }

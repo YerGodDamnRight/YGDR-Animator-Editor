@@ -264,6 +264,7 @@ namespace YGDR.Editor.Animation
         bool   _networkAnyStateTransitions;
         bool   _networkPackIntoSubSM;
         bool   _networkPreserveTransitionProperties;
+        bool   _networkUseOwnInstance;
         int    _networkLayerIndex;
 #endif
 
@@ -364,6 +365,13 @@ namespace YGDR.Editor.Animation
                 _networkPackIntoSubSM = EditorGUILayout.Toggle(_networkPackIntoSubSM, GUILayout.Width(16));
             }
 
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Label(L10n.Get("controller.network.own_instance"), Styles.SmallLabel, GUILayout.Width(164));
+                _networkUseOwnInstance = EditorGUILayout.Toggle(_networkUseOwnInstance, GUILayout.Width(16));
+                EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
+            }
+
             EditorGUILayout.Space(6);
 
             bool canRun = !string.IsNullOrWhiteSpace(_networkParamName) && !string.IsNullOrWhiteSpace(_networkStatesPrefix) && !isDuplicateName;
@@ -382,7 +390,8 @@ namespace YGDR.Editor.Animation
                         removeTracking               = _networkRemoveTracking,
                         anyStateTransitions          = _networkAnyStateTransitions,
                         packIntoSubSM                = _networkPackIntoSubSM,
-                        preserveTransitionProperties = _networkPreserveTransitionProperties
+                        preserveTransitionProperties = _networkPreserveTransitionProperties,
+                        useOwnNetworkInstance        = _networkUseOwnInstance
                     });
                 }
             }

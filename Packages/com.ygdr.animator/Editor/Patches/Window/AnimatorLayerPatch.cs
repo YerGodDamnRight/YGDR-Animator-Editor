@@ -469,15 +469,15 @@ namespace YGDR.Editor.Animation
                 if (!smMap.TryGetValue(frame.activeSM, out var mappedActiveSM)) continue;
                 destinationData.frames.Add(new FrameRect
                 {
-                    title              = frame.title,
-                    comments           = frame.comments,
-                    layerStateMachine  = destinationSM,
-                    activeSM           = mappedActiveSM,
-                    bounds             = frame.bounds,
-                    color              = frame.color,
-                    locked             = frame.locked,
-                    moveNodesWithFrame = frame.moveNodesWithFrame,
-                    zLayer             = frame.zLayer,
+                    title                 = frame.title,
+                    comments              = frame.comments,
+                    layerStateMachine     = destinationSM,
+                    activeSM              = mappedActiveSM,
+                    bounds                = frame.bounds,
+                    color                 = frame.color,
+                    locked                = frame.locked,
+                    moveContentsWithFrame = frame.moveContentsWithFrame,
+                    zLayer                = frame.zLayer,
                 });
                 dirty = true;
             }

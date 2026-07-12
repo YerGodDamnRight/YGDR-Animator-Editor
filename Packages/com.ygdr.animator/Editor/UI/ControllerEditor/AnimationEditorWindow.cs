@@ -72,10 +72,10 @@ namespace YGDR.Editor.Animation
         {
             _cachedVersion    = null;
             _paletteApplied   = false;
-            _helpTransitions  = MdvHelpAction("Transitions", 62, 79);
-            _helpStates       = MdvHelpAction("States", 85, 131);
-            _helpController   = MdvHelpAction("Controller", 133, 168);
-            _helpSettings     = MdvHelpAction("Settings", 171, 269);
+            _helpTransitions  = MdvHelpAction("Transitions", 62, 82);
+            _helpStates       = MdvHelpAction("States", 85, 132);
+            _helpController   = MdvHelpAction("Controller", 135, 172);
+            _helpSettings     = MdvHelpAction("Settings", 175, 275);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;

@@ -232,7 +232,7 @@
     { "key": "context_menu.frame_zlayer_down",                "value": "Retroceder" },
     { "key": "context_menu.frame_zlayer_bottom",              "value": "Enviar al fondo" },
     { "key": "context_menu.frame_fit_selected",               "value": "Ajustar a la selección" },
-    { "key": "context_menu.frame_move_nodes",                 "value": "Mover nodos con el marco" },
+    { "key": "context_menu.frame_move_nodes",                 "value": "Mover contenido" },
     { "key": "context_menu.frame_lock",                       "value": "Bloquear" },
     { "key": "context_menu.frame_unlock",                     "value": "Desbloquear" },
     { "key": "context_menu.frame_delete",                     "value": "Eliminar" },
@@ -245,10 +245,13 @@
     { "key": "params_menu.convert_to",                        "value": "Convertir a" },
     { "key": "params_menu.convert_controller",                "value": "Controlador" },
     { "key": "params_menu.convert_vrc_params",                "value": "Parámetros VRC" },
-    { "key": "params_menu.set_not_synced",                    "value": "Marcar no sincronizado" },
-    { "key": "params_menu.set_synced",                        "value": "Marcar sincronizado" },
     { "key": "params_menu.add_to_vrc",                        "value": "Añadir a parámetros VRC" },
-    { "key": "params_menu.add_all_to_vrc",                    "value": "Añadir todos a parámetros VRC" },
+    { "key": "params_menu.sync_vrc_asset",                    "value": "Sincronizar recurso de parámetros VRC" },
+    { "key": "params_menu.sync_vrc_asset_title",              "value": "Sincronizar recurso de parámetros VRC" },
+    { "key": "params_menu.sync_vrc_asset_body",               "value": "Añadir:\n{0}\n\nEliminar:\n{1}" },
+    { "key": "params_menu.sync_vrc_asset_none",               "value": "(ninguno)" },
+    { "key": "params_menu.sync_vrc_asset_ok",                 "value": "Sincronizar" },
+    { "key": "params_menu.sync_vrc_asset_cancel",             "value": "Cancelar" },
     { "key": "params_menu.find_uses",                         "value": "Encontrar usos" },
     { "key": "params_menu.create_aap",                        "value": "Crear AAP" },
     { "key": "params_menu.remove_aap",                        "value": "Eliminar AAP" },
@@ -472,6 +475,11 @@
     { "key": "find_usage.empty.no_behaviors",                 "value": "No se encontraron usos de comportamiento." },
     { "key": "find_usage.empty.no_clips",                     "value": "Ningún clip anima este parámetro como AAP." },
     { "key": "find_usage.empty.no_references",                "value": "Ningún clip referencia este objeto." },
-    { "key": "find_usage.count.nodes_clips",                  "value": "{n} nodos · {m} clips" }
+    { "key": "find_usage.count.nodes_clips",                  "value": "{n} nodos · {m} clips" },
+    { "key": "find_usage.behavior.parameter_driver",          "value": "Controlador de parámetro" },
+    { "key": "find_usage.behavior.play_audio",                "value": "Reproducir audio" },
+    { "key": "find_usage.behavior.clip_select",                "value": "Selección de clip" },
+    { "key": "find_usage.behavior.blend_x",                    "value": "Blend X" },
+    { "key": "find_usage.behavior.blend_y",                    "value": "Blend Y" }
   ]
 }

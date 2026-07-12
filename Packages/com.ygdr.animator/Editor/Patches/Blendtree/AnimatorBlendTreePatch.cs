@@ -127,7 +127,7 @@ namespace YGDR.Editor.Animation
         }
 
         /* Returns a short display string for a blend tree type (e.g. "1D", "2D Simple", "Direct"). */
-        static string BlendTypeLabel(BlendTreeType blendType) => blendType switch
+        internal static string BlendTypeLabel(BlendTreeType blendType) => blendType switch
         {
             BlendTreeType.Simple1D              => "1D",
             BlendTreeType.SimpleDirectional2D   => "2D Simple",
@@ -365,6 +365,11 @@ namespace YGDR.Editor.Animation
             }
 
             var currentEvent = Event.current;
+            if (currentEvent.type == EventType.MouseDown)
+            {
+                PatchLayerF2Rename._panelClicked = false;
+                PatchParameterF2Rename._panelClicked = false;
+            }
             if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F2)
             {
                 var selectedNode = PatchBlendTreeNodeGUI.SelectedNode;

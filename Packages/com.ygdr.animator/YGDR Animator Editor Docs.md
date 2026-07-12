@@ -102,6 +102,8 @@ VRC Parameter Drivers, VRC Play Audio, VRC Tracking Control, VRC Locomotion Cont
 
 Each section has **Add to All** / **Remove All** buttons in its header. Sections only appear when at least one selected state has the component.
 
+**VRC Parameter Driver, VRC Play Audio, VRC Animator Layer Control, and VRC Playable Layer Control support multiple instances per state.** Clicking **Add to All** again adds another instance instead of replacing the existing one — each gets its own named, collapsible row (rename by editing the name field). Use the **↑ / ↓** buttons next to a row's name to reorder that instance among the others (arrows gray out at the top/bottom row). Use the **−** next to a row's name to remove just that one instance across selected states; **Remove All** clears every instance of that type instead. States are matched up by instance name, so editing, reordering, or removing a row only affects the selected states that actually have an instance with that name.
+
 **VRC Parameter Driver** — Add or edit shared drivers across selected states. Rows are reorderable. Each row specifies type (`Set` / `Add` / `Random` / `Copy`), parameter name, and value. `Copy` type has Source, Destination, and Convert Range fields. New rows default to the first unused controller parameter. Click `-` to remove a row. Removing all rows removes the component.
 
 **VRC Play Audio** — Configure shared play-audio behaviour: source path (drag `AudioSource` to resolve), playback order, clips list (reorderable), volume/pitch min/max ranges, loop toggle, on-enter/on-exit play/stop flags, delay.
@@ -152,6 +154,7 @@ One-click network syncing for chosen layer. Options:
 - Prefix added to front of all networked states
 - Toggle to remove state behaviors for network states
 - Pack into sub-state machine node for clean layers
+- **Own Driver Instance** — When on, Network Sync writes to its own dedicated Parameter Driver (named "Network") instead of sharing an existing driver already on the state, so it never touches driver rows you've set up for other purposes.
 
 #### Sub-Assets
 
@@ -268,6 +271,8 @@ Disable individual Harmony patches if they conflict with other tools.
 > [!CAUTION]
 > Editor lockup recovery: **YGDR → Animator Editor → Emergency: Unpatch All**. Use only as last resort — disables all features until manual re-enable.
 
+> [!IMPORTANT]
+> Editor patch guard recovery: **YGDR → Animator Editor → Reset All Feature Prefs (Recovery)**. Renables All patches by resetting false registry flags.
 ---
 
 ## Layer Panel Enhancements
@@ -553,6 +558,10 @@ Frames stored as hidden sub-assets inside each controller → visible to all use
 
 Lock/unlock by clicking lock icon in upper-left corner. Resize by selecting and dragging square handles at sides/corners. Multiple frames can be selected, moved, and copy-pasted at once.
 
+Frames can nest. If a frame with **Move Contents** on has a smaller frame sitting inside it (and that smaller frame is higher in Z-Layer), dragging the bigger frame carries the smaller one along with it, keeping its position inside unchanged — like moving a folder with files in it.
+
+Locked frames never move, dragged or carried. Locking/unlocking a frame also locks/unlocks any frame nested inside it, so you don't have to lock them one by one.
+
 ### Frame Context Menu
 
 Right-click a frame:
@@ -570,8 +579,8 @@ Right-click a frame:
   | Move to Bottom | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>[</kbd> |
 
 - **Fit to Selected** — Resizes frame to fit currently selected nodes.
-- **Move Nodes with Frame** — When enabled, nodes inside frame bounds move with frame.
-- **Lock** — Prevents move/resize.
+- **Move Contents** — When enabled, nodes inside frame bounds move with frame, and any nested frames come along too.
+- **Lock** — Prevents move/resize. Also locks any nested frames.
 - **Delete** — Deletes frame.
 
 > [!NOTE]

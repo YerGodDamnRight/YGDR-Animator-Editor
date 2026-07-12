@@ -43,6 +43,8 @@ namespace YGDR.Editor.Animation
         static Rect _dragStartBounds;
         static int _dragHandleIndex;
         static readonly Dictionary<FrameRect, Rect> _dragStartBoundsAll = new Dictionary<FrameRect, Rect>();
+        static readonly List<FrameRect> _draggedFrames = new List<FrameRect>();
+        static readonly HashSet<FrameRect> _dragCascadeFrames = new HashSet<FrameRect>();
 
         struct NodeSnapshot
         {
@@ -273,7 +275,7 @@ namespace YGDR.Editor.Animation
                         comments = copiedFrame.comments,
                         color = copiedFrame.color,
                         locked = copiedFrame.locked,
-                        moveNodesWithFrame = copiedFrame.moveNodesWithFrame,
+                        moveContentsWithFrame = copiedFrame.moveContentsWithFrame,
                         zLayer = copiedFrame.zLayer,
                         bounds = new Rect(
                             copiedFrame.bounds.x + offsetX,
@@ -396,6 +398,7 @@ namespace YGDR.Editor.Animation
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Toggle Frame Lock");
                     frame.locked = !frame.locked;
+                    CascadeLockState(frameData, frame, frame.locked);
                     EditorUtility.SetDirty(frameData);
                     currentEvent.Use();
                     return;
@@ -477,8 +480,12 @@ namespace YGDR.Editor.Animation
                             _dragState = DragState.Moving;
                             _dragStartMouse = mousePosition;
                             _dragStartBoundsAll.Clear();
-                            foreach (var selectedFrame in FrameRenderer.SelectedFrames)
-                                _dragStartBoundsAll[selectedFrame] = selectedFrame.bounds;
+                            foreach (var otherFrame in frameData.frames)
+                                _dragStartBoundsAll[otherFrame] = otherFrame.bounds;
+                            _draggedFrames.Clear();
+                            _draggedFrames.AddRange(FrameRenderer.SelectedFrames);
+                            _dragCascadeFrames.Clear();
+                            BuildCascadeSet(frameData, _draggedFrames, _dragCascadeFrames);
                             SnapshotNodesForDrag();
                             currentEvent.Use();
                             return;
@@ -534,17 +541,19 @@ namespace YGDR.Editor.Animation
             _dragNodeSnapshots.Clear();
             var activeSM = FrameRenderer.LastActiveSM;
             if (activeSM == null) return;
+            var frameData = FrameRenderer.LastFrameData;
+            if (frameData == null) return;
 
             bool anyFrameMovesNodes = false;
-            foreach (var selectedFrame in FrameRenderer.SelectedFrames)
-                if (selectedFrame.moveNodesWithFrame) { anyFrameMovesNodes = true; break; }
+            foreach (var frame in frameData.frames)
+                if (frame.moveContentsWithFrame) { anyFrameMovesNodes = true; break; }
             if (!anyFrameMovesNodes) return;
 
             Undo.RegisterCompleteObjectUndo(activeSM, "Move Frame");
 
-            foreach (var selectedFrame in FrameRenderer.SelectedFrames)
+            foreach (var selectedFrame in frameData.frames)
             {
-                if (!selectedFrame.moveNodesWithFrame) continue;
+                if (!selectedFrame.moveContentsWithFrame) continue;
 
                 var stateMatches = activeSM.states
                     .Select((childState, index) => (childState, index))
@@ -619,19 +628,27 @@ namespace YGDR.Editor.Animation
                 _movedEntry = false;
                 _movedExit = false;
 
-                foreach (var (frame, startBounds) in _dragStartBoundsAll)
+                // Every frame in the cascade set (directly dragged + carried children) moves by the
+                // identical snapped delta, which preserves each frame's relative position inside its carrier.
+                foreach (var cascadeFrame in _dragCascadeFrames)
                 {
+                    if (!_dragStartBoundsAll.TryGetValue(cascadeFrame, out var startBounds)) continue;
                     float snappedFrameX = Mathf.Round((startBounds.x + graphDelta.x) / 10f) * 10f;
                     float snappedFrameY = Mathf.Round((startBounds.y + graphDelta.y) / 10f) * 10f;
-                    frame.bounds = new Rect(snappedFrameX, snappedFrameY, startBounds.width, startBounds.height);
+                    cascadeFrame.bounds = new Rect(snappedFrameX, snappedFrameY, startBounds.width, startBounds.height);
+                }
 
-                    if (!frame.moveNodesWithFrame) continue;
+                foreach (var frame in _dragCascadeFrames)
+                {
+                    if (!_dragStartBoundsAll.TryGetValue(frame, out var startBounds)) continue;
+
+                    if (!frame.moveContentsWithFrame) continue;
                     if (activeSM == null) continue;
                     if (!_dragNodeSnapshots.TryGetValue(frame, out var snapshot)) continue;
 
                     states ??= activeSM.states;
                     subSMs ??= activeSM.stateMachines;
-                    var offset = new Vector3(snappedFrameX - startBounds.x, snappedFrameY - startBounds.y, 0);
+                    var offset = new Vector3(frame.bounds.x - startBounds.x, frame.bounds.y - startBounds.y, 0);
 
                     for (int i = 0; i < snapshot.stateIndices.Length; i++)
                     {
@@ -705,6 +722,58 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        // Shared BFS over frames strictly-higher-zLayer and contained (top-left corner inside bounds) within
+        // the current frame. canDescendFrom gates whether a dequeued frame's own contents get walked;
+        // isEligible filters which contained candidates count as hits; onVisit fires once per hit.
+        static void CascadeWalk(FrameLayoutData frameData, IEnumerable<FrameRect> seeds, HashSet<FrameRect> visited,
+            Func<FrameRect, bool> canDescendFrom, Func<FrameRect, bool> isEligible, Action<FrameRect> onVisit)
+        {
+            var queue = new Queue<FrameRect>(seeds);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                if (!canDescendFrom(current)) continue;
+
+                foreach (var candidate in frameData.frames)
+                {
+                    if (visited.Contains(candidate)) continue;
+                    if (candidate.zLayer <= current.zLayer) continue;
+                    if (!current.bounds.Contains(new Vector2(candidate.bounds.x, candidate.bounds.y))) continue;
+                    if (!isEligible(candidate)) continue;
+
+                    visited.Add(candidate);
+                    onVisit(candidate);
+                    queue.Enqueue(candidate);
+                }
+            }
+        }
+
+        // Frames a mover carries along like a container: strictly-higher-zLayer, unlocked frames whose
+        // top-left corner sits inside the mover's bounds. Recursive (a carried frame carries its own
+        // contents in turn) but only descends through a level if that level has moveContentsWithFrame set.
+        // All frames in the resulting set later move by the identical delta, which is what keeps each
+        // carried frame's position relative to its carrier unchanged.
+        static void BuildCascadeSet(FrameLayoutData frameData, List<FrameRect> initialMovers, HashSet<FrameRect> result)
+        {
+            foreach (var mover in initialMovers)
+                result.Add(mover);
+
+            CascadeWalk(frameData, initialMovers, result,
+                canDescendFrom: mover => mover.moveContentsWithFrame,
+                isEligible: candidate => !candidate.locked,
+                onVisit: _ => { });
+        }
+
+        // Propagates a lock/unlock to strictly-higher-zLayer frames contained within the toggled frame,
+        // so the user doesn't have to lock every frame stacked on top of it individually.
+        static void CascadeLockState(FrameLayoutData frameData, FrameRect frame, bool locked)
+        {
+            CascadeWalk(frameData, new[] { frame }, new HashSet<FrameRect> { frame },
+                canDescendFrom: _ => true,
+                isEligible: _ => true,
+                onVisit: candidate => candidate.locked = locked);
+        }
+
         internal static Vector3[] CaptureSpecialNodePositions()
         {
             var activeSM = FrameRenderer.LastActiveSM;
@@ -727,18 +796,18 @@ namespace YGDR.Editor.Animation
             Vector3[] specialNodePositions = null)
         {
             var menu = new GenericMenu();
-            menu.AddItem(new GUIContent("Rename"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_rename")), false, () =>
             {
                 IsRenaming = true;
                 RenameBuffer = frame.title;
             });
-            menu.AddItem(new GUIContent("Edit Comments"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_edit_comments")), false, () =>
             {
                 IsEditingComments = true;
                 CommentsTarget = frame;
                 CommentsBuffer = frame.comments ?? "";
             });
-            menu.AddItem(new GUIContent("Color"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_color")), false, () =>
             {
                 IsPickingColor = true;
                 ColorPickerTarget = frame;
@@ -749,10 +818,15 @@ namespace YGDR.Editor.Animation
                 .DefaultIfEmpty(-1)
                 .Max();
 
+            string zLayerTop = $"{L10n.Get("context_menu.frame_zlayer")}/{L10n.Get("context_menu.frame_zlayer_top")}";
+            string zLayerUp = $"{L10n.Get("context_menu.frame_zlayer")}/{L10n.Get("context_menu.frame_zlayer_up")}";
+            string zLayerDown = $"{L10n.Get("context_menu.frame_zlayer")}/{L10n.Get("context_menu.frame_zlayer_down")}";
+            string zLayerBottom = $"{L10n.Get("context_menu.frame_zlayer")}/{L10n.Get("context_menu.frame_zlayer_bottom")}";
+
             if (frame.zLayer > maxZLayerAmongOthers)
-                menu.AddDisabledItem(new GUIContent("Z-Layer/Move To Top"));
+                menu.AddDisabledItem(new GUIContent(zLayerTop));
             else
-                menu.AddItem(new GUIContent("Z-Layer/Move To Top"), false, () =>
+                menu.AddItem(new GUIContent(zLayerTop), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer to Top");
                     frame.zLayer = maxZLayerAmongOthers + 1;
@@ -760,7 +834,7 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
 
-            menu.AddItem(new GUIContent("Z-Layer/Move Up"), false, () =>
+            menu.AddItem(new GUIContent(zLayerUp), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer Up");
                 frame.zLayer++;
@@ -769,7 +843,7 @@ namespace YGDR.Editor.Animation
             });
 
             if (frame.zLayer > 0)
-                menu.AddItem(new GUIContent("Z-Layer/Move Down"), false, () =>
+                menu.AddItem(new GUIContent(zLayerDown), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer Down");
                     frame.zLayer--;
@@ -777,10 +851,10 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
             else
-                menu.AddDisabledItem(new GUIContent("Z-Layer/Move Down"));
+                menu.AddDisabledItem(new GUIContent(zLayerDown));
 
             if (frame.zLayer > 0)
-                menu.AddItem(new GUIContent("Z-Layer/Move To Bottom"), false, () =>
+                menu.AddItem(new GUIContent(zLayerBottom), false, () =>
                 {
                     Undo.RegisterCompleteObjectUndo(frameData, "Move Frame Z-Layer to Bottom");
                     frame.zLayer = 0;
@@ -788,7 +862,7 @@ namespace YGDR.Editor.Animation
                     UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 });
             else
-                menu.AddDisabledItem(new GUIContent("Z-Layer/Move To Bottom"));
+                menu.AddDisabledItem(new GUIContent(zLayerBottom));
 
             selectedStates ??= Array.Empty<AnimatorState>();
             selectedSubSMs ??= Array.Empty<AnimatorStateMachine>();
@@ -797,26 +871,29 @@ namespace YGDR.Editor.Animation
 
             if (hasNodeSelection)
             {
-                menu.AddItem(new GUIContent("Fit to Selected"), false, () =>
+                menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_fit_selected")), false, () =>
                     FitFrameToSelected(frame, frameData, selectedStates, selectedSubSMs, specialNodePositions));
             }
 
-            menu.AddItem(new GUIContent("Move Nodes with Frame"), frame.moveNodesWithFrame, () =>
+            menu.AddItem(new GUIContent(L10n.Get("context_menu.frame_move_nodes")), frame.moveContentsWithFrame, () =>
             {
-                Undo.RegisterCompleteObjectUndo(frameData, "Toggle Move Nodes with Frame");
-                frame.moveNodesWithFrame = !frame.moveNodesWithFrame;
+                Undo.RegisterCompleteObjectUndo(frameData, "Toggle Move Contents with Frame");
+                frame.moveContentsWithFrame = !frame.moveContentsWithFrame;
                 EditorUtility.SetDirty(frameData);
             });
 
-            menu.AddItem(new GUIContent(frame.locked ? "Unlock" : "Lock"), false, () =>
+            menu.AddItem(new GUIContent(L10n.Get(frame.locked ? "context_menu.frame_unlock" : "context_menu.frame_lock")), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Toggle Frame Lock");
                 frame.locked = !frame.locked;
+                CascadeLockState(frameData, frame, frame.locked);
                 EditorUtility.SetDirty(frameData);
             });
 
             int selectedCount = FrameRenderer.SelectedFrames.Count;
-            string deleteLabel = selectedCount > 1 ? $"Delete ({selectedCount} frames)" : "Delete";
+            string deleteLabel = selectedCount > 1
+                ? string.Format(L10n.Get("context_menu.frame_delete_multi"), selectedCount)
+                : L10n.Get("context_menu.frame_delete");
             menu.AddItem(new GUIContent(deleteLabel), false, () =>
             {
                 Undo.RegisterCompleteObjectUndo(frameData, "Delete Frame");

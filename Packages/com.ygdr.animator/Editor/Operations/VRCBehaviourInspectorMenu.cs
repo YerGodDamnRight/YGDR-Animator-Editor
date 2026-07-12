@@ -33,7 +33,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCAvatarParameterDriver/Paste Values")]
         static void PasteParamDriver(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCAvatarParameterDriver/Paste Values", true)]
         static bool PasteParamDriverValidate() =>
@@ -46,7 +46,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCAnimatorPlayAudio/Paste Values")]
         static void PastePlayAudio(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCAnimatorPlayAudio/Paste Values", true)]
         static bool PastePlayAudioValidate() =>
@@ -59,7 +59,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCAnimatorTrackingControl/Paste Values")]
         static void PasteTracking(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCAnimatorTrackingControl/Paste Values", true)]
         static bool PasteTrackingValidate() =>
@@ -72,7 +72,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCAnimatorLayerControl/Paste Values")]
         static void PasteLayerControl(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCAnimatorLayerControl/Paste Values", true)]
         static bool PasteLayerControlValidate() =>
@@ -85,7 +85,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCAnimatorLocomotionControl/Paste Values")]
         static void PasteLocomotion(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCAnimatorLocomotionControl/Paste Values", true)]
         static bool PasteLocomotionValidate() =>
@@ -98,7 +98,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCAnimatorTemporaryPoseSpace/Paste Values")]
         static void PastePoseSpace(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCAnimatorTemporaryPoseSpace/Paste Values", true)]
         static bool PastePoseSpaceValidate() =>
@@ -111,7 +111,7 @@ namespace YGDR.Editor.Animation
 
         [MenuItem("CONTEXT/VRCPlayableLayerControl/Paste Values")]
         static void PastePlayableLayer(MenuCommand cmd) =>
-            PatchStateNodeMenu.PasteBehavioursToActiveState();
+            PatchStateNodeMenu.PasteBehaviourValuesOnto((StateMachineBehaviour)cmd.context);
 
         [MenuItem("CONTEXT/VRCPlayableLayerControl/Paste Values", true)]
         static bool PastePlayableLayerValidate() =>

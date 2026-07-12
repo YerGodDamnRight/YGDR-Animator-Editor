@@ -232,7 +232,7 @@
     { "key": "context_menu.frame_zlayer_down",                "value": "背面へ移動" },
     { "key": "context_menu.frame_zlayer_bottom",              "value": "最背面へ移動" },
     { "key": "context_menu.frame_fit_selected",               "value": "選択範囲に合わせる" },
-    { "key": "context_menu.frame_move_nodes",                 "value": "ノードをフレームと共に移動" },
+    { "key": "context_menu.frame_move_nodes",                 "value": "内容を移動" },
     { "key": "context_menu.frame_lock",                       "value": "ロック" },
     { "key": "context_menu.frame_unlock",                     "value": "ロック解除" },
     { "key": "context_menu.frame_delete",                     "value": "削除" },
@@ -245,10 +245,13 @@
     { "key": "params_menu.convert_to",                        "value": "変換先" },
     { "key": "params_menu.convert_controller",                "value": "コントローラー" },
     { "key": "params_menu.convert_vrc_params",                "value": "VRCパラメーター" },
-    { "key": "params_menu.set_not_synced",                    "value": "非同期に設定" },
-    { "key": "params_menu.set_synced",                        "value": "同期済みに設定" },
     { "key": "params_menu.add_to_vrc",                        "value": "VRCパラメーターに追加" },
-    { "key": "params_menu.add_all_to_vrc",                    "value": "すべてVRCパラメーターに追加" },
+    { "key": "params_menu.sync_vrc_asset",                    "value": "VRCパラメーターアセットを同期" },
+    { "key": "params_menu.sync_vrc_asset_title",              "value": "VRCパラメーターアセットを同期" },
+    { "key": "params_menu.sync_vrc_asset_body",               "value": "追加:\n{0}\n\n削除:\n{1}" },
+    { "key": "params_menu.sync_vrc_asset_none",               "value": "(なし)" },
+    { "key": "params_menu.sync_vrc_asset_ok",                 "value": "同期" },
+    { "key": "params_menu.sync_vrc_asset_cancel",             "value": "キャンセル" },
     { "key": "params_menu.find_uses",                         "value": "パラメーターの使用箇所を検索" },
     { "key": "params_menu.create_aap",                        "value": "AAPを作成" },
     { "key": "params_menu.remove_aap",                        "value": "AAPを削除" },
@@ -472,6 +475,11 @@
     { "key": "find_usage.empty.no_behaviors",                 "value": "ビヘイビアの使用箇所が見つかりません。" },
     { "key": "find_usage.empty.no_clips",                     "value": "このパラメーターをAAPとしてアニメートするクリップがありません。" },
     { "key": "find_usage.empty.no_references",                "value": "このオブジェクトを参照するクリップがありません。" },
-    { "key": "find_usage.count.nodes_clips",                  "value": "{n}個のノード · {m}個のクリップ" }
+    { "key": "find_usage.count.nodes_clips",                  "value": "{n}個のノード · {m}個のクリップ" },
+    { "key": "find_usage.behavior.parameter_driver",          "value": "パラメータードライバー" },
+    { "key": "find_usage.behavior.play_audio",                "value": "オーディオ再生" },
+    { "key": "find_usage.behavior.clip_select",                "value": "クリップ選択" },
+    { "key": "find_usage.behavior.blend_x",                    "value": "ブレンド X" },
+    { "key": "find_usage.behavior.blend_y",                    "value": "ブレンド Y" }
   ]
 }

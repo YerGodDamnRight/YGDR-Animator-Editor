@@ -104,7 +104,7 @@ namespace YGDR.Editor.Animation
         static HashSet<string> _vrcComponentUsedParams;
 #endif
 
-        static readonly HashSet<string> VrcBuiltinNames =
+        internal static readonly HashSet<string> VrcBuiltinNames =
             new HashSet<string>(PatchParameterContextMenu.VrcParameters.Select(tuple => tuple.name));
 
         static int _clipCacheControllerId = -1;
@@ -700,6 +700,25 @@ namespace YGDR.Editor.Animation
             var paramList = PatchParameterAddMenu.ParamListField?.GetValue(instance) as UnityEditorInternal.ReorderableList;
             if (paramList != null) paramList.index = insertIndex;
         }
+#if VRC_SDK_VRCSDK3
+        static void ConfirmAndSyncVrcParameters(VRCExpressionParameters expressionParameters, AnimatorController controller)
+        {
+            var (toAdd, toRemove) = AnimatorParameterOps.PreviewVrcParameterSync(expressionParameters, controller);
+            if (toAdd.Count == 0 && toRemove.Count == 0) return;
+
+            string body = string.Format(L10n.Get("params_menu.sync_vrc_asset_body"),
+                toAdd.Count == 0 ? L10n.Get("params_menu.sync_vrc_asset_none") : string.Join("\n", toAdd),
+                toRemove.Count == 0 ? L10n.Get("params_menu.sync_vrc_asset_none") : string.Join("\n", toRemove));
+
+            if (!EditorUtility.DisplayDialog(L10n.Get("params_menu.sync_vrc_asset_title"), body,
+                    L10n.Get("params_menu.sync_vrc_asset_ok"), L10n.Get("params_menu.sync_vrc_asset_cancel")))
+                return;
+
+            AnimatorParameterOps.SyncVrcParameters(expressionParameters, controller);
+            EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
+        }
+#endif
+
         internal static readonly (string category, string name, AnimatorControllerParameterType type)[] VrcParameters =
         {
             ("Local",    "IsLocal",              AnimatorControllerParameterType.Bool),
@@ -931,22 +950,13 @@ namespace YGDR.Editor.Animation
                 var capturedParamType = parameter.type;
                 menu.AddSeparator("");
 
-                if (vrcParam != null)
-                {
-                    bool capturedSynced = vrcParam.networkSynced;
-                    menu.AddItem(new GUIContent(capturedSynced ? L10n.Get("params_menu.set_not_synced") : L10n.Get("params_menu.set_synced")), false,
-                        () => AnimatorParameterOps.SetVrcSynced(capturedExpressionParameters, capturedParamName, !capturedSynced));
-                }
-                else
-                {
+                if (vrcParam == null)
                     menu.AddItem(new GUIContent(L10n.Get("params_menu.add_to_vrc")), false,
                         () => AnimatorParameterOps.AddToVrcParameters(capturedExpressionParameters, capturedParamName, capturedParamType));
-                }
 
                 var capturedController = controller;
-                menu.AddSeparator("");
-                menu.AddItem(new GUIContent(L10n.Get("params_menu.add_all_to_vrc")), false,
-                    () => AnimatorParameterOps.AddAllToVrcParameters(capturedExpressionParameters, capturedController));
+                menu.AddItem(new GUIContent(L10n.Get("params_menu.sync_vrc_asset")), false,
+                    () => ConfirmAndSyncVrcParameters(capturedExpressionParameters, capturedController));
             }
 #endif
 
@@ -1140,9 +1150,6 @@ namespace YGDR.Editor.Animation
 #endif
         }
 
-        internal static readonly HashSet<string> _vrcBuiltinNamesForBudget =
-            new HashSet<string>(VrcParameters.Select(tuple => tuple.name));
-
         class ParameterRemapDropdown : AdvancedDropdown
         {
             readonly AnimatorController _controller;
@@ -1210,7 +1217,7 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
             int syncedBits     = 0;
 #endif
-            var builtins       = PatchParameterContextMenu._vrcBuiltinNamesForBudget;
+            var builtins       = PatchParameterRow.VrcBuiltinNames;
 
             foreach (var parameter in _controller.parameters)
             {

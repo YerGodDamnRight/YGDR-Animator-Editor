@@ -18,7 +18,7 @@ namespace YGDR.Editor.Animation
         public Rect bounds;
         public Color color = new Color(0.35f, 0.35f, 0.35f, 0.75f);
         public bool locked;
-        public bool moveNodesWithFrame;
+        public bool moveContentsWithFrame;
         public int zLayer;
     }
 

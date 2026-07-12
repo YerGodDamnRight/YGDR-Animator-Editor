@@ -232,7 +232,7 @@
     { "key": "context_menu.frame_zlayer_down",                "value": "뒤로" },
     { "key": "context_menu.frame_zlayer_bottom",              "value": "맨 뒤로" },
     { "key": "context_menu.frame_fit_selected",               "value": "선택에 맞추기" },
-    { "key": "context_menu.frame_move_nodes",                 "value": "프레임과 함께 노드 이동" },
+    { "key": "context_menu.frame_move_nodes",                 "value": "내용 이동" },
     { "key": "context_menu.frame_lock",                       "value": "잠금" },
     { "key": "context_menu.frame_unlock",                     "value": "잠금 해제" },
     { "key": "context_menu.frame_delete",                     "value": "삭제" },
@@ -245,10 +245,13 @@
     { "key": "params_menu.convert_to",                        "value": "변환" },
     { "key": "params_menu.convert_controller",                "value": "컨트롤러" },
     { "key": "params_menu.convert_vrc_params",                "value": "VRC 파라미터" },
-    { "key": "params_menu.set_not_synced",                    "value": "동기화 안 됨으로 표시" },
-    { "key": "params_menu.set_synced",                        "value": "동기화됨으로 표시" },
     { "key": "params_menu.add_to_vrc",                        "value": "VRC 파라미터에 추가" },
-    { "key": "params_menu.add_all_to_vrc",                    "value": "모두 VRC 파라미터에 추가" },
+    { "key": "params_menu.sync_vrc_asset",                    "value": "VRC 파라미터 애셋 동기화" },
+    { "key": "params_menu.sync_vrc_asset_title",              "value": "VRC 파라미터 애셋 동기화" },
+    { "key": "params_menu.sync_vrc_asset_body",               "value": "추가:\n{0}\n\n제거:\n{1}" },
+    { "key": "params_menu.sync_vrc_asset_none",               "value": "(없음)" },
+    { "key": "params_menu.sync_vrc_asset_ok",                 "value": "동기화" },
+    { "key": "params_menu.sync_vrc_asset_cancel",             "value": "취소" },
     { "key": "params_menu.find_uses",                         "value": "사용처 찾기" },
     { "key": "params_menu.create_aap",                        "value": "AAP 만들기" },
     { "key": "params_menu.remove_aap",                        "value": "AAP 제거" },
@@ -472,6 +475,11 @@
     { "key": "find_usage.empty.no_behaviors",                 "value": "동작 사용처를 찾을 수 없습니다." },
     { "key": "find_usage.empty.no_clips",                     "value": "이 파라미터를 AAP로 애니메이션하는 클립이 없습니다." },
     { "key": "find_usage.empty.no_references",                "value": "이 오브젝트를 참조하는 클립이 없습니다." },
-    { "key": "find_usage.count.nodes_clips",                  "value": "{n}개 노드 · {m}개 클립" }
+    { "key": "find_usage.count.nodes_clips",                  "value": "{n}개 노드 · {m}개 클립" },
+    { "key": "find_usage.behavior.parameter_driver",          "value": "파라미터 드라이버" },
+    { "key": "find_usage.behavior.play_audio",                "value": "오디오 재생" },
+    { "key": "find_usage.behavior.clip_select",                "value": "클립 선택" },
+    { "key": "find_usage.behavior.blend_x",                    "value": "블렌드 X" },
+    { "key": "find_usage.behavior.blend_y",                    "value": "블렌드 Y" }
   ]
 }

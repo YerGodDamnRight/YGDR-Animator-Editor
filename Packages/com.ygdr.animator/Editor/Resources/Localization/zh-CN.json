@@ -232,7 +232,7 @@
     { "key": "context_menu.frame_zlayer_down",                "value": "下移" },
     { "key": "context_menu.frame_zlayer_bottom",              "value": "移到底层" },
     { "key": "context_menu.frame_fit_selected",               "value": "适应选中项" },
-    { "key": "context_menu.frame_move_nodes",                 "value": "随框移动节点" },
+    { "key": "context_menu.frame_move_nodes",                 "value": "移动内容" },
     { "key": "context_menu.frame_lock",                       "value": "锁定" },
     { "key": "context_menu.frame_unlock",                     "value": "解锁" },
     { "key": "context_menu.frame_delete",                     "value": "删除" },
@@ -245,10 +245,13 @@
     { "key": "params_menu.convert_to",                        "value": "转换为" },
     { "key": "params_menu.convert_controller",                "value": "控制器" },
     { "key": "params_menu.convert_vrc_params",                "value": "VRC 参数" },
-    { "key": "params_menu.set_not_synced",                    "value": "设为不同步" },
-    { "key": "params_menu.set_synced",                        "value": "设为同步" },
     { "key": "params_menu.add_to_vrc",                        "value": "添加到 VRC 参数" },
-    { "key": "params_menu.add_all_to_vrc",                    "value": "全部添加到 VRC 参数" },
+    { "key": "params_menu.sync_vrc_asset",                    "value": "同步 VRC 参数资源" },
+    { "key": "params_menu.sync_vrc_asset_title",              "value": "同步 VRC 参数资源" },
+    { "key": "params_menu.sync_vrc_asset_body",               "value": "添加:\n{0}\n\n移除:\n{1}" },
+    { "key": "params_menu.sync_vrc_asset_none",               "value": "(无)" },
+    { "key": "params_menu.sync_vrc_asset_ok",                 "value": "同步" },
+    { "key": "params_menu.sync_vrc_asset_cancel",             "value": "取消" },
     { "key": "params_menu.find_uses",                         "value": "查找使用位置" },
     { "key": "params_menu.create_aap",                        "value": "创建 AAP" },
     { "key": "params_menu.remove_aap",                        "value": "移除 AAP" },
@@ -472,6 +475,11 @@
     { "key": "find_usage.empty.no_behaviors",                 "value": "没有 Behavior 使用此参数。" },
     { "key": "find_usage.empty.no_clips",                     "value": "没有动画将此参数作为 AAP 进行动画。" },
     { "key": "find_usage.empty.no_references",                "value": "没有动画引用此对象。" },
-    { "key": "find_usage.count.nodes_clips",                  "value": "{n} 节点 · {m} 动画" }
+    { "key": "find_usage.count.nodes_clips",                  "value": "{n} 节点 · {m} 动画" },
+    { "key": "find_usage.behavior.parameter_driver",          "value": "参数驱动器" },
+    { "key": "find_usage.behavior.play_audio",                "value": "播放音频" },
+    { "key": "find_usage.behavior.clip_select",                "value": "剪辑选择" },
+    { "key": "find_usage.behavior.blend_x",                    "value": "混合 X" },
+    { "key": "find_usage.behavior.blend_y",                    "value": "混合 Y" }
   ]
 }

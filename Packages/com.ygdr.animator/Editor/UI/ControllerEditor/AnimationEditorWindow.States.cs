@@ -48,17 +48,17 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
             EditorGUILayout.LabelField(L10n.Get("states.shared_behaviors"), Styles.FooterText);
             DrawVRCDriversSection();
-            if (_selectedStates.Any(state => GetDriverForState(state) != null)) EditorGUILayout.Space(8);
+            if (_selectedStates.Any(state => HasAnyDriver(state))) EditorGUILayout.Space(8);
             DrawVRCPlayAudioSection();
-            if (_selectedStates.Any(state => GetAudioForState(state) != null)) EditorGUILayout.Space(8);
+            if (_selectedStates.Any(state => HasAnyAudio(state))) EditorGUILayout.Space(8);
             DrawVRCTrackingSection();
             if (_selectedStates.Any(state => GetTrackingForState(state) != null)) EditorGUILayout.Space(8);
             DrawVRCLocomotionSection();
             if (_selectedStates.Any(state => GetLocomotionForState(state) != null)) EditorGUILayout.Space(8);
             DrawVRCLayerControlSection();
-            if (_selectedStates.Any(state => GetLayerControlForState(state) != null)) EditorGUILayout.Space(8);
+            if (_selectedStates.Any(state => HasAnyLayerControl(state))) EditorGUILayout.Space(8);
             DrawVRCPlayableLayerSection();
-            if (_selectedStates.Any(state => GetPlayableLayerForState(state) != null)) EditorGUILayout.Space(8);
+            if (_selectedStates.Any(state => HasAnyPlayableLayer(state))) EditorGUILayout.Space(8);
             DrawVRCPoseSpaceSection();
 #endif
 
