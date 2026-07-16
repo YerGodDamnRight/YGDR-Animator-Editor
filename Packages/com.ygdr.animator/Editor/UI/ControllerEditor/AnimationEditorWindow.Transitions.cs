@@ -29,6 +29,13 @@ namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow
     {
+        static GUIContent _mergeIcon;
+        static GUIContent MergeIcon => _mergeIcon ??= EditorGUIUtility.IconContent("AnimatorStateTransition Icon");
+        static GUIContent _separateIcon;
+        static GUIContent SeparateIcon => _separateIcon ??= EditorGUIUtility.IconContent("d_BlendTree Icon");
+        static GUIContent _filterIcon;
+        static GUIContent FilterIcon => _filterIcon ??= EditorGUIUtility.IconContent("d_filterbylabel@2x");
+
         /* ── Transitions tab ─────────────────────────────────────────────── */
 
         void DrawTransitionsTab()
@@ -290,11 +297,21 @@ namespace YGDR.Editor.Animation
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUILayout.LabelField(L10n.Get("transitions.can_transition_to_self"), GUILayout.Width(160));
-                EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.canTransitionToSelf != first.canTransitionToSelf));
-                EditorGUI.BeginChangeCheck();
-                bool newSelf = EditorGUILayout.Toggle(empty ? false : first.canTransitionToSelf, GUILayout.Width(20));
-                if (EditorGUI.EndChangeCheck() && !empty) SetOnAll(transition => transition.canTransitionToSelf = newSelf);
-                EditorGUI.showMixedValue = false;
+                var anyStateSelected = _selectedTransitions.Where(x => IsAnyStateTransition(x)).ToArray();
+                using (new EditorGUI.DisabledScope(anyStateSelected.Length == 0))
+                {
+                    EditorGUI.showMixedValue = anyStateSelected.Length == 0
+                        || anyStateSelected.Any(x => x.canTransitionToSelf != anyStateSelected[0].canTransitionToSelf);
+                    EditorGUI.BeginChangeCheck();
+                    bool newSelf = EditorGUILayout.Toggle(anyStateSelected.Length == 0 ? false : anyStateSelected[0].canTransitionToSelf, GUILayout.Width(20));
+                    if (EditorGUI.EndChangeCheck() && anyStateSelected.Length > 0)
+                    {
+                        Undo.RecordObjects(anyStateSelected, "Edit Transition");
+                        foreach (var transition in anyStateSelected) transition.canTransitionToSelf = newSelf;
+                        foreach (var transition in anyStateSelected) EditorUtility.SetDirty(transition);
+                    }
+                    EditorGUI.showMixedValue = false;
+                }
                 GUILayout.FlexibleSpace();
                 EditorGUILayout.LabelField(L10n.Get("transitions.solo"), GUILayout.Width(80));
                 EditorGUI.showMixedValue = empty || (multi && _selectedTransitions.Any(x => x.solo != first.solo));
@@ -326,6 +343,16 @@ namespace YGDR.Editor.Animation
         }
 
         void InvalidateConditionCache() { _conditionCacheDirty = true; _paramCachedController = null; _cachedParamNameSet = null; }
+
+        /* Toggles one shared-condition match criterion (Name/Mode/Value), refusing to leave all three inactive. */
+        void SetConditionMatchCriterion(ref bool criterion, bool value)
+        {
+            int activeCount = (_matchConditionName ? 1 : 0) + (_matchConditionMode ? 1 : 0) + (_matchConditionValue ? 1 : 0);
+            bool willTurnOff = criterion && !value;
+            if (willTurnOff && activeCount <= 1) return;
+            criterion = value;
+            InvalidateConditionCache();
+        }
 
         bool ParameterListChanged()
         {
@@ -361,9 +388,8 @@ namespace YGDR.Editor.Animation
         {
             /* Header — not part of the padded/colored section */
             var headerRect = EditorGUILayout.GetControlRect(false, 22f);
-            float parameterColumnWidth = headerRect.width * 0.5f;
-            float modeColumnWidth  = headerRect.width * 0.25f;
-            float splitColumnWidth = (headerRect.width - parameterColumnWidth - modeColumnWidth) * 0.5f;
+            float parameterColumnWidth = headerRect.width * 0.4f;
+            float smallBtnWidth = (headerRect.width - parameterColumnWidth) / 6f;
 
             if (Event.current.type == EventType.Repaint)
                 EditorStyles.toolbar.Draw(headerRect, GUIContent.none, false, false, false, false);
@@ -372,10 +398,25 @@ namespace YGDR.Editor.Animation
             if (CursorBtn(new Rect(headerRect.x, headerRect.y, parameterColumnWidth, headerRect.height), new GUIContent("  " + modeLabel, L10n.Get("transitions.tooltip.toggle_conditions")), Styles.CondModeBtn))
                 _showSharedConditions = !_showSharedConditions;
 
-            float rightColumnX = headerRect.x + parameterColumnWidth;
-            if (CursorBtn(new Rect(rightColumnX,                                       headerRect.y, modeColumnWidth,  headerRect.height), new GUIContent("⇄", L10n.Get("transitions.tooltip.switch_modes")),  Styles.CondSwitchBtn)) ReverseAllConditions();
-            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth,                     headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("M", L10n.Get("transitions.tooltip.merge")),           Styles.IconBtn)) { MergeTransitions(); MergeEntryTransitions(); }
-            if (CursorBtn(new Rect(rightColumnX + modeColumnWidth + splitColumnWidth,  headerRect.y, splitColumnWidth, headerRect.height), new GUIContent("S", L10n.Get("transitions.tooltip.separate")),        Styles.IconBtn)) { SeparateTransitions(); SeparateEntryTransitions(); }
+            float columnX = headerRect.x + parameterColumnWidth;
+            var matchNameRect  = new Rect(columnX,                     headerRect.y, smallBtnWidth, headerRect.height); columnX += smallBtnWidth;
+            var matchModeRect  = new Rect(columnX,                     headerRect.y, smallBtnWidth, headerRect.height); columnX += smallBtnWidth;
+            var matchValueRect = new Rect(columnX,                     headerRect.y, smallBtnWidth, headerRect.height); columnX += smallBtnWidth;
+            var switchRect     = new Rect(columnX,                     headerRect.y, smallBtnWidth, headerRect.height); columnX += smallBtnWidth;
+            var mergeRect      = new Rect(columnX,                     headerRect.y, smallBtnWidth, headerRect.height); columnX += smallBtnWidth;
+            var separateRect   = new Rect(columnX,                     headerRect.y, smallBtnWidth, headerRect.height);
+
+            if (CursorBtn(matchNameRect,  new GUIContent("N", L10n.Get("transitions.tooltip.match_name")),  _matchConditionName  ? Styles.IconBtnActive : Styles.IconBtn)) SetConditionMatchCriterion(ref _matchConditionName, !_matchConditionName);
+            if (CursorBtn(matchModeRect,  new GUIContent("M", L10n.Get("transitions.tooltip.match_mode")),  _matchConditionMode  ? Styles.IconBtnActive : Styles.IconBtn)) SetConditionMatchCriterion(ref _matchConditionMode, !_matchConditionMode);
+            if (CursorBtn(matchValueRect, new GUIContent("V", L10n.Get("transitions.tooltip.match_value")), _matchConditionValue ? Styles.IconBtnActive : Styles.IconBtn)) SetConditionMatchCriterion(ref _matchConditionValue, !_matchConditionValue);
+
+            if (CursorBtn(switchRect, new GUIContent("⇄", L10n.Get("transitions.tooltip.switch_modes")), Styles.CondSwitchBtn)) ReverseAllConditions();
+
+            MergeIcon.tooltip = L10n.Get("transitions.tooltip.merge");
+            if (CursorBtn(mergeRect, MergeIcon, Styles.IconBtn)) { MergeTransitions(); MergeEntryTransitions(); }
+
+            SeparateIcon.tooltip = L10n.Get("transitions.tooltip.separate");
+            if (CursorBtn(separateRect, SeparateIcon, Styles.IconBtn)) { SeparateTransitions(); SeparateEntryTransitions(); }
 
             /* Padded + colored body — rows and add button only */
             GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
@@ -393,9 +434,22 @@ namespace YGDR.Editor.Animation
                                   .Where(group =>
                                   {
                                       var paramType = GetParamType(group.Key.Item2);
-                                      if (paramType != AnimatorControllerParameterType.Float) return true;
-                                      var thresholds = group.Select(e => e.condition.threshold).ToList();
-                                      return thresholds.Count != thresholds.Distinct().Count();
+                                      if (paramType == AnimatorControllerParameterType.Float)
+                                      {
+                                          var thresholds = group.Select(e => e.condition.threshold).ToList();
+                                          return thresholds.Count != thresholds.Distinct().Count();
+                                      }
+                                      if (paramType == AnimatorControllerParameterType.Int)
+                                      {
+                                          /* Equals/NotEqual are exact-match and always suspicious in pairs; Greater/Less only warn on an exact threshold clash. */
+                                          var conditions = group.Select(e => e.condition).ToList();
+                                          int eqNeqCount = conditions.Count(c => c.mode == AnimatorConditionMode.Equals || c.mode == AnimatorConditionMode.NotEqual);
+                                          if (eqNeqCount > 1) return true;
+                                          var rangeThresholds = conditions.Where(c => c.mode == AnimatorConditionMode.Greater || c.mode == AnimatorConditionMode.Less)
+                                                                           .Select(c => c.threshold).ToList();
+                                          return rangeThresholds.Count != rangeThresholds.Distinct().Count();
+                                      }
+                                      return true;
                                   })
                                   .Select(group => group.Key));
                 _cachedForOwners = allOwners;
@@ -446,12 +500,14 @@ namespace YGDR.Editor.Animation
             internal readonly int index;
             internal readonly Dictionary<UnityEngine.Object, int> sharedIndices;
             internal readonly bool mixedThreshold;
+            internal readonly bool mixedName;
+            internal readonly bool mixedMode;
 
             internal CondEntry(UnityEngine.Object owner, AnimatorCondition condition, int index)
-            { this.owner = owner; this.condition = condition; this.index = index; this.sharedIndices = null; this.mixedThreshold = false; }
+            { this.owner = owner; this.condition = condition; this.index = index; this.sharedIndices = null; this.mixedThreshold = false; this.mixedName = false; this.mixedMode = false; }
 
-            internal CondEntry(UnityEngine.Object owner, AnimatorCondition condition, int index, Dictionary<UnityEngine.Object, int> sharedIndices, bool mixedThreshold)
-            { this.owner = owner; this.condition = condition; this.index = index; this.sharedIndices = sharedIndices; this.mixedThreshold = mixedThreshold; }
+            internal CondEntry(UnityEngine.Object owner, AnimatorCondition condition, int index, Dictionary<UnityEngine.Object, int> sharedIndices, bool mixedThreshold, bool mixedName, bool mixedMode)
+            { this.owner = owner; this.condition = condition; this.index = index; this.sharedIndices = sharedIndices; this.mixedThreshold = mixedThreshold; this.mixedName = mixedName; this.mixedMode = mixedMode; }
 
             internal int IndexFor(UnityEngine.Object obj)
                 => sharedIndices != null && sharedIndices.TryGetValue(obj, out int idx) ? idx : index;
@@ -488,22 +544,40 @@ namespace YGDR.Editor.Animation
                 foreach (var owner in owners)
                 {
                     if (owner == first) continue;
-                    int matchIdx = FindConditionIndexExcluding(owner, condition.parameter, condition.mode, claimed[owner]);
+                    int matchIdx = FindConditionIndexExcluding(owner, condition.parameter, condition.mode, condition.threshold, claimed[owner], _matchConditionName, _matchConditionMode, _matchConditionValue);
                     if (matchIdx < 0) { allMatch = false; break; }
                     indexMap[owner] = matchIdx;
                 }
 
                 if (!allMatch) continue;
                 foreach (var pair in indexMap) claimed[pair.Key].Add(pair.Value);
-                bool mixedThreshold = indexMap.Any(pair =>
+
+                bool AnyOwnerDiffers(Func<AnimatorCondition, object> field) => indexMap.Any(pair =>
                 {
                     if (pair.Key == first) return false;
                     var ownerConditions = GetConditions(pair.Key);
-                    return pair.Value < ownerConditions.Length && ownerConditions[pair.Value].threshold != condition.threshold;
+                    return pair.Value < ownerConditions.Length && !Equals(field(ownerConditions[pair.Value]), field(condition));
                 });
-                result.Add(new CondEntry(first, condition, i, indexMap, mixedThreshold));
+                bool mixedThreshold = !_matchConditionValue && AnyOwnerDiffers(c => c.threshold);
+                bool mixedName      = !_matchConditionName  && AnyOwnerDiffers(c => c.parameter);
+                bool mixedMode      = !_matchConditionMode  && AnyOwnerDiffers(c => c.mode);
+                result.Add(new CondEntry(first, condition, i, indexMap, mixedThreshold, mixedName, mixedMode));
             }
             return result;
+        }
+
+        /* Selects every transition directly on the current state machine level (states' transitions, any-state, entry)
+           whose conditions contain a match for target under the active N/M/V criteria. Replaces the current selection. */
+        void SelectMatchingConditionTransitions(AnimatorCondition target)
+        {
+            if (_activeStateMachine == null) return;
+            var candidates = _activeStateMachine.states
+                .SelectMany(childState => childState.state.transitions)
+                .Concat<UnityEngine.Object>(_activeStateMachine.anyStateTransitions)
+                .Concat(_activeStateMachine.entryTransitions);
+            Selection.objects = candidates
+                .Where(obj => GetConditions(obj).Any(c => ConditionMatchesCriteria(c, target, _matchConditionName, _matchConditionMode, _matchConditionValue)))
+                .ToArray();
         }
 
         /* Draws one condition row: parameter dropdown, mode/value controls, and a remove button.
@@ -534,27 +608,75 @@ namespace YGDR.Editor.Animation
             var valueRect        = new Rect(currentX, row.y, valueColumnWidth,     row.height); currentX += valueColumnWidth;
             var removeRect       = new Rect(currentX, row.y, removeButtonWidth,    row.height);
 
+            const float filterIconOffsetNoTypeIcons = 30f;
+            const float dropdownArrowWidth = 18f;
+
+            /* Consumes a click inside rect before any wider control (e.g. the parameter dropdown) gets a chance to claim it. */
+            bool filterClicked = false;
+            void ClaimFilterClick(Rect rect)
+            {
+                if (Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition))
+                {
+                    filterClicked = true;
+                    Event.current.Use();
+                }
+            }
+
+            void PaintFilterIcon(Rect rect)
+            {
+                FilterIcon.tooltip = L10n.Get("transitions.tooltip.select_matching");
+                GUI.Label(rect, FilterIcon);
+                EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
+            }
+
             if (_controller == null || _controller.parameters.Length == 0)
             {
+                var filterRect = new Rect(parameterRect.xMax - filterIconOffsetNoTypeIcons, parameterRect.y, 16f, parameterRect.height);
+                ClaimFilterClick(filterRect);
                 GUI.Label(parameterRect, condition.parameter, EditorStyles.miniLabel);
+                PaintFilterIcon(filterRect);
                 CursorBtn(removeRect, "−", Styles.CondBtn);
+                if (filterClicked) SelectMatchingConditionTransitions(condition);
                 return;
             }
 
             bool parameterExists = _cachedParamNameSet?.Contains(condition.parameter) ?? false;
             if (!parameterExists)
             {
+                var filterRect = new Rect(parameterRect.xMax - filterIconOffsetNoTypeIcons, parameterRect.y, 16f, parameterRect.height);
+                ClaimFilterClick(filterRect);
                 var previousColor = GUI.color;
                 GUI.color = Color.red;
                 GUI.Label(parameterRect, condition.parameter, EditorStyles.miniLabel);
                 GUI.color = previousColor;
+                PaintFilterIcon(filterRect);
                 if (CursorBtn(removeRect, "−", Styles.CondBtn)) RemoveConditionFromTargets(entry);
+                if (filterClicked) SelectMatchingConditionTransitions(condition);
                 return;
             }
 
+            var parameterType = GetParamType(condition.parameter);
+            bool showTypeIcons  = AnimatorDefaultSettings.Load().showParamTypeIcons;
+            bool isDuplicateParam = duplicateParameters.Contains((entry.owner, condition.parameter));
+            float duplicateIconRightOffset = showTypeIcons
+                ? parameterType switch
+                {
+                    AnimatorControllerParameterType.Float   => 58f,
+                    AnimatorControllerParameterType.Bool    => 55f,
+                    AnimatorControllerParameterType.Int     => 45f,
+                    _                                       => 68f
+                }
+                : filterIconOffsetNoTypeIcons;
+            float filterIconRightOffset = isDuplicateParam ? duplicateIconRightOffset + 18f : duplicateIconRightOffset;
+            var mainFilterRect = new Rect(parameterRect.xMax - filterIconRightOffset, parameterRect.y, 16f, parameterRect.height);
+            ClaimFilterClick(mainFilterRect);
+
             var capturedEntry = entry;
             var capturedCondition = condition;
-            if (EditorGUI.DropdownButton(parameterRect, new GUIContent(condition.parameter), FocusType.Passive))
+            string paramLabel = entry.mixedName ? "—" : condition.parameter;
+            float paramLabelMaxWidth = parameterRect.width - filterIconRightOffset - dropdownArrowWidth;
+            paramLabel = TruncateTextLeft(paramLabel, EditorStyles.popup, paramLabelMaxWidth);
+            if (EditorGUI.DropdownButton(parameterRect, new GUIContent(paramLabel), FocusType.Passive))
                 ShowParameterDropdown(parameterRect, condition.parameter, newParam =>
                 {
                     var newType = GetParamType(newParam);
@@ -574,26 +696,14 @@ namespace YGDR.Editor.Animation
                     }, preserveThreshold: true);
                 });
 
-            var parameterType = GetParamType(condition.parameter);
-
-            bool showTypeIcons  = AnimatorDefaultSettings.Load().showParamTypeIcons;
-            bool isDuplicateParam = duplicateParameters.Contains((entry.owner, condition.parameter));
             if (isDuplicateParam)
             {
-                const float duplicateIconOffsetNoTypeIcons = 30f;
-                float duplicateIconRightOffset = showTypeIcons
-                    ? parameterType switch
-                    {
-                        AnimatorControllerParameterType.Float   => 58f,
-                        AnimatorControllerParameterType.Bool    => 55f,
-                        AnimatorControllerParameterType.Int     => 45f,
-                        _                                       => 68f
-                    }
-                    : duplicateIconOffsetNoTypeIcons;
                 var duplicateIconContent = new GUIContent(EditorGUIUtility.IconContent("d_console.erroricon").image, L10n.Get("transitions.duplicate_param_tooltip"));
                 var duplicateIconRect    = new Rect(parameterRect.xMax - duplicateIconRightOffset, parameterRect.y, 16, parameterRect.height);
                 GUI.Label(duplicateIconRect, duplicateIconContent);
             }
+            PaintFilterIcon(mainFilterRect);
+            if (filterClicked) SelectMatchingConditionTransitions(condition);
 
             if (Event.current.type == EventType.Repaint && showTypeIcons)
                 GUI.Label(parameterRect, parameterType.ToString(), Styles.MiniLabelRight);
@@ -602,12 +712,13 @@ namespace YGDR.Editor.Animation
             {
                 bool isTrue = condition.mode != AnimatorConditionMode.IfNot;
                 var boolButtonRect = new Rect(conditionModeRect.x, conditionModeRect.y, conditionModeRect.width + valueColumnWidth, conditionModeRect.height);
-                if (CursorBtn(boolButtonRect, isTrue ? L10n.Get("transitions.bool_true") : L10n.Get("transitions.bool_false"), isTrue ? Styles.BoolBtnTrue : Styles.BoolBtnFalse))
-                    ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = isTrue ? AnimatorConditionMode.IfNot : AnimatorConditionMode.If, threshold = 0f });
+                string boolLabel = entry.mixedMode ? "—" : (isTrue ? L10n.Get("transitions.bool_true") : L10n.Get("transitions.bool_false"));
+                if (CursorBtn(boolButtonRect, boolLabel, isTrue ? Styles.BoolBtnTrue : Styles.BoolBtnFalse))
+                    ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = isTrue ? AnimatorConditionMode.IfNot : AnimatorConditionMode.If, threshold = 0f }, preserveParameter: true);
             }
             else if (parameterType != AnimatorControllerParameterType.Trigger)
             {
-                var modeLabel = ModeLabel(condition.mode);
+                var modeLabel = entry.mixedMode ? "—" : ModeLabel(condition.mode);
                 if (GUI.Button(conditionModeRect, modeLabel, EditorStyles.popup))
                 {
                     var menu = new GenericMenu();
@@ -621,7 +732,7 @@ namespace YGDR.Editor.Animation
                                 parameter = condition.parameter,
                                 mode = conditionMode,
                                 threshold = 0f
-                            }, preserveThreshold: true);
+                            }, preserveThreshold: true, preserveParameter: true);
                         });
                     }
 
@@ -634,12 +745,25 @@ namespace YGDR.Editor.Animation
                     ? EditorGUI.IntField(valueRect, (int)condition.threshold)
                     : EditorGUI.FloatField(valueRect, condition.threshold);
                 if (EditorGUI.EndChangeCheck())
-                    ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = condition.mode, threshold = newThreshold });
+                    ReplaceConditionOnTargets(entry, new AnimatorCondition { parameter = condition.parameter, mode = condition.mode, threshold = newThreshold }, preserveParameter: true, preserveMode: true);
                 EditorGUI.showMixedValue = false;
             }
 
             if (CursorBtn(removeRect, "−", Styles.CondBtn))
                 RemoveConditionFromTargets(entry);
+        }
+
+        /* Truncates text from the left (prepending an ellipsis) so it fits maxWidth, keeping the tail of the string (e.g. parameter name suffixes) visible. */
+        static string TruncateTextLeft(string text, GUIStyle style, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text) || style.CalcSize(new GUIContent(text)).x <= maxWidth) return text;
+            const string ellipsis = "…";
+            for (int start = 1; start < text.Length; start++)
+            {
+                string candidate = ellipsis + text.Substring(start);
+                if (style.CalcSize(new GUIContent(candidate)).x <= maxWidth) return candidate;
+            }
+            return ellipsis;
         }
 
         /* Looks up the parameter type by name from the active controller, defaulting to Float if not found. */
@@ -677,8 +801,10 @@ namespace YGDR.Editor.Animation
         };
 
         /* Replaces the entry's condition with replacement on one owner (individual mode) or all selected owners (shared mode).
-           When preserveThreshold is true, each target keeps its own existing threshold — only parameter and mode are overwritten. */
-        void ReplaceConditionOnTargets(CondEntry entry, AnimatorCondition replacement, bool preserveThreshold = false)
+           preserveParameter/preserveMode/preserveThreshold keep that field as each owner's own existing value instead of
+           overwriting it with replacement's — used in shared mode when that field isn't a required match criterion, so it
+           may legitimately differ per owner and must not be clobbered by an edit to a different field. */
+        void ReplaceConditionOnTargets(CondEntry entry, AnimatorCondition replacement, bool preserveThreshold = false, bool preserveParameter = false, bool preserveMode = false)
         {
             InvalidateConditionCache();
             if (!_showSharedConditions)
@@ -694,9 +820,13 @@ namespace YGDR.Editor.Animation
                     int idx = entry.IndexFor(owner);
                     var ownerConditions = GetConditions(owner);
                     if (idx < 0 || idx >= ownerConditions.Length) continue;
-                    var actual = preserveThreshold
-                        ? new AnimatorCondition { parameter = replacement.parameter, mode = replacement.mode, threshold = ownerConditions[idx].threshold }
-                        : replacement;
+                    var own = ownerConditions[idx];
+                    var actual = new AnimatorCondition
+                    {
+                        parameter = preserveParameter ? own.parameter : replacement.parameter,
+                        mode      = preserveMode      ? own.mode      : replacement.mode,
+                        threshold = preserveThreshold  ? own.threshold : replacement.threshold
+                    };
                     RebuildConditions(owner, idx, actual);
                 }
             }
@@ -721,18 +851,20 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        /* Adds a new condition using an unused parameter (or the first) to every selected owner. */
+        /* Adds a new condition using the parameter after the last one added (params-list order, wraps at end). */
         void AddConditionToAll()
         {
             InvalidateConditionCache();
             if (_controller == null || _controller.parameters.Length == 0) return;
             var owners = AllSelectedOwners();
+            if (owners.Length == 0) return;
             var defaultParam = _controller.parameters[0];
             if (owners.Length == 1 || _showSharedConditions)
             {
-                var usedNames = new HashSet<string>(owners.SelectMany(owner => GetConditions(owner).Select(condition => condition.parameter)));
-                var unusedParam = _controller.parameters.FirstOrDefault(parameter => !usedNames.Contains(parameter.name));
-                if (unusedParam != null) defaultParam = unusedParam;
+                var lastCondition = GetConditions(owners[0]).LastOrDefault();
+                var previousIndex = System.Array.FindIndex(_controller.parameters, p => p.name == lastCondition.parameter);
+                if (previousIndex >= 0)
+                    defaultParam = _controller.parameters[(previousIndex + 1) % _controller.parameters.Length];
             }
             foreach (var owner in owners)
             {
@@ -768,15 +900,38 @@ namespace YGDR.Editor.Animation
             _                             => mode
         };
 
-        /* Returns the first unclaimed index in owner's conditions matching paramName+mode, or -1. */
-        static int FindConditionIndexExcluding(UnityEngine.Object owner, string paramName, AnimatorConditionMode mode, HashSet<int> exclude)
+        /* Returns the first unclaimed index in owner's conditions matching the reference condition, or -1. */
+        int FindConditionIndexExcluding(UnityEngine.Object owner, string paramName, AnimatorConditionMode mode, float threshold, HashSet<int> exclude, bool matchName, bool matchMode, bool matchValue)
         {
+            var reference = new AnimatorCondition { parameter = paramName, mode = mode, threshold = threshold };
             var conditions = GetConditions(owner);
             for (int i = 0; i < conditions.Length; i++)
-                if (!exclude.Contains(i) && conditions[i].parameter == paramName && conditions[i].mode == mode)
-                    return i;
+            {
+                if (exclude.Contains(i)) continue;
+                if (!ConditionMatchesCriteria(conditions[i], reference, matchName, matchMode, matchValue)) continue;
+                return i;
+            }
             return -1;
         }
+
+        /* Bool/Trigger params encode their value in mode (If/IfNot), not threshold — comparing raw
+           threshold across a bool and an int/float condition is meaningless, so matchValue only
+           compares threshold when both conditions' parameters share the same value representation. */
+        static bool ConditionMatchesCriteria(AnimatorCondition condition, AnimatorCondition target, bool matchName, bool matchMode, bool matchValue)
+        {
+            if (matchName && condition.parameter != target.parameter) return false;
+            if (matchMode && condition.mode != target.mode) return false;
+            if (matchValue)
+            {
+                bool conditionIsBoolLike = IsBoolLikeMode(condition.mode);
+                bool targetIsBoolLike = IsBoolLikeMode(target.mode);
+                if (conditionIsBoolLike != targetIsBoolLike) return false;
+                if (conditionIsBoolLike ? condition.mode != target.mode : condition.threshold != target.threshold) return false;
+            }
+            return true;
+        }
+
+        static bool IsBoolLikeMode(AnimatorConditionMode mode) => mode == AnimatorConditionMode.If || mode == AnimatorConditionMode.IfNot;
 
         /* Clears and re-adds all conditions on the owner, substituting replacement at replaceIdx. */
         static void RebuildConditions(UnityEngine.Object owner, int replaceIdx, AnimatorCondition replacement)
@@ -1073,6 +1228,13 @@ namespace YGDR.Editor.Animation
         }
 
         /* ── Utility ─────────────────────────────────────────────────────── */
+
+        /* True if transition originates from an AnyState node. */
+        bool IsAnyStateTransition(AnimatorStateTransition transition)
+        {
+            var ownerSM = FindOwnerSM(_controller, transition);
+            return ownerSM != null && ownerSM.anyStateTransitions.Contains(transition);
+        }
 
         /* Applies mutate to every selected state transition with undo recording, then marks each dirty. */
         void SetOnAll(Action<AnimatorStateTransition> mutate)

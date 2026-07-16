@@ -615,12 +615,7 @@ namespace YGDR.Editor.Animation
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    EditorGUILayout.LabelField(L10n.Get("transitions.can_transition_to_self"), GUILayout.Width(160));
-                    EditorGUI.BeginChangeCheck();
-                    bool canTransitionToSelf = EditorGUILayout.Toggle(settings.transCanTransitionToSelf, GUILayout.Width(20));
-                    if (EditorGUI.EndChangeCheck()) { settings.transCanTransitionToSelf = canTransitionToSelf; settings.Save(); }
-                    GUILayout.FlexibleSpace();
-                    EditorGUILayout.LabelField(L10n.Get("transitions.solo"), GUILayout.Width(80));
+                    EditorGUILayout.LabelField(L10n.Get("transitions.solo"), GUILayout.Width(160));
                     EditorGUI.BeginChangeCheck();
                     bool solo = EditorGUILayout.Toggle(settings.transSolo, GUILayout.Width(20));
                     if (EditorGUI.EndChangeCheck()) { settings.transSolo = solo; settings.Save(); }

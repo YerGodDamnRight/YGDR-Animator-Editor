@@ -297,6 +297,72 @@ namespace YGDR.Editor.Animation
             };
 #endif
 
+#if VRC_SDK_VRCSDK3
+        // Click a row icon to flip it and start a drag; dragging over other rows' same icon paints them to the same value.
+        class DragToggleState
+        {
+            internal bool Active;
+            internal bool Value;
+            internal readonly HashSet<string> Visited = new();
+        }
+
+        static readonly DragToggleState _syncDrag = new();
+        static readonly DragToggleState _savedDrag = new();
+        static readonly DragToggleState _eligibleDrag = new();
+
+        static void ResetDragStates()
+        {
+            _syncDrag.Active = false;
+            _savedDrag.Active = false;
+            _eligibleDrag.Active = false;
+        }
+
+        static void DragToggleIcon(Rect iconRect, bool currentValue, DragToggleState drag, string paramName, Action<bool> apply)
+        {
+            var evt = Event.current;
+            if (evt.type == EventType.MouseDown && evt.button == 0 && iconRect.Contains(evt.mousePosition))
+            {
+                evt.Use();
+                bool newValue = !currentValue;
+                apply(newValue);
+                drag.Active = true;
+                drag.Value = newValue;
+                drag.Visited.Clear();
+                drag.Visited.Add(paramName);
+                EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
+            }
+            else if (evt.type == EventType.MouseDrag && drag.Active && iconRect.Contains(evt.mousePosition) && !drag.Visited.Contains(paramName))
+            {
+                evt.Use();
+                apply(drag.Value);
+                drag.Visited.Add(paramName);
+                EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
+            }
+        }
+
+        static GUIContent _syncEligibleIcon;
+        static GUIContent _syncIneligibleIcon;
+        static GUIContent SyncEligibleIcon   => _syncEligibleIcon   ??= EditorGUIUtility.IconContent("muteon");
+        static GUIContent SyncIneligibleIcon => _syncIneligibleIcon ??= EditorGUIUtility.IconContent("mutenormal");
+
+        // Session-only: not persisted on the parameter or the VRCExpressionParameters asset.
+        // Marks whether a controller parameter qualifies for the bulk "Sync VRC Parameters Asset" action.
+        static readonly Dictionary<string, bool> _syncEligible = new();
+
+        internal static bool IsSyncEligible(string paramName)
+        {
+            if (_syncEligible.TryGetValue(paramName, out bool value)) return value;
+            bool defaultValue = VRCSyncCache.TryGetParameter(paramName, out _);
+            _syncEligible[paramName] = defaultValue;
+            return defaultValue;
+        }
+
+        internal static void SetSyncEligible(string paramName, bool value) => _syncEligible[paramName] = value;
+
+        internal static HashSet<string> GetSyncIneligibleNames(IEnumerable<string> paramNames) =>
+            paramNames.Where(name => !IsSyncEligible(name)).ToHashSet();
+#endif
+
         static readonly Dictionary<int, string> _elementParamNameCache = new();
         static readonly Dictionary<string, float> _lastKnownDefaultByName = new();
         static readonly GUIContent _tempContent = new GUIContent();
@@ -320,6 +386,11 @@ namespace YGDR.Editor.Animation
             {
                 if (Event.current.type == EventType.Repaint && focused)
                     PatchParameterContextMenu._hasFocus = true;
+
+#if VRC_SDK_VRCSDK3
+                if (Event.current.type == EventType.MouseUp)
+                    ResetDragStates();
+#endif
 
                 var parameter = Traverse.Create(__instance).Field("m_Parameter").GetValue<UnityEngine.AnimatorControllerParameter>();
                 if (parameter == null) return;
@@ -417,24 +488,29 @@ namespace YGDR.Editor.Animation
 
 #if VRC_SDK_VRCSDK3
                 const float iconSize = 14f;
+                var expParams = VRCSyncCache.GetExpressionParameters();
+
+                if (showVrcComponent && expParams != null)
+                {
+                    bool eligible = IsSyncEligible(parameter.name);
+                    var eligibleIconRect = new Rect(rect.xMin - 18f, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
+                    GUI.Label(eligibleIconRect, eligible ? SyncEligibleIcon : SyncIneligibleIcon);
+                    DragToggleIcon(eligibleIconRect, eligible, _eligibleDrag, parameter.name,
+                        newValue => SetSyncEligible(parameter.name, newValue));
+                }
+
                 if (hasSyncData && showVrcComponent)
                 {
-                    var expParams = VRCSyncCache.GetExpressionParameters();
                     VRCExpressionParameters.Parameter vrcParam = null;
                     if (expParams != null) VRCSyncCache.TryGetParameter(parameter.name, out vrcParam);
 
                     cursorX -= iconSize + iconPadding;
                     var syncIconRect = new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
                     GUI.Label(syncIconRect, isSynced ? SyncedIcon : UnsyncedIcon);
-                    if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && syncIconRect.Contains(Event.current.mousePosition))
+                    DragToggleIcon(syncIconRect, isSynced, _syncDrag, parameter.name, newValue =>
                     {
-                        Event.current.Use();
-                        if (vrcParam != null)
-                        {
-                            AnimatorParameterOps.SetVrcSynced(expParams, parameter.name, !isSynced);
-                            EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
-                        }
-                    }
+                        if (vrcParam != null) AnimatorParameterOps.SetVrcSynced(expParams, parameter.name, newValue);
+                    });
                     cursorX -= iconPadding;
 
                     if (vrcParam != null)
@@ -442,14 +518,12 @@ namespace YGDR.Editor.Animation
                         cursorX -= iconSize;
                         var savedIconRect = new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
                         GUI.Label(savedIconRect, vrcParam.saved ? SavedIcon : UnsavedIcon);
-                        if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && savedIconRect.Contains(Event.current.mousePosition))
+                        DragToggleIcon(savedIconRect, vrcParam.saved, _savedDrag, parameter.name, newValue =>
                         {
-                            Event.current.Use();
                             Undo.RecordObject(expParams, "Toggle VRC Parameter Saved");
-                            vrcParam.saved = !vrcParam.saved;
+                            vrcParam.saved = newValue;
                             EditorUtility.SetDirty(expParams);
-                            EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
-                        }
+                        });
                         cursorX -= iconPadding;
                     }
                 }
@@ -703,7 +777,9 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
         static void ConfirmAndSyncVrcParameters(VRCExpressionParameters expressionParameters, AnimatorController controller)
         {
-            var (toAdd, toRemove) = AnimatorParameterOps.PreviewVrcParameterSync(expressionParameters, controller);
+            var ineligibleNames = PatchParameterRow.GetSyncIneligibleNames(
+                controller.parameters.Select(parameter => parameter.name));
+            var (toAdd, toRemove) = AnimatorParameterOps.PreviewVrcParameterSync(expressionParameters, controller, ineligibleNames);
             if (toAdd.Count == 0 && toRemove.Count == 0) return;
 
             string body = string.Format(L10n.Get("params_menu.sync_vrc_asset_body"),
@@ -714,7 +790,7 @@ namespace YGDR.Editor.Animation
                     L10n.Get("params_menu.sync_vrc_asset_ok"), L10n.Get("params_menu.sync_vrc_asset_cancel")))
                 return;
 
-            AnimatorParameterOps.SyncVrcParameters(expressionParameters, controller);
+            AnimatorParameterOps.SyncVrcParameters(expressionParameters, controller, ineligibleNames);
             EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
         }
 #endif

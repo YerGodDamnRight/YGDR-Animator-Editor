@@ -266,10 +266,10 @@ namespace YGDR.Editor.Animation
             "Neutral", "Fist", "OpenHand", "FingerPoint", "Victory", "RockNRoll", "HandGun", "ThumbsUp"
         };
 
-        /* Returns a short human-readable string for a single condition (e.g. "Param > 0.5", "Flag = True"), truncating parameter names over 16 chars. */
+        /* Returns a short human-readable string for a single condition (e.g. "Param > 0.5", "Flag = True"), truncating parameter names over 16 chars from the front. */
         static string FormatCondition(AnimatorCondition animatorCondition, bool truncate = true)
         {
-            var parameterLabel = truncate && animatorCondition.parameter.Length > 16 ? animatorCondition.parameter[..16] + "…" : animatorCondition.parameter;
+            var parameterLabel = truncate && animatorCondition.parameter.Length > 16 ? "…" + animatorCondition.parameter[^16..] : animatorCondition.parameter;
             return animatorCondition.mode switch
             {
                 AnimatorConditionMode.If       => $"{parameterLabel} = True",

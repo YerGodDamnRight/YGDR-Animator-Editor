@@ -211,29 +211,22 @@ namespace YGDR.Editor.Animation
 
                 if (isAnyStateSelected)
                 {
-                    var capturedSM = activeSM;
+                    var capturedRootSM = ResolveRootStateMachine(activeSM);
+                    var capturedScopeSM = activeSM;
                     menu.AddItem(new GUIContent(L10n.Get("context_menu.select_outgoing_all")), false,
                         static data =>
                         {
-                            var sm = (AnimatorStateMachine)data;
-                            var path = AssetDatabase.GetAssetPath(sm);
-                            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
-                            AnimationEditorWindow.SelectOutgoingFromAnyState(controller);
+                            var (rootSM, scopeSM) = ((AnimatorStateMachine, AnimatorStateMachine))data;
+                            AnimationEditorWindow.SelectOutgoingFromAnyState(rootSM, scopeSM);
                         },
-                        capturedSM);
+                        (capturedRootSM, capturedScopeSM));
                 }
 
                 if (isEntrySelected)
                 {
                     var capturedSM = activeSM;
                     menu.AddItem(new GUIContent(L10n.Get("context_menu.select_outgoing_all")), false,
-                        static data =>
-                        {
-                            var sm = (AnimatorStateMachine)data;
-                            var path = AssetDatabase.GetAssetPath(sm);
-                            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
-                            AnimationEditorWindow.SelectOutgoingFromEntry(controller);
-                        },
+                        static data => AnimationEditorWindow.SelectOutgoingFromEntry((AnimatorStateMachine)data),
                         capturedSM);
                 }
 
@@ -241,13 +234,7 @@ namespace YGDR.Editor.Animation
                 {
                     var capturedSM = activeSM;
                     menu.AddItem(new GUIContent(L10n.Get("context_menu.select_incoming_all")), false,
-                        static data =>
-                        {
-                            var sm = (AnimatorStateMachine)data;
-                            var path = AssetDatabase.GetAssetPath(sm);
-                            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
-                            AnimationEditorWindow.SelectIncomingToExit(controller);
-                        },
+                        static data => AnimationEditorWindow.SelectIncomingToExit((AnimatorStateMachine)data),
                         capturedSM);
                 }
 
@@ -287,6 +274,32 @@ namespace YGDR.Editor.Animation
                     var pasteLabel = _copiedInstanceName != null
                         ? $"{L10n.Get("context_menu.paste_behaviors")} ({typeName} — {_copiedInstanceName})"
                         : $"{L10n.Get("context_menu.paste_behaviors")} ({typeName})";
+
+#if VRC_SDK_VRCSDK3
+                    var existingDrivers = _copiedBehaviorType == typeof(VRCAvatarParameterDriver)
+                        ? selectedStates[0].behaviours.OfType<VRCAvatarParameterDriver>().ToArray()
+                        : System.Array.Empty<VRCAvatarParameterDriver>();
+
+                    if (existingDrivers.Length > 0)
+                    {
+                        menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_replace")}"), false,
+                            static data => ReplaceDriverInstances((AnimatorState[])data),
+                            selectedStates);
+
+                        foreach (var existing in existingDrivers)
+                        {
+                            var targetName = existing.name;
+                            menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_append")}/{targetName}"), false,
+                                static data => { var (states, name) = ((AnimatorState[], string))data; AppendDriverRows(states, name); },
+                                (selectedStates, targetName));
+                        }
+
+                        menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_append_instance")}"), false,
+                            static data => AppendDriverInstance((AnimatorState[])data),
+                            selectedStates);
+                    }
+                    else
+#endif
                     menu.AddItem(new GUIContent(pasteLabel), false,
                         static data => PasteBehaviors((AnimatorState[])data),
                         selectedStates);
@@ -327,7 +340,7 @@ namespace YGDR.Editor.Animation
                                     _multiTransitionSources = System.Array.Empty<AnimatorState>();
                                     _multiTransitionSM = sm;
                                 },
-                                activeSM);
+                                ResolveRootStateMachine(activeSM));
                         else if (isEntrySelected)
                             menu.AddItem(new GUIContent(L10n.Get("context_menu.multi_transition")), false,
                                 static data =>
@@ -450,22 +463,23 @@ namespace YGDR.Editor.Animation
                     }
                     else if (_replicateTransitions != null)
                     {
+                        var capturedRootSM = ResolveRootStateMachine(activeSM);
                         menu.AddItem(new GUIContent(L10n.Get("context_menu.replicate_transitions")), true,
                             static data =>
                             {
-                                var (newSourceStates, fromAnyState, fromEntry) = ((AnimatorState[], bool, bool))data;
+                                var (newSourceStates, fromAnyState, fromEntry, rootSM) = ((AnimatorState[], bool, bool, AnimatorStateMachine))data;
                                 var transitions = _replicateTransitions;
                                 var sm = _replicateSM;
                                 _replicateTransitions = null;
                                 _replicateSM = null;
                                 if (fromAnyState)
-                                    AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(sm, transitions);
+                                    AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(rootSM, transitions);
                                 else if (fromEntry)
                                     AnimatorBulkTransitionOps.ReplicateTransitionsFromEntry(sm, transitions);
                                 else if (newSourceStates.Length > 0)
                                     AnimatorBulkTransitionOps.ReplicateTransitions(sm, transitions, newSourceStates);
                             },
-                            (selectedStates, isAnyStateSelected, isEntrySelected));
+                            (selectedStates, isAnyStateSelected, isEntrySelected, capturedRootSM));
                     }
                     else if (_replicateEntryTransitions != null)
                     {
@@ -625,22 +639,81 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
+            ReplaceAllInstancesOfType(states, "Paste Behaviors");
+        }
+
+        /* Wipes every existing behaviour of the clipboard type on each target state and rebuilds from the clipboard JSON(s). */
+        static void ReplaceAllInstancesOfType(AnimatorState[] states, string undoLabel)
+        {
             foreach (var state in states)
             {
                 var existing = state.behaviours.Where(b => b.GetType() == _copiedBehaviorType).ToArray();
-                Undo.RegisterCompleteObjectUndo(state, "Paste Behaviors");
+                Undo.RegisterCompleteObjectUndo(state, undoLabel);
                 state.behaviours = state.behaviours.Where(b => b.GetType() != _copiedBehaviorType).ToArray();
                 foreach (var b in existing) Undo.DestroyObjectImmediate(b);
-                foreach (var json in _copiedBehaviorJsons)
-                {
-                    var newBehavior = state.AddStateMachineBehaviour(_copiedBehaviorType);
-                    Undo.RegisterCreatedObjectUndo(newBehavior, "Paste Behaviors");
-                    EditorJsonUtility.FromJsonOverwrite(json, newBehavior);
-                    EditorUtility.SetDirty(newBehavior);
-                }
+                AddBehavioursFromClipboard(state, undoLabel);
                 EditorUtility.SetDirty(state);
             }
         }
+
+        /* Adds one new behaviour instance per clipboard JSON to state, without touching existing behaviours. */
+        static void AddBehavioursFromClipboard(AnimatorState state, string undoLabel)
+        {
+            foreach (var json in _copiedBehaviorJsons)
+            {
+                var newBehavior = state.AddStateMachineBehaviour(_copiedBehaviorType);
+                Undo.RegisterCreatedObjectUndo(newBehavior, undoLabel);
+                EditorJsonUtility.FromJsonOverwrite(json, newBehavior);
+                EditorUtility.SetDirty(newBehavior);
+            }
+        }
+
+#if VRC_SDK_VRCSDK3
+        /* "Replace" — wipes every existing VRCAvatarParameterDriver instance on each target state
+           and rebuilds from the clipboard JSON(s), regardless of named/all-instances copy mode. */
+        static void ReplaceDriverInstances(AnimatorState[] states)
+        {
+            if (_copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
+            ReplaceAllInstancesOfType(states, "Replace Param Drivers");
+        }
+
+        /* "Append" — merges the copied driver's parameter rows into an existing named instance on each target state. */
+        static void AppendDriverRows(AnimatorState[] states, string targetInstanceName)
+        {
+            if (_copiedBehaviorType != typeof(VRCAvatarParameterDriver) || _copiedBehaviorJsons.Count == 0) return;
+
+            foreach (var state in states)
+            {
+                var target = state.behaviours
+                    .OfType<VRCAvatarParameterDriver>()
+                    .FirstOrDefault(b => b.name == targetInstanceName);
+                if (target == null) continue;
+
+                Undo.RecordObject(target, "Append Param Driver Rows");
+                foreach (var json in _copiedBehaviorJsons)
+                {
+                    var temp = ScriptableObject.CreateInstance<VRCAvatarParameterDriver>();
+                    EditorJsonUtility.FromJsonOverwrite(json, temp);
+                    target.parameters.AddRange(temp.parameters);
+                    UnityEngine.Object.DestroyImmediate(temp);
+                }
+                EditorUtility.SetDirty(target);
+            }
+        }
+
+        /* "Append Instance" — adds the copied driver(s) as brand new instances, never upserting by name. */
+        static void AppendDriverInstance(AnimatorState[] states)
+        {
+            if (_copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
+
+            foreach (var state in states)
+            {
+                Undo.RegisterCompleteObjectUndo(state, "Append Param Driver Instance");
+                AddBehavioursFromClipboard(state, "Append Param Driver Instance");
+                EditorUtility.SetDirty(state);
+            }
+        }
+#endif
 
         internal static void CopyBehaviourDirect(StateMachineBehaviour behaviour)
             => CopyBehaviorInstance(behaviour.GetType(), behaviour);

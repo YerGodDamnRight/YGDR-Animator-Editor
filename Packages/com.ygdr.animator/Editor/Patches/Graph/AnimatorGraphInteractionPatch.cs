@@ -74,7 +74,7 @@ namespace YGDR.Editor.Animation
             {
                 var currentEvent = Event.current;
 
-                UpdateLastMousePositionAndClearPanelFlags(currentEvent);
+                UpdateLastMousePosition(currentEvent);
 
                 if (TryBeginChainFanFromSpecialNode(__instance, currentEvent)) return;
                 if (TryBeginRightDrag(__instance, currentEvent)) return;
@@ -114,17 +114,11 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        static void UpdateLastMousePositionAndClearPanelFlags(Event currentEvent)
+        static void UpdateLastMousePosition(Event currentEvent)
         {
             if (currentEvent.isMouse || currentEvent.type == EventType.MouseMove)
             {
                 _lastMousePosition = currentEvent.mousePosition;
-                if (currentEvent.type == EventType.MouseDown)
-                {
-                    PatchLayerF2Rename._panelClicked = false;
-                    PatchParameterF2Rename._panelClicked = false;
-                    PatchLayerListFocusHighlight._layerPanelActive = false;
-                }
             }
         }
 
@@ -157,7 +151,8 @@ namespace YGDR.Editor.Animation
                 if (!isAnyStateNode && !isEntryNode) continue;
                 var specialNodePosition = GraphPatchReflection.NodePositionField?.GetValue(node);
                 if (specialNodePosition is not Rect specialNodeRect || !specialNodeRect.Contains(hitPos)) continue;
-                var specialSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                var specialActiveSM = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
+                var specialSM = isAnyStateNode ? PatchStateNodeMenu.ResolveRootStateMachine(specialActiveSM) : specialActiveSM;
                 if (specialSM == null) break;
                 if (wantsChainBegin)
                     PatchStateChainTransition.BeginChainSpecial(specialSM, specialNodeRect, isAnyStateNode);
@@ -190,7 +185,8 @@ namespace YGDR.Editor.Animation
                 var activeSMRightDrag = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                 if (rightDownNodeType == AnimatorEditorInit.AnyStateNodeType)
                 {
-                    PatchRightDragTransition.BeginPendingAnyState(nodeRect, activeSMRightDrag, currentEvent.mousePosition);
+                    var rootSMRightDrag = PatchStateNodeMenu.ResolveRootStateMachine(activeSMRightDrag);
+                    PatchRightDragTransition.BeginPendingAnyState(nodeRect, rootSMRightDrag, currentEvent.mousePosition);
                 }
                 else if (rightDownNodeType == AnimatorEditorInit.EntryNodeType)
                 {
@@ -481,7 +477,7 @@ namespace YGDR.Editor.Animation
                 var replicateSM = PatchStateNodeMenu._replicateSM;
                 PatchStateNodeMenu._replicateTransitions = null;
                 PatchStateNodeMenu._replicateSM = null;
-                if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                if (isAnyStateSelected) AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(PatchStateNodeMenu.ResolveRootStateMachine(replicateSM), replicateTransitions);
                 else if (newSourceStates.Length > 0) AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
                 currentEvent.Use();
                 return true;
@@ -544,10 +540,9 @@ namespace YGDR.Editor.Animation
                 var activeSMKb = AnimatorEditorInit.GetActiveStateMachineFromGraphGUIMethod?.Invoke(__instance, null) as AnimatorStateMachine;
                 if (activeSMKb != null)
                 {
-                    var controllerKb = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(activeSMKb));
-                    if (isAnyStateKb && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromAnyState(controllerKb); currentEvent.Use(); return true; }
-                    if (isExitKb     && kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingToExit(controllerKb);        currentEvent.Use(); return true; }
-                    if (isEntryKb    && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromEntry(controllerKb);     currentEvent.Use(); return true; }
+                    if (isAnyStateKb && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromAnyState(PatchStateNodeMenu.ResolveRootStateMachine(activeSMKb), activeSMKb); currentEvent.Use(); return true; }
+                    if (isExitKb     && kb.kbSelectIncoming.Matches(currentEvent)) { AnimationEditorWindow.SelectIncomingToExit(activeSMKb);        currentEvent.Use(); return true; }
+                    if (isEntryKb    && kb.kbSelectOutgoing.Matches(currentEvent)) { AnimationEditorWindow.SelectOutgoingFromEntry(activeSMKb);     currentEvent.Use(); return true; }
                 }
             }
 
@@ -570,7 +565,7 @@ namespace YGDR.Editor.Animation
                         {
                             PatchStateNodeMenu.CancelPending();
                             PatchStateNodeMenu._multiTransitionSources      = System.Array.Empty<AnimatorState>();
-                            PatchStateNodeMenu._multiTransitionSM           = activeSMmt;
+                            PatchStateNodeMenu._multiTransitionSM           = PatchStateNodeMenu.ResolveRootStateMachine(activeSMmt);
                             PatchStateNodeMenu._multiTransitionFromAnyState = true;
                             PatchStateNodeMenu._multiTransitionFromEntry    = false;
                         }
@@ -628,7 +623,7 @@ namespace YGDR.Editor.Animation
                     var replicateSM = PatchStateNodeMenu._replicateSM;
                     PatchStateNodeMenu._replicateTransitions = null;
                     PatchStateNodeMenu._replicateSM = null;
-                    if (isAnyStateSelected)               AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(replicateSM, replicateTransitions);
+                    if (isAnyStateSelected)               AnimatorBulkTransitionOps.ReplicateTransitionsFromAnyState(PatchStateNodeMenu.ResolveRootStateMachine(replicateSM), replicateTransitions);
                     else if (isEntrySelected)             AnimatorBulkTransitionOps.ReplicateTransitionsFromEntry(replicateSM, replicateTransitions);
                     else if (newSourceStates.Length > 0)  AnimatorBulkTransitionOps.ReplicateTransitions(replicateSM, replicateTransitions, newSourceStates);
                 }

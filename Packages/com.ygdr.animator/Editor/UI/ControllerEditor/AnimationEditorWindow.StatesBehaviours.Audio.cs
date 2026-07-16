@@ -214,9 +214,8 @@ namespace YGDR.Editor.Animation
             {
                 EditorGUILayout.LabelField(L10n.Get("vrc.audio.param_name"), GUILayout.Width(110));
                 EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).ParameterName != first.ParameterName);
-                EditorGUI.BeginChangeCheck();
-                string newParam = DrawIntParamDropdown(first.ParameterName ?? "");
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Parameter Name", audio => audio.ParameterName = newParam);
+                DrawIntParamDropdown(first.ParameterName ?? "",
+                    newParam => SetAudioOnAll("Edit Parameter Name", audio => audio.ParameterName = newParam));
                 EditorGUI.showMixedValue = false;
             }
         }

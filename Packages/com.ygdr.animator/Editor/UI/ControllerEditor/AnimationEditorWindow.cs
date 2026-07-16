@@ -52,6 +52,9 @@ namespace YGDR.Editor.Animation
         UnityEngine.Object _cachedGraph;
         UnityEngine.Object _cachedBlendTreeGraphGUI;
         bool _showSharedConditions = true;
+        bool _matchConditionName = true;
+        bool _matchConditionMode = true;
+        bool _matchConditionValue = false;
         bool _paletteApplied;
 
         Action _helpTransitions;
@@ -72,10 +75,10 @@ namespace YGDR.Editor.Animation
         {
             _cachedVersion    = null;
             _paletteApplied   = false;
-            _helpTransitions  = MdvHelpAction("Transitions", 62, 82);
-            _helpStates       = MdvHelpAction("States", 85, 132);
-            _helpController   = MdvHelpAction("Controller", 135, 172);
-            _helpSettings     = MdvHelpAction("Settings", 175, 275);
+            _helpTransitions  = MdvHelpAction("Transitions", 62, 84);
+            _helpStates       = MdvHelpAction("States", 87, 134);
+            _helpController   = MdvHelpAction("Controller", 137, 174);
+            _helpSettings     = MdvHelpAction("Settings", 177, 278);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;
@@ -150,6 +153,20 @@ namespace YGDR.Editor.Animation
                     return;
                 }
 
+                var selectionController = TryGetControllerFromSelection();
+                if (selectionController != null)
+                {
+                    if (_controller == selectionController) return;
+                    var firstLayer = selectionController.layers.Length > 0 ? selectionController.layers[0] : default;
+                    _controller = selectionController;
+                    _activeStateMachine = firstLayer.stateMachine;
+                    _controllerName = selectionController.name;
+                    _layerName = firstLayer.stateMachine != null ? firstLayer.name : "—";
+                    _subContextPath = null;
+                    Repaint();
+                    return;
+                }
+
                 if (_controller != null) { _controller = null; _activeStateMachine = null; _controllerName = "—"; _layerName = "—"; _subContextPath = null; Repaint(); }
                 return;
             }
@@ -173,6 +190,13 @@ namespace YGDR.Editor.Animation
             _layerName = layerName;
             _subContextPath = BuildSubSMPath(controller, layerName, activeStateMachine);
             Repaint();
+        }
+
+        static AnimatorController TryGetControllerFromSelection()
+        {
+            if (Selection.activeObject is AnimatorController selectedController) return selectedController;
+            var animator = Selection.activeGameObject != null ? Selection.activeGameObject.GetComponent<Animator>() : null;
+            return animator != null ? animator.runtimeAnimatorController as AnimatorController : null;
         }
 
         AnimatorController TryGetControllerFromBlendTreeGraph()

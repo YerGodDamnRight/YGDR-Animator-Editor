@@ -75,20 +75,36 @@ namespace YGDR.Editor.Animation
 
             var driverGroups = GroupInstancesByName<VRCAvatarParameterDriver>(_selectedStates);
             for (int i = 0; i < driverGroups.Count; i++)
-                DrawDriverFoldout(driverGroups[i].name, driverGroups[i].states, i == 0, i == driverGroups.Count - 1);
+                DrawDriverFoldout(driverGroups[i].name, driverGroups[i].states, i == 0, i == driverGroups.Count - 1,
+                    i > 0 ? driverGroups[i - 1].name : null);
 
             // Don't leak the last-drawn instance's scope into calls made outside this section (e.g. States.cs spacing checks).
             _activeDriverResolver = null;
         }
 
-        void DrawDriverFoldout(string name, AnimatorState[] statesWithName, bool isFirst, bool isLast)
+        void DrawDriverFoldout(string name, AnimatorState[] statesWithName, bool isFirst, bool isLast, string aboveName)
         {
-            bool removeRequested = DrawInstanceFoldoutHeader<VRCAvatarParameterDriver>(name, statesWithName, _driverFoldoutExpanded, isFirst, isLast, out bool expanded, out bool moveUp, out bool moveDown);
+            bool mergeRequested = false;
+            bool removeRequested = DrawInstanceFoldoutHeader<VRCAvatarParameterDriver>(name, statesWithName, _driverFoldoutExpanded, isFirst, isLast, out bool expanded, out bool moveUp, out bool moveDown,
+                "⇄", HasSwappableDriverCopyParams(statesWithName, name), () => SwapDriverCopySourceDest(statesWithName, name),
+                "M", !isFirst, () => mergeRequested = true);
 
             if (moveUp || moveDown)
             {
                 MoveNamedInstance<VRCAvatarParameterDriver>(name, statesWithName, moveUp ? -1 : 1);
                 return; // order changed — redraw fresh next repaint.
+            }
+
+            if (mergeRequested)
+            {
+                MergeDriverWithAbove(name, statesWithName, aboveName);
+                _driverParamReorderListByKey.Remove(name);
+                _driverParamListDataByKey.Remove(name);
+                _stableElementHeightsByKey.Remove(name);
+                _driverParamReorderListByKey.Remove(aboveName);
+                _driverParamListDataByKey.Remove(aboveName);
+                _stableElementHeightsByKey.Remove(aboveName);
+                return; // instance destroyed and neighbor mutated — redraw fresh next repaint.
             }
 
             if (removeRequested)
@@ -364,6 +380,8 @@ namespace YGDR.Editor.Animation
             float removeWidth    = 24f;
             float rightOverhang  = 6f;
             float singleLine     = EditorGUIUtility.singleLineHeight;
+            const float dropdownArrowWidth   = 18f;
+            const float typeLabelReserveWidth = 45f;
 
             var paramType = GetParamType(param.name);
             bool isBool   = paramType == AnimatorControllerParameterType.Bool;
@@ -400,21 +418,23 @@ namespace YGDR.Editor.Animation
                     RequestRemoveDriverParam(entry.index);
                 GUI.backgroundColor = previousCopyRemoveBgColor;
 
-                // Row 2: Source dropdown (GenericMenu avoids AdvancedDropdown click-through onto the checkbox below)
+                // Row 2: Source dropdown (AdvancedDropdown picker — ShowCopyParamMenu ExitGUIs after opening; see its comment)
                 float sourceRowY = row.y + singleLine;
                 GUI.Label(new Rect(row.x, sourceRowY, labelWidth, singleLine), L10n.Get("vrc.param_driver.source"), EditorStyles.label);
                 var sourceDropRect = new Rect(row.x + labelWidth, sourceRowY, dropWidth, singleLine);
-                if (EditorGUI.DropdownButton(sourceDropRect, new GUIContent(string.IsNullOrEmpty(param.source) ? "—" : param.source), FocusType.Passive))
-                    ShowCopyParamMenu(capturedEntry, isCopySource: true);
+                string sourceLabel = TruncateTextLeft(string.IsNullOrEmpty(param.source) ? "—" : param.source, EditorStyles.popup, sourceDropRect.width - typeLabelReserveWidth - dropdownArrowWidth);
+                if (EditorGUI.DropdownButton(sourceDropRect, new GUIContent(sourceLabel), FocusType.Passive))
+                    ShowCopyParamMenu(sourceDropRect, capturedEntry, isCopySource: true);
                 if (!string.IsNullOrEmpty(param.source))
                     GUI.Label(sourceDropRect, GetParamType(param.source).ToString(), Styles.MiniLabelRight);
 
-                // Row 3: Destination dropdown (GenericMenu avoids AdvancedDropdown click-through onto the checkbox below)
+                // Row 3: Destination dropdown (AdvancedDropdown picker — ShowCopyParamMenu ExitGUIs after opening; see its comment)
                 float destRowY = row.y + singleLine * 2f;
                 GUI.Label(new Rect(row.x, destRowY, labelWidth, singleLine), L10n.Get("vrc.param_driver.destination"), EditorStyles.label);
                 var destDropRect = new Rect(row.x + labelWidth, destRowY, dropWidth, singleLine);
-                if (EditorGUI.DropdownButton(destDropRect, new GUIContent(string.IsNullOrEmpty(param.name) ? "—" : param.name), FocusType.Passive))
-                    ShowCopyParamMenu(capturedEntry, isCopySource: false);
+                string destLabel = TruncateTextLeft(string.IsNullOrEmpty(param.name) ? "—" : param.name, EditorStyles.popup, destDropRect.width - typeLabelReserveWidth - dropdownArrowWidth);
+                if (EditorGUI.DropdownButton(destDropRect, new GUIContent(destLabel), FocusType.Passive))
+                    ShowCopyParamMenu(destDropRect, capturedEntry, isCopySource: false);
                 if (!string.IsNullOrEmpty(param.name))
                     GUI.Label(destDropRect, GetParamType(param.name).ToString(), Styles.MiniLabelRight);
 
@@ -515,17 +535,13 @@ namespace YGDR.Editor.Animation
             float paramDropWidth = row.width - nonCopyLabelWidth - removeWidth;
             GUI.Label(new Rect(row.x, paramRowY, nonCopyLabelWidth, singleLine), L10n.Get("vrc.param_driver.destination"), EditorStyles.label);
             var nameRect = new Rect(row.x + nonCopyLabelWidth, paramRowY, paramDropWidth, singleLine);
-            if (EditorGUI.DropdownButton(nameRect, new GUIContent(string.IsNullOrEmpty(param.name) ? "—" : param.name), FocusType.Passive))
+            string nameLabel = TruncateTextLeft(string.IsNullOrEmpty(param.name) ? "—" : param.name, EditorStyles.popup, nameRect.width - dropdownArrowWidth);
+            if (EditorGUI.DropdownButton(nameRect, new GUIContent(nameLabel), FocusType.Passive) && _controller != null && _controller.parameters.Length > 0)
             {
                 var driverSnapshot = CaptureActiveDriverSnapshot();
-                var nameMenu = new GenericMenu();
-                foreach (var controllerParameter in _controller.parameters)
-                {
-                    var capturedName = controllerParameter.name;
-                    nameMenu.AddItem(new GUIContent(capturedName), capturedName == param.name, () =>
-                        ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, name: capturedName), driverSnapshot));
-                }
-                nameMenu.ShowAsContext();
+                ShowParameterDropdown(nameRect, param.name, capturedName =>
+                    ReplaceDriverParam(capturedEntry, CloneParam(capturedEntry.param, name: capturedName), driverSnapshot));
+                GUIUtility.ExitGUI();
             }
             if (!string.IsNullOrEmpty(param.name) && Event.current.type == EventType.Repaint && AnimatorDefaultSettings.Load().showParamTypeIcons)
                 GUI.Label(nameRect, paramType.ToString(), Styles.MiniLabelRight);
@@ -632,31 +648,94 @@ namespace YGDR.Editor.Animation
             preventRepeats = preventRepeats ?? original.preventRepeats
         };
 
-        void ShowCopyParamMenu(DriverParamEntry entry, bool isCopySource)
+        /* Scopes _activeDriverStates/_activeDriverResolver to the given instance for the duration of run,
+           restoring the previous scope after — lets header-time checks reuse GetSharedDriverParams()
+           before DrawDriverInstanceBody has set the scope for this instance. */
+        void WithDriverScope(AnimatorState[] statesWithName, string name, Action run)
+        {
+            var savedStates   = _activeDriverStates;
+            var savedResolver = _activeDriverResolver;
+            _activeDriverStates   = statesWithName;
+            _activeDriverResolver = state => FindInstance<VRCAvatarParameterDriver>(state, name);
+            run();
+            _activeDriverStates   = savedStates;
+            _activeDriverResolver = savedResolver;
+        }
+
+        bool HasSwappableDriverCopyParams(AnimatorState[] statesWithName, string name)
+        {
+            bool result = false;
+            WithDriverScope(statesWithName, name, () =>
+                result = GetSharedDriverParams().Any(entry => entry.param.type == VRC_AvatarParameterDriver.ChangeType.Copy));
+            return result;
+        }
+
+        /* Swaps source/dest (param.source <-> param.name) on every Copy-mode row shared across this instance. */
+        void SwapDriverCopySourceDest(AnimatorState[] statesWithName, string name)
+        {
+            WithDriverScope(statesWithName, name, () =>
+            {
+                var snapshot = CaptureActiveDriverSnapshot();
+                foreach (var entry in GetSharedDriverParams())
+                {
+                    if (entry.param.type != VRC_AvatarParameterDriver.ChangeType.Copy) continue;
+                    var swapped = CloneParam(entry.param, name: entry.param.source, source: entry.param.name);
+                    ReplaceDriverParam(entry, swapped, snapshot);
+                }
+            });
+            _driverParamReorderListByKey.Remove(name);
+        }
+
+        /* Merges name's driver rows into aboveName's driver (per state where both instances exist) and
+           destroys the now-redundant name instance. States missing either side of the pair are skipped. */
+        static void MergeDriverWithAbove(string name, AnimatorState[] statesWithName, string aboveName)
+        {
+            if (aboveName == null) return;
+
+            foreach (var state in statesWithName)
+            {
+                var current = FindInstance<VRCAvatarParameterDriver>(state, name);
+                var above = FindInstance<VRCAvatarParameterDriver>(state, aboveName);
+                if (current == null || above == null) continue;
+
+                Undo.RecordObject(above, "Merge Param Drivers");
+                above.parameters.AddRange(current.parameters);
+                EditorUtility.SetDirty(above);
+
+                Undo.RegisterCompleteObjectUndo(state, "Merge Param Drivers");
+                state.behaviours = state.behaviours.Where(b => b != current).ToArray();
+                Undo.DestroyObjectImmediate(current);
+                EditorUtility.SetDirty(state);
+            }
+        }
+
+        /* Opens the AdvancedDropdown parameter picker anchored to rect for a Copy-mode row's source or
+           destination. GUIUtility.ExitGUI() after opening aborts the remainder of this ReorderableList
+           draw pass so the Convert Range toggle and source/dest min-max float fields stacked directly
+           below this row aren't drawn in the same frame the popup opens — opening a ShowAsDropDown popup
+           mid-pass perturbs hot/keyboard control, and without ExitGUI the stacked control below catches
+           the click (the click-through this file used GenericMenu to avoid). The picker's callback fires
+           deferred on a later pass, so aborting the current pass loses nothing. Transitions.cs/States.cs
+           don't need this because their dropdown is the last live control in its layout row. */
+        void ShowCopyParamMenu(Rect rect, DriverParamEntry entry, bool isCopySource)
         {
             if (_controller == null || _controller.parameters.Length == 0) return;
             string current = isCopySource ? entry.param.source : entry.param.name;
             var driverSnapshot = CaptureActiveDriverSnapshot();
-            var menu = new GenericMenu();
-            foreach (var controllerParameter in _controller.parameters)
+            ShowParameterDropdown(rect, current, capturedName =>
             {
-                var capturedName = controllerParameter.name;
-                bool isSelected  = capturedName == current;
-                menu.AddItem(new GUIContent(capturedName), isSelected, () =>
-                {
-                    var updated = isCopySource
-                        ? CloneParam(entry.param, source: capturedName)
-                        : CloneParam(entry.param, name: capturedName);
-                    ReplaceDriverParam(entry, updated, driverSnapshot);
-                });
-            }
-            menu.ShowAsContext();
+                var updated = isCopySource
+                    ? CloneParam(entry.param, source: capturedName)
+                    : CloneParam(entry.param, name: capturedName);
+                ReplaceDriverParam(entry, updated, driverSnapshot);
+            });
+            GUIUtility.ExitGUI();
         }
 
-        /* GenericMenu item callbacks fire on a later editor update, not inside the OnGUI call that built
-           the menu — by then _activeDriverStates/_activeDriverResolver have moved on to whatever foldout
+        /* Parameter-picker callbacks fire on a later editor update, not inside the OnGUI call that opened
+           the dropdown — by then _activeDriverStates/_activeDriverResolver have moved on to whatever foldout
            was drawn last (or been reset to null), so a live GetDriverForState re-resolve silently falls
-           back to instance 0. Call this at menu-build time (synchronous) and pass the snapshot through to
+           back to instance 0. Call this at dropdown-open time (synchronous) and pass the snapshot through to
            the deferred callback instead of letting it re-resolve. */
         (AnimatorState state, VRCAvatarParameterDriver driver)[] CaptureActiveDriverSnapshot()
             => _activeDriverStates.Select(state => (state, GetDriverForState(state))).ToArray();
@@ -731,13 +810,11 @@ namespace YGDR.Editor.Animation
             if (_controller != null && _controller.parameters.Length > 0)
             {
                 var defaultParam = _controller.parameters[0];
-                var usedNames = new HashSet<string>(_activeDriverStates.SelectMany(state =>
-                {
-                    var driver = GetDriverForState(state);
-                    return driver != null ? driver.parameters.Select(parameter => parameter.name) : Enumerable.Empty<string>();
-                }));
-                var unusedParam = _controller.parameters.FirstOrDefault(parameter => !usedNames.Contains(parameter.name));
-                if (unusedParam != null) defaultParam = unusedParam;
+                var firstDriver = GetDriverForState(_activeDriverStates[0]);
+                var lastParam = firstDriver != null ? firstDriver.parameters.LastOrDefault() : null;
+                var previousIndex = lastParam != null ? System.Array.FindIndex(_controller.parameters, p => p.name == lastParam.name) : -1;
+                if (previousIndex >= 0)
+                    defaultParam = _controller.parameters[(previousIndex + 1) % _controller.parameters.Length];
                 defaultName = defaultParam.name;
             }
             foreach (var state in _activeDriverStates)

@@ -55,6 +55,13 @@ namespace YGDR.Editor.Animation
             Selection.selectionChanged += OnSelectionChanged;
             Undo.undoRedoPerformed += OnUndoRedo;
             ObjectChangeEvents.changesPublished += OnObjectChanged;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+        }
+
+        static void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingPlayMode)
+                ClearCache();
         }
 
         static void OnSelectionChanged()
@@ -90,6 +97,7 @@ namespace YGDR.Editor.Animation
                 return;
             }
 
+            if (_cachedAvatarRoot == null) return;
             var avatarDescriptor = _cachedAvatarRoot.GetComponent<VRCAvatarDescriptor>();
             if (avatarDescriptor != null) Rebuild(avatarDescriptor, _cachedSelectedGO);
         }
@@ -99,10 +107,10 @@ namespace YGDR.Editor.Animation
             if (_cachedSelectedGO == null) return;
 
             int avatarParamsId = 0;
-            if (!_isVrcFurySource)
+            if (!_isVrcFurySource && _cachedAvatarRoot != null)
             {
-                var avatarDescriptor = _cachedAvatarRoot?.GetComponent<VRCAvatarDescriptor>();
-                if (avatarDescriptor?.expressionParameters != null)
+                var avatarDescriptor = _cachedAvatarRoot.GetComponent<VRCAvatarDescriptor>();
+                if (avatarDescriptor != null && avatarDescriptor.expressionParameters != null)
                     avatarParamsId = avatarDescriptor.expressionParameters.GetInstanceID();
             }
             int vrcFuryParamsId = _isVrcFurySource && _vrcFuryParams != null ? _vrcFuryParams.GetInstanceID() : 0;
@@ -122,7 +130,7 @@ namespace YGDR.Editor.Animation
                     if (_vrcFuryParams?.parameters != null)
                         BuildSyncMaps(_vrcFuryParams.parameters);
                 }
-                else
+                else if (_cachedAvatarRoot != null)
                 {
                     var avatarDescriptor = _cachedAvatarRoot.GetComponent<VRCAvatarDescriptor>();
                     if (avatarDescriptor != null) Rebuild(avatarDescriptor, _cachedSelectedGO);
@@ -375,14 +383,18 @@ namespace YGDR.Editor.Animation
         {
             if (_cachedSelectedGO == null) return null;
             if (_isVrcFurySource) return _vrcFuryParams;
-            return _cachedAvatarRoot?.GetComponent<VRCAvatarDescriptor>()?.expressionParameters;
+            if (_cachedAvatarRoot == null) return null;
+            var avatarDescriptor = _cachedAvatarRoot.GetComponent<VRCAvatarDescriptor>();
+            return avatarDescriptor != null ? avatarDescriptor.expressionParameters : null;
         }
 
         internal static VRCExpressionsMenu GetExpressionsMenu()
         {
             if (_cachedSelectedGO == null) return null;
             if (_isVrcFurySource) return _vrcFuryMenu;
-            return _cachedAvatarRoot?.GetComponent<VRCAvatarDescriptor>()?.expressionsMenu;
+            if (_cachedAvatarRoot == null) return null;
+            var avatarDescriptor = _cachedAvatarRoot.GetComponent<VRCAvatarDescriptor>();
+            return avatarDescriptor != null ? avatarDescriptor.expressionsMenu : null;
         }
     }
 }

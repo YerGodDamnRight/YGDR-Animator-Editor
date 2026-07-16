@@ -39,6 +39,15 @@ namespace YGDR.Editor.Animation
             new ParameterDropdown(_controller.parameters, currentParam, onSelected).ShowWithCheckmark(rect);
         }
 
+        /* Opens an AdvancedDropdown listing controller parameters of a single type below rect, invoking onSelected with the chosen name. */
+        void ShowParameterDropdown(Rect rect, string currentParam, AnimatorControllerParameterType filterType, Action<string> onSelected)
+        {
+            if (_controller == null) return;
+            var filtered = _controller.parameters.Where(x => x.type == filterType).ToArray();
+            if (filtered.Length == 0) return;
+            new ParameterDropdown(filtered, currentParam, onSelected).ShowWithCheckmark(rect);
+        }
+
         /* Opens an AdvancedDropdown listing layer names below rect, invoking onSelected with the chosen index. */
         void ShowLayerDropdown(Rect rect, string[] layerNames, int currentIndex, Action<int> onSelected)
         {

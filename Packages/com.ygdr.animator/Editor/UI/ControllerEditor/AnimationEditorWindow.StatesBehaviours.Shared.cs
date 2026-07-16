@@ -118,7 +118,9 @@ namespace YGDR.Editor.Animation
            non-blank name, see plan §7). isFirst/isLast (position within the grouped-by-name list, not
            the raw behaviours array) gray out the arrow that would be a no-op.
            Returns true if removal was requested; caller destroys the instance(s) and clears its own caches. */
-        bool DrawInstanceFoldoutHeader<T>(string name, AnimatorState[] statesWithName, Dictionary<string, bool> expandedByName, bool isFirst, bool isLast, out bool expanded, out bool moveUp, out bool moveDown) where T : StateMachineBehaviour
+        bool DrawInstanceFoldoutHeader<T>(string name, AnimatorState[] statesWithName, Dictionary<string, bool> expandedByName, bool isFirst, bool isLast, out bool expanded, out bool moveUp, out bool moveDown,
+            string extraButtonIcon = null, bool extraButtonEnabled = false, Action extraButtonClicked = null,
+            string extraButton2Icon = null, bool extraButton2Enabled = false, Action extraButton2Clicked = null) where T : StateMachineBehaviour
         {
             expanded = !expandedByName.TryGetValue(name, out var stored) || stored;
             bool removeRequested = false;
@@ -153,6 +155,16 @@ namespace YGDR.Editor.Animation
                     expandedByName.Remove(name);
                     expandedByName[newName] = expanded;
                 }
+
+                if (extraButtonIcon != null)
+                    using (new EditorGUI.DisabledScope(!extraButtonEnabled))
+                        if (CursorBtn(extraButtonIcon, Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))
+                            extraButtonClicked?.Invoke();
+
+                if (extraButton2Icon != null)
+                    using (new EditorGUI.DisabledScope(!extraButton2Enabled))
+                        if (CursorBtn(extraButton2Icon, Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))
+                            extraButton2Clicked?.Invoke();
 
                 using (new EditorGUI.DisabledScope(isFirst))
                     if (CursorBtn("↑", Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))

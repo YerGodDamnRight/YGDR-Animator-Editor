@@ -420,7 +420,8 @@ namespace YGDR.Editor.Animation
         }
 
         internal static (List<string> toAdd, List<string> toRemove) PreviewVrcParameterSync(
-            VRCExpressionParameters expressionParameters, AnimatorController controller)
+            VRCExpressionParameters expressionParameters, AnimatorController controller,
+            HashSet<string> excludedNames = null)
         {
             var controllerNames = new HashSet<string>(
                 controller.parameters.Select(animatorParameter => animatorParameter.name));
@@ -429,18 +430,18 @@ namespace YGDR.Editor.Animation
 
             var toAdd = controller.parameters
                 .Select(animatorParameter => animatorParameter.name)
-                .Where(name => !existingNames.Contains(name))
+                .Where(name => !existingNames.Contains(name) && !(excludedNames != null && excludedNames.Contains(name)))
                 .ToList();
             var toRemove = expressionParameters.parameters
                 .Select(expressionParameter => expressionParameter.name)
-                .Where(name => !controllerNames.Contains(name))
+                .Where(name => !controllerNames.Contains(name) || (excludedNames != null && excludedNames.Contains(name)))
                 .ToList();
 
             return (toAdd, toRemove);
         }
 
         internal static void SyncVrcParameters(VRCExpressionParameters expressionParameters,
-            AnimatorController controller)
+            AnimatorController controller, HashSet<string> excludedNames = null)
         {
             Undo.RecordObject(expressionParameters, "Sync VRC Parameters Asset");
             var existingByName = expressionParameters.parameters
@@ -449,6 +450,7 @@ namespace YGDR.Editor.Animation
             var paramsList = new List<VRCExpressionParameters.Parameter>(controller.parameters.Length);
             foreach (var animatorParameter in controller.parameters)
             {
+                if (excludedNames != null && excludedNames.Contains(animatorParameter.name)) continue;
                 if (existingByName.TryGetValue(animatorParameter.name, out var existingParameter))
                 {
                     paramsList.Add(existingParameter);

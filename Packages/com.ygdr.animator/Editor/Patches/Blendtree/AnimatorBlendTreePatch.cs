@@ -26,6 +26,7 @@ using System.Reflection;
 using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 
 namespace YGDR.Editor.Animation
@@ -365,11 +366,6 @@ namespace YGDR.Editor.Animation
             }
 
             var currentEvent = Event.current;
-            if (currentEvent.type == EventType.MouseDown)
-            {
-                PatchLayerF2Rename._panelClicked = false;
-                PatchParameterF2Rename._panelClicked = false;
-            }
             if (currentEvent.type == EventType.KeyDown && currentEvent.keyCode == KeyCode.F2)
             {
                 var selectedNode = PatchBlendTreeNodeGUI.SelectedNode;
@@ -738,6 +734,60 @@ namespace YGDR.Editor.Animation
             AccessTools.Method(graph.GetType(), "BuildFromBlendTree")?.Invoke(graph, new object[] { rootBlendTree });
         }
 
+        /* Recursively collects every parameter name referenced by tree and its descendant blend trees (blend axes + direct blend params). */
+        internal static void CollectUsedParameters(BlendTree tree, HashSet<string> result)
+        {
+            if (tree == null) return;
+            if (tree.blendType != BlendTreeType.Direct)
+            {
+                if (!string.IsNullOrEmpty(tree.blendParameter)) result.Add(tree.blendParameter);
+                bool has2DAxis = tree.blendType == BlendTreeType.SimpleDirectional2D
+                    || tree.blendType == BlendTreeType.FreeformDirectional2D
+                    || tree.blendType == BlendTreeType.FreeformCartesian2D;
+                if (has2DAxis && !string.IsNullOrEmpty(tree.blendParameterY)) result.Add(tree.blendParameterY);
+            }
+            foreach (var child in tree.children)
+            {
+                if (tree.blendType == BlendTreeType.Direct && !string.IsNullOrEmpty(child.directBlendParameter))
+                    result.Add(child.directBlendParameter);
+                if (child.motion is BlendTree childBlendTree)
+                    CollectUsedParameters(childBlendTree, result);
+            }
+        }
+
+        /* Recursively replaces every reference to fromParam with toParam on tree and its descendant blend trees. */
+        internal static void RemapNodeParameters(BlendTree tree, string fromParam, string toParam)
+        {
+            if (tree == null) return;
+
+            var children  = tree.children;
+            bool axisMatch  = tree.blendParameter == fromParam || tree.blendParameterY == fromParam;
+            bool childMatch = children.Any(c => c.directBlendParameter == fromParam);
+
+            if (axisMatch || childMatch)
+            {
+                Undo.RecordObject(tree, "Remap Blend Tree Parameter");
+                if (tree.blendParameter == fromParam) tree.blendParameter = toParam;
+                if (tree.blendParameterY == fromParam) tree.blendParameterY = toParam;
+                if (childMatch)
+                {
+                    for (int i = 0; i < children.Length; i++)
+                    {
+                        if (children[i].directBlendParameter != fromParam) continue;
+                        var child = children[i];
+                        child.directBlendParameter = toParam;
+                        children[i] = child;
+                    }
+                    tree.children = children;
+                }
+                EditorUtility.SetDirty(tree);
+            }
+
+            foreach (var child in tree.children)
+                if (child.motion is BlendTree childBlendTree)
+                    RemapNodeParameters(childBlendTree, fromParam, toParam);
+        }
+
         /* Stores the motion of node as the copy source. Deep copy happens at paste time. */
         internal static void ExecuteCopyNode(object node)
         {
@@ -934,6 +984,22 @@ namespace YGDR.Editor.Animation
                         Debug.LogError($"[YGDR] BlendTree template menu: failed to get controller: {e}");
                     }
 
+                    if (capturedController != null)
+                    {
+                        var capturedScreenRect = new Rect(
+                            GUIUtility.GUIToScreenPoint(Event.current != null ? Event.current.mousePosition : Vector2.zero),
+                            Vector2.zero);
+                        var capturedRemapBT   = blendTreeMotion;
+                        var capturedRemapCtrl = capturedController;
+                        __instance.AddItem(new GUIContent(L10n.Get("blend_tree.remap_parameter")), false, () =>
+                        {
+                            EditorApplication.delayCall += () =>
+                                new BlendTreeRemapSourceDropdown(capturedRemapBT, capturedRemapCtrl, capturedScreenRect)
+                                    .ShowCapped(capturedScreenRect);
+                        });
+                        __instance.AddSeparator("");
+                    }
+
                     var capturedBT         = blendTreeMotion;
                     var capturedCtrl       = capturedController;
                     __instance.AddItem(new GUIContent(L10n.Get("blend_tree.save_template")), false, () =>
@@ -1011,6 +1077,106 @@ namespace YGDR.Editor.Animation
             RenameTarget     = null;
             RenameTargetNode = null;
             RenameText       = null;
+        }
+    }
+
+    // ── Remap parameter dropdowns ────────────────────────────────────────────
+
+    /* First step of blend tree parameter remap: lists parameters actually used by rootNode and its descendants. */
+    internal class BlendTreeRemapSourceDropdown : AdvancedDropdown
+    {
+        readonly BlendTree _rootNode;
+        readonly AnimatorController _controller;
+        readonly Rect _screenRect;
+
+        internal BlendTreeRemapSourceDropdown(BlendTree rootNode, AnimatorController controller, Rect screenRect)
+            : base(new AdvancedDropdownState())
+        {
+            _rootNode   = rootNode;
+            _controller = controller;
+            _screenRect = screenRect;
+            minimumSize = new Vector2(200, 250);
+        }
+
+        internal void ShowCapped(Rect rect)
+        {
+            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
+            Show(rect);
+        }
+
+        protected override AdvancedDropdownItem BuildRoot()
+        {
+            var root = new AdvancedDropdownItem(L10n.Get("blend_tree.remap_parameter"));
+            var used = new HashSet<string>();
+            PatchBlendTreeOnGraphGUI.CollectUsedParameters(_rootNode, used);
+            if (used.Count == 0)
+            {
+                var empty = new AdvancedDropdownItem(L10n.Get("blend_tree.no_used_parameters")) { enabled = false };
+                root.AddChild(empty);
+                return root;
+            }
+            foreach (var paramName in used.OrderBy(n => n, StringComparer.Ordinal))
+                root.AddChild(new AdvancedDropdownItem(paramName));
+            return root;
+        }
+
+        protected override void ItemSelected(AdvancedDropdownItem item)
+        {
+            var fromParam     = item.name;
+            var capturedRoot  = _rootNode;
+            var capturedCtrl  = _controller;
+            var capturedRect  = _screenRect;
+            EditorApplication.delayCall += () =>
+                new BlendTreeRemapTargetDropdown(capturedRoot, capturedCtrl, fromParam)
+                    .ShowCapped(capturedRect);
+        }
+    }
+
+    /* Second step of blend tree parameter remap: lists all float parameters on the controller, then remaps rootNode's subtree on selection. */
+    internal class BlendTreeRemapTargetDropdown : AdvancedDropdown
+    {
+        readonly BlendTree _rootNode;
+        readonly AnimatorController _controller;
+        readonly string _fromParam;
+
+        internal BlendTreeRemapTargetDropdown(BlendTree rootNode, AnimatorController controller, string fromParam)
+            : base(new AdvancedDropdownState())
+        {
+            _rootNode   = rootNode;
+            _controller = controller;
+            _fromParam  = fromParam;
+            minimumSize = new Vector2(200, 250);
+        }
+
+        internal void ShowCapped(Rect rect)
+        {
+            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
+            Show(rect);
+        }
+
+        protected override AdvancedDropdownItem BuildRoot()
+        {
+            var root = new AdvancedDropdownItem(L10n.Get("blend_tree.remap_parameter_to"));
+            var floatParams = _controller.parameters
+                .Where(p => p.type == AnimatorControllerParameterType.Float && p.name != _fromParam)
+                .Select(p => p.name)
+                .OrderBy(n => n, StringComparer.Ordinal);
+            bool any = false;
+            foreach (var paramName in floatParams)
+            {
+                any = true;
+                root.AddChild(new AdvancedDropdownItem(paramName));
+            }
+            if (!any)
+                root.AddChild(new AdvancedDropdownItem(L10n.Get("blend_tree.no_float_parameters")) { enabled = false });
+            return root;
+        }
+
+        protected override void ItemSelected(AdvancedDropdownItem item)
+        {
+            PatchBlendTreeOnGraphGUI.RemapNodeParameters(_rootNode, _fromParam, item.name);
+            EditorUtility.SetDirty(_controller);
+            AssetDatabase.SaveAssets();
         }
     }
 }

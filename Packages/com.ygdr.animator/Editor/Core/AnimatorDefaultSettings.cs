@@ -347,7 +347,6 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool transOrderedInterruption = true;
         [SerializeField] internal bool transMute = false;
         [SerializeField] internal bool transSolo = false;
-        [SerializeField] internal bool transCanTransitionToSelf = false;
 
         // Miscellaneous
         [SerializeField] internal bool framesEnabled              = true;
@@ -448,7 +447,6 @@ namespace YGDR.Editor.Animation
             transition.orderedInterruption = settings.transOrderedInterruption;
             transition.mute                = settings.transMute;
             transition.solo                = settings.transSolo;
-            transition.canTransitionToSelf = settings.transCanTransitionToSelf;
         }
 
         /* Applies all configured state defaults (tag, speed, mirror, WD, IK, etc.) to the given state. */

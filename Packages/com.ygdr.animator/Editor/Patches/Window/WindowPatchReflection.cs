@@ -200,6 +200,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
+
         internal static UnityEditor.Animations.AnimatorController GetOpenController()
         {
             var windows = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType);

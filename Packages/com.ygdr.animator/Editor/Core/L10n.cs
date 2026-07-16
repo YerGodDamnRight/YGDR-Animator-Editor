@@ -114,6 +114,10 @@ namespace YGDR.Editor.Animation
             ["transitions.tooltip.switch_modes"]      = "Switch Condition Modes",
             ["transitions.tooltip.merge"]             = "Merge Transitions",
             ["transitions.tooltip.separate"]          = "Separate Transitions",
+            ["transitions.tooltip.match_name"]        = "Match Name",
+            ["transitions.tooltip.match_mode"]        = "Match Mode",
+            ["transitions.tooltip.match_value"]       = "Match Value",
+            ["transitions.tooltip.select_matching"]   = "Select Matching Transitions",
 
             ["transitions.shared_conditions"] = "Shared Conditions",
             ["transitions.all_conditions"]    = "All Conditions",
@@ -319,6 +323,9 @@ namespace YGDR.Editor.Animation
             ["context_menu.copy_behaviors"]       = "Copy Behaviors",
             ["context_menu.paste_behaviors"]      = "Paste Behaviors",
             ["context_menu.all_instances"]        = "All Instances",
+            ["context_menu.paste_driver_replace"]        = "Replace",
+            ["context_menu.paste_driver_append"]         = "Append",
+            ["context_menu.paste_driver_append_instance"] = "Append Instance",
             ["context_menu.multi_transition"]     = "Multi Transition",
             ["context_menu.multi_from_exit"]      = "(from Exit)",
             ["context_menu.multi_from_anystate"]  = "(from AnyState)",
@@ -402,6 +409,10 @@ namespace YGDR.Editor.Animation
             ["blend_tree.save_template"]   = "Save as Template",
             ["blend_tree.no_templates"]    = "(no templates)",
             ["blend_tree.delete_template_title"] = "Delete Blend Tree Template",
+            ["blend_tree.remap_parameter"]        = "Remap Parameter",
+            ["blend_tree.remap_parameter_to"]     = "Remap To",
+            ["blend_tree.no_used_parameters"]     = "(no parameters used)",
+            ["blend_tree.no_float_parameters"]    = "(no float parameters)",
 
             // ── Footer ────────────────────────────────────────────────────────────
             ["footer.links"] = "Links ▾",

@@ -99,7 +99,6 @@ namespace YGDR.Editor.Animation
                 // Native bug fixes — layer view
                 typeof(PatchLayerReorderSelection),
                 typeof(PatchLayerF2Rename),
-                typeof(PatchLayerListFocusHighlight),
                 typeof(PatchLayerScrollReset),
                 typeof(PatchLayerScrollRefocus),
                 typeof(PatchLayerWeightDefault),

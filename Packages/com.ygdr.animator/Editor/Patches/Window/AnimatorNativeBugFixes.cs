@@ -150,16 +150,14 @@ namespace YGDR.Editor.Animation
             AccessTools.Method(WindowPatchReflection.LayerControllerViewType, "OnGUI", new[] { typeof(Rect) })
             ?? AccessTools.Method(WindowPatchReflection.LayerControllerViewType, "OnGUI");
 
-        internal static bool _panelClicked;
-
         [HarmonyPrefix]
         static void Prefix(object __instance)
         {
             try
             {
-                if (Event.current.type == EventType.MouseDown) { _panelClicked = true; return; }
                 if (Event.current.type != EventType.KeyDown || Event.current.keyCode != KeyCode.F2) return;
-                if (!_panelClicked) return;
+                var layerList = WindowPatchReflection.LayerListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
+                if (layerList == null || !layerList.HasKeyboardControl()) return;
                 if (Selection.activeObject is AnimatorState) return;
                 if (Selection.activeObject is AnimatorStateMachine selectedSM && !IsRootLayerStateMachine(selectedSM)) return;
                 if (FrameRenderer.SingleSelected != null) return;
@@ -184,8 +182,6 @@ namespace YGDR.Editor.Animation
     [HarmonyPatch]
     internal static class PatchParameterF2Rename
     {
-        internal static bool _panelClicked;
-
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() =>
             AccessTools.Method(WindowPatchReflection.ParameterControllerViewType, "OnGUI", new[] { typeof(Rect) })
@@ -196,14 +192,12 @@ namespace YGDR.Editor.Animation
         {
             try
             {
-                if (Event.current.type == EventType.MouseDown) { _panelClicked = true; return; }
                 if (Event.current.type != EventType.KeyDown || Event.current.keyCode != KeyCode.F2) return;
-                if (!_panelClicked) return;
+                var parameterList = WindowPatchReflection.ParameterListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
+                if (parameterList == null || !parameterList.HasKeyboardControl()) return;
                 if (Selection.activeObject is AnimatorState) return;
                 if (Selection.activeObject is AnimatorStateMachine selectedSM && !PatchLayerF2Rename.IsRootLayerStateMachine(selectedSM)) return;
                 if (FrameRenderer.SingleSelected != null) return;
-                var parameterList = WindowPatchReflection.ParameterListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
-                if (parameterList == null) return;
                 int selectedIndex = parameterList.index;
                 if (selectedIndex < 0) return;
                 var host = WindowPatchReflection.ParameterViewHostField?.GetValue(__instance);
@@ -217,51 +211,6 @@ namespace YGDR.Editor.Animation
                 Event.current.Use();
             }
             catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchParameterF2Rename: {e}"); }
-        }
-    }
-    // Bug: layer selection shows grey highlight instead of focused-blue.
-    // Root cause: ReorderableList.HasKeyboardControl() unreliable in sub-panels —
-    // GUIUtility.keyboardControl is not maintained across sub-view repaints.
-    // Fix: override drawElementBackgroundCallback to treat selected as focused.
-    [HarmonyPatch]
-    internal static class PatchLayerListFocusHighlight
-    {
-        static UnityEditorInternal.ReorderableList _lastHookedList;
-        internal static bool _layerPanelActive;
-
-        [HarmonyTargetMethod]
-        static MethodBase TargetMethod() =>
-            AccessTools.Method(WindowPatchReflection.LayerControllerViewType, "OnGUI", new[] { typeof(Rect) })
-            ?? AccessTools.Method(WindowPatchReflection.LayerControllerViewType, "OnGUI");
-
-        [HarmonyPrefix]
-        static void Prefix(object __instance)
-        {
-            try
-            {
-                var eventType = Event.current.type;
-                if (eventType == EventType.MouseDown)
-                    _layerPanelActive = true;
-                else if (eventType != EventType.KeyDown || !_layerPanelActive) return;
-                var reorderableList = WindowPatchReflection.LayerListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
-                if (reorderableList == null || reorderableList.index < 0) return;
-                reorderableList.GrabKeyboardFocus();
-            }
-            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchLayerListFocusHighlight.Prefix: {e}"); }
-        }
-
-        [HarmonyPostfix]
-        static void Postfix(object __instance)
-        {
-            try
-            {
-                var reorderableList = WindowPatchReflection.LayerListField?.GetValue(__instance) as UnityEditorInternal.ReorderableList;
-                if (reorderableList == null || reorderableList == _lastHookedList) return;
-                reorderableList.drawElementBackgroundCallback = (rect, index, isActive, isFocused) =>
-                    UnityEditorInternal.ReorderableList.defaultBehaviours.DrawElementBackground(rect, index, isActive, isActive && _layerPanelActive, false);
-                _lastHookedList = reorderableList;
-            }
-            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchLayerListFocusHighlight.Postfix: {e}"); }
         }
     }
 }
