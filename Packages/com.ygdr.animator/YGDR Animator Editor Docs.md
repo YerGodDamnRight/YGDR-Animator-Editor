@@ -62,11 +62,11 @@ Tabbed interface for editing currently selected object(s) in Animator graph. Upd
 
 ### Transitions Tab
 
-Edit multiple transitions at once. Select one or more transitions in Animator graph → tab shows all selected together → mass-edit shared properties. Toggle pill button on right to collapse displayed transition tags to scrollable list.
+Edit multiple transitions at once. Select one or more transitions in Animator graph → tab shows all selected together → mass-edit shared properties. Drag bottom right triangle to change height of section to see all selected transitions or shrink to a scrollable list.
 
 **Transition Details** — Edit timing (exit time, duration), interruption settings, atomic flags. Changes sync to Animator graph in real time.
 
-**Condition Rows** — Each row displays parameter name, comparison mode, threshold value.
+**Condition Rows** — Each row displays parameter name, comparison mode, threshold value. Filter icon on a row selects every transition on the current layer whose conditions match that row under the active **N / M / V** criteria (see below), replacing current selection.
 
 **All Conditions Mode** — Displays all conditions for all selected transitions, grouped by source. Tab between fields to enter values quickly.
 
@@ -77,6 +77,8 @@ Edit multiple transitions at once. Select one or more transitions in Animator gr
 
 Tool detects duplicate parameters across transitions and shows warning in either mode.
 
+**Matching Strictness (N / M / V)** — Toggles controlling which condition fields count as a match, used by Shared Conditions Mode and the row filter icon: **N**ame, **M**ode, **V**alue. At least one stays active. Value matching compares bool conditions against other bool conditions by mode (`If` / `IfNot`), and numeric (Int/Float) conditions against other numeric conditions by threshold — a bool condition never matches an Int/Float condition under Value matching, since bool has no comparable threshold.
+
 **Reverse** — `⇄` swaps all transition conditions (`Equals` → `NotEqual`, `Greater` → `Less`).
 
 **Merge & Separate** — Tab detects multi-transitions (same source and destination). Offers options to merge or break apart.
@@ -85,7 +87,7 @@ Tool detects duplicate parameters across transitions and shows warning in either
 
 ### States Tab
 
-Select one or more state nodes → tab shows properties for all selected. Collapse with right-side pill button.
+Select one or more state nodes → tab shows properties for all selected. Drag bottom right triangle to change height of section to see all selected states or shrink to a scrollable list.
 
 **State List** — Each selected state has `In` / `Out` buttons to quickly select relevant transitions.
 
@@ -100,11 +102,11 @@ VRC Parameter Drivers, VRC Play Audio, VRC Tracking Control, VRC Locomotion Cont
 > [!IMPORTANT]
 > VRC features require VRChat SDK installed. Without SDK, these sections will not appear.
 
-Each section has **Add to All** / **Remove All** buttons in its header. Sections only appear when at least one selected state has the component.
+Sections start hidden. Click **+ Add Behavior** to open a dropdown listing every behavior type and add one to all selected states — the dropdown only lists singleton types (Tracking/Locomotion/PoseSpace) when at least one selected state is missing them. Each populated section shows a **Remove All** button in its header.
 
-**VRC Parameter Driver, VRC Play Audio, VRC Animator Layer Control, and VRC Playable Layer Control support multiple instances per state.** Clicking **Add to All** again adds another instance instead of replacing the existing one — each gets its own named, collapsible row (rename by editing the name field). Use the **↑ / ↓** buttons next to a row's name to reorder that instance among the others (arrows gray out at the top/bottom row). Use the **−** next to a row's name to remove just that one instance across selected states; **Remove All** clears every instance of that type instead. States are matched up by instance name, so editing, reordering, or removing a row only affects the selected states that actually have an instance with that name.
+**VRC Parameter Driver, VRC Play Audio, VRC Animator Layer Control, and VRC Playable Layer Control support multiple instances per state.** Picking the same type from **+ Add Behavior** again adds another instance instead of replacing the existing one — each gets its own named, collapsible row (rename by editing the name field). Use the **↑ / ↓** buttons next to a row's name to reorder that instance among the others (arrows gray out at the top/bottom row). Use the **−** next to a row's name to remove just that one instance across selected states; **Remove All** clears every instance of that type instead. States are matched up by instance name, so editing, reordering, or removing a row only affects the selected states that actually have an instance with that name.
 
-**VRC Parameter Driver** — Add or edit shared drivers across selected states. Rows are reorderable. Each row specifies type (`Set` / `Add` / `Random` / `Copy`), parameter name, and value. `Copy` type has Source, Destination, and Convert Range fields. New rows default to the first unused controller parameter. Click `-` to remove a row. Removing all rows removes the component.
+**VRC Parameter Driver** — Add or edit shared drivers across selected states. Rows are reorderable. Each row specifies type (`Set` / `Add` / `Random` / `Copy`), parameter name, and value. `Copy` type has Source, Destination, and Convert Range fields. New rows default to the first unused controller parameter. Click `-` to remove a row. Removing all rows removes the component. Instance header buttons: **M** merges that instance up into the matching instance above it; **⇄** swaps Source/Destination on a `Copy` row.
 
 **VRC Play Audio** — Configure shared play-audio behaviour: source path (drag `AudioSource` to resolve), playback order, clips list (reorderable), volume/pitch min/max ranges, loop toggle, on-enter/on-exit play/stop flags, delay.
 
@@ -137,7 +139,7 @@ Each section has **Add to All** / **Remove All** buttons in its header. Sections
 
 Shows currently active `AnimatorController` and management tools.
 
-**Overview** — Tabs for Per-Layer Write Defaults, Network Sync, Sub-Assets. Includes dedicated `Clean` button for controllers with orphaned sub-assets.
+**Overview** — Tabs for Per-Layer Write Defaults, Network Sync, Sub-Assets, Menus. Includes dedicated `Clean` button for controllers with orphaned sub-assets.
 
 #### Write Defaults
 
@@ -155,6 +157,20 @@ One-click network syncing for chosen layer. Options:
 - Toggle to remove state behaviors for network states
 - Pack into sub-state machine node for clean layers
 - **Own Driver Instance** — When on, Network Sync writes to its own dedicated Parameter Driver (named "Network") instead of sharing an existing driver already on the state, so it never touches driver rows you've set up for other purposes.
+
+#### Menus
+
+Embedded editor for the avatar's `VRCExpressionsMenu` asset.
+
+- **Breadcrumb row** — Shows current menu path. Click an earlier crumb to jump back up; truncates the stack to that point. Click a Sub Menu control row's Open button to go into it.
+- **Control list** — Reorderable (drag rows) list of controls in the current menu. Row shows icon, name, control type. Click to select → inspector below fills in. Count field + `/ {max}` clamps to `VRCExpressionsMenu.MAX_CONTROLS`; footer `+`/`−` add/remove, disabled at 0/max.
+- **Inspector** (for selected control):
+  - **Name / Icon** — Control name field + icon object field.
+  - **Type** — Dropdown: Button, Toggle, Sub Menu, Two Axis Puppet, Four Axis Puppet, Radial Puppet.
+  - **Parameter** — Dropdown of controller parameters (left-truncated label, shows tail of long names) + manual text-entry fallback for parameters not yet in the controller. Warning icons overlay the dropdown (not beside it, to keep row widths consistent) for "parameter not found" and "type mismatch" cases; a small type label shows the bound parameter's type when found.
+  - **Value** — Slider + float field, range −1..1 for Float parameters, 0..1 otherwise.
+  - **Sub Menu** — Object field for the target menu, `Create` button to generate one when empty.
+  - **Puppet sub-parameters** — Radial Puppet gets one parameter field; Two/Four Axis Puppet get Up/Right/Down/Left parameter fields plus matching axis label fields.
 
 #### Sub-Assets
 
@@ -189,6 +205,8 @@ UI toggles.
 - **AAP Icons** — Marks parameters controlled by a clip → click to find affected states/clips
 - **Graph Footer** — Shows selected node/transition count + current operation mode
 - **VRC Comp Icons** — Marks parameters bound to VRC contact / physbone / raycast components → click to locate component. Also shows sync status and saved status → click either icon to toggle that flag on the VRC expression parameter. Parameter default value stays linked both ways with its VRC expression parameter (editing either side updates the other); if both change at once, the VRC expression parameter's value wins.
+  - **Mark for Sync** icon (left edge of row) — toggles whether the parameter is included when running **Sync VRC Parameters Asset**. Marked-off parameters are skipped by both the add and remove side of that sync. Defaults to whatever existed on the VRC expression parameters asset at the time it was last synced from the selected GameObject.
+  - Click-drag down (or up) through a column of Mark / Sync / Saved icons to mass-toggle every row the drag passes over to the value of the row the drag started on.
 - **Param Budget** — Displays current parameters, synced count, total allowed
 - **Empty Params** — Highlights parameters with no usages in the controller
 
@@ -218,11 +236,7 @@ Overlay icons for nodes. Available: empty node, looping animation, WD on/off, co
 
 #### Transition Defaults
 
-Default settings for newly created transitions.
-
-#### State Defaults
-
-Default settings for newly created state nodes.
+Default settings for newly created transitions. Also includes **Write Defaults**, applied to newly created state nodes.
 
 #### Keybinds
 
@@ -235,17 +249,15 @@ See [Rebindable Shortcuts](#rebindable-shortcuts-defaults) for the full action l
 - **WD Blend Trees** — Controller WD section can change/detect blend tree WD status. Disable for direct blend trees (require WD on).
 - **Prevent Layer Scroll** — Stops Unity scrolling layer list to top on new layer creation.
 - **Prevent Param Scroll** — Same behavior for parameters list.
-- **Default Weight 1** — New layers auto-set weight to `1`.
-- **Clip Menu Nesting** — Nest Animation window clips in sub-menus by name using a searchable advanced dropdown. Choose the separator character — `-`, `.`, or `_` — and name clips `parent<sep>child<sep>name`. Disabling falls back to Unity's stock clip popup.
+- **Layer Weight 1** — New layers auto-set weight to `1`.
 - **Layer Templates** — Replaces layer `+` button with dropdown ([see below](#layer-templates)).
 - **Param Add Menu** — Parameter `+` button gains quick options for VRC built-in parameters. Right-click parameter adds:
   - Add parameter below
   - Convert to Float / Int / Bool / Trigger → submenu with two independent actions:
     - **Controller** — converts type and auto-updates all references in the controller (transitions, behaviours, AAP clips)
     - **VRC Params** — converts the matching VRC expression parameter type independently (use for type mismatches without touching controller references)
-  - Set Synced / Set Not Synced → toggle VRC sync status on the parameter
-  - Add to VRC Parameters → adds parameter to VRC expression parameters asset
-  - Add All to VRC Parameters → bulk-adds all controller parameters to VRC expression parameters
+  - Add to VRC Parameters → adds parameter to VRC expression parameters asset (only shown when missing)
+  - Sync VRC Parameters Asset → aligns the VRC expression parameters asset to the controller's parameter list/order — adds missing, removes anything not in the controller (including VRC builtins), confirm dialog previews the add/remove diff
   - Find parameter uses → opens window showing where parameter is used (transitions, behaviors, AAP clips, affecting GameObjects) + threshold conditions
   - Find AAP Uses → opens window listing all states/clips controlling parameter
   - Create AAP → creates an AAP animation clip that drives the parameter
@@ -260,6 +272,8 @@ See [Rebindable Shortcuts](#rebindable-shortcuts-defaults) for the full action l
 - **Palettes** — Save and share interface color palettes. **Save Palette** snapshots all current interface colors (Primary, Secondary, Accent, and all sub-colors) into a named slot. Each saved slot shows an editable name field, a row of color swatches (click swatches to apply that palette), a **Copy** button that copies an encoded string to clipboard, and **−** to delete. To import a shared palette: paste the encoded string into the text field at the bottom → click **Apply**.
 - **Color Tags** — Named tags with custom colors for visually categorizing states and transitions. Each tag has a name field and a color picker. Click `+ Add Tag` to create, `-` to remove. Applied via right-click context menu **Tag** submenu on states or transitions. Tagged state nodes show a thin colored strip above them; tagged transitions use the tag color for their arrow. Tag name matches `AnimatorState.tag`; transition tag stored in `AnimatorStateTransition.name`.
 - **Frames** — Enables custom Frames feature ([see Frames](#frames)).
+- **Inspector Mode** — Auto-opens only the relevant tab based on graph selection: Transitions tab when a transition is selected, States tab when a state is selected, Controller tab as fallback when neither is selected.
+- **Clip Menu Nesting** — Nest Animation window clips in sub-menus by name using a searchable advanced dropdown. Choose the separator character — `-`, `.`, or `_` — and name clips `parent<sep>child<sep>name`. Disabling falls back to Unity's stock clip popup.
 
 #### Compatibility
 
@@ -368,7 +382,10 @@ Right-click a state node:
 - **Set Clip Loop Time** — Toggle loop time on all clips used by selected states.
 - **Pack into Sub-State Machine** — Select 2+ states → right-click → groups into new sub-state machine. Node positions preserved within bounding box. Fully undoable.
 - **Select Transitions** — Submenu: all incoming / outgoing / shared transitions for selected nodes.
-- **Copy / Paste Behaviors** — Copy `StateMachineBehaviour(s)` → paste onto other states. Menu shows all 7 supported types: Param Drivers, Play Audio, Tracking Control, Locomotion Control, Animator Layer Control, Playable Layer Control, Temporary Pose Space.
+- **Copy / Paste Behaviors** — Copy `StateMachineBehaviour(s)` → paste onto other states. Menu shows all 7 supported types: Param Drivers, Play Audio, Tracking Control, Locomotion Control, Animator Layer Control, Playable Layer Control, Temporary Pose Space. When copying a VRC Parameter Driver onto a target state that already has driver instance(s), the paste submenu offers:
+  - **Replace** — destroys every existing driver instance on the target state, then pastes the copied instance(s) in alone.
+  - **Append / *(instance name)*** — one entry per existing instance on the target — merges the copied rows into that named instance.
+  - **Append Instance** — adds the copied driver(s) as new instance(s), never merging into an existing one.
 - **Tag** — Submenu listing all Color Tags defined in Settings. Click a tag → applies it to all selected states (sets `AnimatorState.tag`) and any selected transitions simultaneously. Toggle behavior: if all selected objects already carry that tag, clicking removes it. **Remove Tags** at the bottom of the submenu clears tags from all selected states and transitions at once. Tagged state nodes show a colored strip above them on the graph.
 - **Multi-Transition** — Select source node → click menu item → select other nodes → invoke menu item again → creates transitions from source to all destinations. AnyState or Entry can be source (right-click either → Multi-Transition, then select destinations). Exit can be destination (select states as source, then select Exit node as destination in phase 2). AnyState → Exit and Entry → Exit are not supported.
 
@@ -516,6 +533,8 @@ Drag blend tree node from one parent to another. Motion, threshold, other values
 ### Copy-Paste Nodes
 
 <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> — copy blend tree node (full subtree if itself a blend tree) → paste onto new parent in same or different blend tree. Deep-copies entire subtree. <kbd>Esc</kbd> cancels pending paste. Also available in right-click context menu.
+
+**Remap Parameter** — Right-click a blend tree node → opens an advanced dropdown listing every parameter used by that node and its children. Pick a source parameter, then a second dropdown lists the controller's float parameters — pick a destination to remap the source parameter across the node and its entire child subtree.
 
 ### Node Type Color
 

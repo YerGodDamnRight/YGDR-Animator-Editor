@@ -23,8 +23,9 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
-using ReorderableList = UnityEditorInternal.ReorderableList;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDKBase;
 
@@ -32,516 +33,520 @@ namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow
     {
-        // ── VRC Play Audio section (multi-instance) ─────────────────────────────
+        // ── VRC Play Audio section (native, multi-instance) ─────────────────────
 
-        readonly Dictionary<string, bool> _clipsExpandedByKey = new Dictionary<string, bool>();
-        readonly Dictionary<string, ReorderableList> _clipsReorderListByKey = new Dictionary<string, ReorderableList>();
-        readonly Dictionary<string, List<AudioClip>> _clipsListDataByKey = new Dictionary<string, List<AudioClip>>();
         readonly Dictionary<string, bool> _audioFoldoutExpanded = new Dictionary<string, bool>();
-        (string key, int index) _pendingRemoveClip = (null, -1);
-        string _currentAudioBodyKey;
+        readonly Dictionary<string, bool> _audioClipsExpandedByKey = new Dictionary<string, bool>();
 
-        AnimatorState[] _activeAudioStates;
-        Func<AnimatorState, VRCAnimatorPlayAudio> _activeAudioResolver;
+        Button _audioRemoveButton;
+        VisualElement _audioRows;
+        VisualElement _audioSection;
 
-        void DrawVRCPlayAudioSection()
+        VisualElement BuildAudioBody()
         {
-            _activeAudioResolver = null;
-            int maxCount = _selectedStates.Length == 0 ? 0 : _selectedStates.Max(state => InstanceCount<VRCAnimatorPlayAudio>(state));
-
-            using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
+            _audioSection = BuildBehaviorSectionShell(L10n.Get("vrc.audio"), out _audioRemoveButton, out _audioRows);
+            _audioRemoveButton.clicked += () =>
             {
-                GUILayout.Label(L10n.Get("vrc.audio"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
-                GUILayout.FlexibleSpace();
-                if (CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                {
-                    foreach (var state in _selectedStates) AddInstance<VRCAnimatorPlayAudio>(state, "Play Audio");
-                    return; // maxCount below is stale after this mutation — redraw fresh next repaint.
-                }
-                if (maxCount > 0 && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                {
-                    RemoveAudioFromAll();
-                    return;
-                }
-            }
+                RemoveAudioFromAll();
+                RefreshAudioSection();
+            };
+            return _audioSection;
+        }
 
+        void RefreshAudioBody() => RefreshAudioSection();
+
+        /* Entry point for the top-level Add Behavior dropdown — always available since audio behaviors allow duplicates. */
+        void AddAudioBehaviorToSelected()
+        {
+            foreach (var state in _selectedStates) AddInstance<VRCAnimatorPlayAudio>(state, "Play Audio");
+            RefreshAudioSection();
+        }
+
+        void RefreshAudioSection()
+        {
+            if (_audioRows == null) return;
+            int maxCount = _selectedStates.Length == 0 ? 0 : _selectedStates.Max(state => InstanceCount<VRCAnimatorPlayAudio>(state));
+            _audioSection.style.display = maxCount > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            _audioRemoveButton.style.display = maxCount > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+
+            _audioRows.Clear();
             if (maxCount == 0) return;
 
-            var audioGroups = GroupInstancesByName<VRCAnimatorPlayAudio>(_selectedStates);
-            for (int i = 0; i < audioGroups.Count; i++)
-                DrawAudioFoldout(audioGroups[i].name, audioGroups[i].states, i == 0, i == audioGroups.Count - 1);
-
-            _activeAudioResolver = null;
+            var groups = GroupInstancesByName<VRCAnimatorPlayAudio>(_selectedStates);
+            for (int i = 0; i < groups.Count; i++)
+                _audioRows.Add(BuildAudioFoldout(groups[i].name, groups[i].states, i == 0, i == groups.Count - 1));
         }
 
-        void DrawAudioFoldout(string name, AnimatorState[] statesWithName, bool isFirst, bool isLast)
+        VisualElement BuildAudioFoldout(string name, AnimatorState[] statesWithName, bool isFirst, bool isLast)
         {
-            bool removeRequested = DrawInstanceFoldoutHeader<VRCAnimatorPlayAudio>(name, statesWithName, _audioFoldoutExpanded, isFirst, isLast, out bool expanded, out bool moveUp, out bool moveDown);
+            var container = new VisualElement();
+            container.AddToClassList("ygdr-behavior-instance-container");
 
-            if (moveUp || moveDown)
-            {
-                MoveNamedInstance<VRCAnimatorPlayAudio>(name, statesWithName, moveUp ? -1 : 1);
-                return; // order changed — redraw fresh next repaint.
-            }
+            var body = BuildAudioInstanceBody(name, statesWithName, state => FindInstance<VRCAnimatorPlayAudio>(state, name));
+            body.style.display = IsExpandedByDefault(_audioFoldoutExpanded, name) ? DisplayStyle.Flex : DisplayStyle.None;
 
-            if (removeRequested)
-            {
-                RemoveNamedInstance<VRCAnimatorPlayAudio>(name, statesWithName);
-                _clipsReorderListByKey.Remove(name);
-                _clipsListDataByKey.Remove(name);
-                _clipsExpandedByKey.Remove(name);
-                return;
-            }
+            var header = BuildInstanceFoldoutHeader<VRCAnimatorPlayAudio>(name, statesWithName, _audioFoldoutExpanded,
+                isFirst, isLast, out _, expandedNow => body.style.display = expandedNow ? DisplayStyle.Flex : DisplayStyle.None,
+                RefreshAudioSection);
 
-            if (!expanded) return;
-
-            _activeAudioStates = statesWithName;
-            _activeAudioResolver = state => FindInstance<VRCAnimatorPlayAudio>(state, name);
-            // Header may have just renamed this instance this frame — `name` is now stale and the resolver
-            // won't find it on any state until next repaint recomputes namesUnion. Bail instead of indexing
-            // an empty statesWithAudio array below.
-            if (!_activeAudioStates.Any(state => _activeAudioResolver(state) != null)) return;
-            DrawAudioInstanceBody(name);
+            container.Add(header);
+            container.Add(body);
+            return container;
         }
 
-        void DrawAudioInstanceBody(string key)
+        VisualElement BuildAudioInstanceBody(string name, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver)
         {
-            _currentAudioBodyKey = key;
+            var body = new VisualElement();
+            body.AddToClassList("ygdr-behavior-instance-body");
+            body.style.backgroundColor = SharedWindowStyles.SecondaryColor;
 
-            const float pad = 6f;
-            var bodyRect = EditorGUILayout.BeginVertical();
-            if (Event.current.type == EventType.Repaint && bodyRect.height > 0)
-                EditorGUI.DrawRect(bodyRect, Styles.SecondaryColor);
+            var statesWithAudio = statesWithName.Where(state => resolver(state) != null).ToArray();
+            if (statesWithAudio.Length == 0) return body;
+            var first = resolver(statesWithAudio[0]);
+            bool multi = statesWithAudio.Length > 1;
 
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginVertical();
+            body.Add(BuildAudioSourceDragField(statesWithName, resolver));
+            body.Add(BuildAudioSourcePathField(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioPlaybackOrderRow(first, statesWithAudio, statesWithName, resolver, multi));
+            if (first.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter)
+                body.Add(BuildAudioParameterNameField(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioClipsSection(name, statesWithName, resolver));
+            body.Add(BuildAudioVolumeRow(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioPitchRow(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioLoopRow(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioPlayStopColumnHeaders());
+            body.Add(BuildAudioOnEnterRow(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioOnExitRow(first, statesWithAudio, statesWithName, resolver, multi));
+            body.Add(BuildAudioDelayRow(first, statesWithAudio, statesWithName, resolver, multi));
 
-            DrawPlayAudioFields();
-
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndVertical();
+            return body;
         }
 
-        void SetAudioOnAll(string undoName, Action<VRCAnimatorPlayAudio> mutate)
+        static void SetAudioOnAll(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, string undoName, Action<VRCAnimatorPlayAudio> mutate)
         {
-            foreach (var state in _activeAudioStates)
+            foreach (var state in statesWithName)
             {
-                var audio = GetOrCreateAudio(state);
+                var audio = GetOrCreateAudio(state, resolver);
                 Undo.RecordObject(audio, undoName);
                 mutate(audio);
                 EditorUtility.SetDirty(audio);
             }
         }
 
-        void DrawPlayAudioFields()
+        VisualElement BuildAudioSourceDragField(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver)
         {
-            var statesWithAudio = _activeAudioStates.Where(state => GetAudioForState(state) != null).ToArray();
-            var first = GetAudioForState(statesWithAudio[0]);
-            bool multi = statesWithAudio.Length > 1;
-
-            DrawAudioSourceDragField();
-            DrawAudioSourcePathField(first, statesWithAudio, multi);
-            DrawAudioPlaybackOrderField(first, statesWithAudio, multi);
-            if (first.PlaybackOrder == VRCAnimatorPlayAudio.Order.Parameter)
-                DrawAudioParameterNameField(first, statesWithAudio, multi);
-            DrawPlayAudioClipsList(statesWithAudio);
-            DrawAudioVolumeFields(first, statesWithAudio, multi);
-            DrawAudioPitchFields(first, statesWithAudio, multi);
-            DrawAudioLoopField(first, statesWithAudio, multi);
-            DrawAudioPlayStopColumnHeaders();
-            DrawAudioOnEnterFields(first, statesWithAudio, multi);
-            DrawAudioOnExitFields(first, statesWithAudio, multi);
-            DrawAudioDelayField(first, statesWithAudio, multi);
+            var dragField = new ObjectField { objectType = typeof(AudioSource), allowSceneObjects = true };
+            dragField.RegisterValueChangedCallback(evt =>
+            {
+                var droppedSource = evt.newValue as AudioSource;
+                dragField.SetValueWithoutNotify(null);
+                if (droppedSource == null) return;
+                var descriptor = droppedSource.GetComponentInParent<VRCAvatarDescriptor>();
+                string resolvedPath = GetAudioSourcePath(droppedSource.transform, descriptor != null ? descriptor.transform : null);
+                SetAudioOnAll(statesWithName, resolver, "Set Source Path", audio => audio.SourcePath = resolvedPath);
+                RefreshAudioSection();
+            });
+            return BuildBehaviorFieldRow(L10n.Get("vrc.audio.source"), null, dragField);
         }
 
-        void DrawAudioSourceDragField()
+        static VisualElement BuildAudioSourcePathField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
         {
-            using (new EditorGUILayout.HorizontalScope())
+            var field = new TextField { value = first.SourcePath ?? "", showMixedValue = multi && statesWithAudio.Any(state => resolver(state).SourcePath != first.SourcePath) };
+            field.RegisterValueChangedCallback(evt =>
+                SetAudioOnAll(statesWithName, resolver, "Edit Source Path", audio => audio.SourcePath = evt.newValue));
+            return BuildBehaviorFieldRow(L10n.Get("vrc.audio.source_path"), null, field);
+        }
+
+        VisualElement BuildAudioPlaybackOrderRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var label = new Label(L10n.Get("vrc.audio.playback_order"));
+            label.AddToClassList("ygdr-behavior-field-label");
+            row.Add(label);
+
+            var orderLabels = new[] { L10n.Get("vrc.audio.order.random"), L10n.Get("vrc.audio.order.unique"), L10n.Get("vrc.audio.order.roundabout"), L10n.Get("vrc.audio.order.parameter") };
+            bool orderMixed = multi && statesWithAudio.Any(state => resolver(state).PlaybackOrder != first.PlaybackOrder);
+            var orderButton = BuildLocalizedIndexDropdown((int)first.PlaybackOrder, orderMixed, orderLabels, newIndex =>
             {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.source"), GUILayout.Width(110));
-                EditorGUI.BeginChangeCheck();
-                var droppedSource = (AudioSource)EditorGUILayout.ObjectField(null, typeof(AudioSource), true);
-                if (EditorGUI.EndChangeCheck() && droppedSource != null)
+                var newOrder = (VRCAnimatorPlayAudio.Order)newIndex;
+                SetAudioOnAll(statesWithName, resolver, "Edit Playback Order", audio => audio.PlaybackOrder = newOrder);
+                RefreshAudioSection();
+            });
+            orderButton.AddToClassList("ygdr-behavior-field-value");
+            orderButton.AddToClassList("u-flex-fill");
+            row.Add(orderButton);
+
+            bool applyMixed = multi && statesWithAudio.Any(state => resolver(state).ClipsApplySettings != first.ClipsApplySettings);
+            row.Add(BuildApplySettingsDropdown(first.ClipsApplySettings, applyMixed, newValue =>
+                SetAudioOnAll(statesWithName, resolver, "Edit Clips Apply Settings", audio => audio.ClipsApplySettings = newValue)));
+
+            return row;
+        }
+
+        VisualElement BuildAudioParameterNameField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
+        {
+            bool mixed = multi && statesWithAudio.Any(state => resolver(state).ParameterName != first.ParameterName);
+            var button = new Button { text = mixed ? "—" : (string.IsNullOrEmpty(first.ParameterName) ? "[None]" : first.ParameterName) };
+            button.clicked += () =>
+            {
+                if (_controller == null || _controller.parameters.Length == 0) return;
+                ShowParameterDropdown(button.worldBound, first.ParameterName ?? "", AnimatorControllerParameterType.Int, selectedName =>
                 {
-                    var descriptor = droppedSource.GetComponentInParent<VRCAvatarDescriptor>();
-                    string resolvedPath = GetAudioSourcePath(droppedSource.transform, descriptor != null ? descriptor.transform : null);
-                    SetAudioOnAll("Set Source Path", audio => audio.SourcePath = resolvedPath);
-                }
-            }
+                    SetAudioOnAll(statesWithName, resolver, "Edit Parameter Name", audio => audio.ParameterName = selectedName);
+                    button.text = selectedName;
+                });
+            };
+            return BuildBehaviorFieldRow(L10n.Get("vrc.audio.param_name"), null, button);
         }
 
-        void DrawAudioSourcePathField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
+        static VisualElement BuildAudioVolumeRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
         {
-            using (new EditorGUILayout.HorizontalScope())
+            return BuildAudioMinMaxApplyRow(L10n.Get("vrc.audio.volume"), 0f, 1f,
+                audio => audio.Volume, (audio, v) => audio.Volume = v,
+                audio => audio.VolumeApplySettings, (audio, v) => audio.VolumeApplySettings = v,
+                first, statesWithAudio, statesWithName, resolver, multi, "Edit Volume Min", "Edit Volume Max", "Edit Volume Apply Settings");
+        }
+
+        static VisualElement BuildAudioPitchRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
+        {
+            return BuildAudioMinMaxApplyRow(L10n.Get("vrc.audio.pitch"), -3f, 3f,
+                audio => audio.Pitch, (audio, v) => audio.Pitch = v,
+                audio => audio.PitchApplySettings, (audio, v) => audio.PitchApplySettings = v,
+                first, statesWithAudio, statesWithName, resolver, multi, "Edit Pitch Min", "Edit Pitch Max", "Edit Pitch Apply Settings");
+        }
+
+        static Button BuildApplySettingsDropdown(VRC_AnimatorPlayAudio.ApplySettings current, bool mixed, Action<VRC_AnimatorPlayAudio.ApplySettings> onChanged)
+        {
+            var labels = new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") };
+            var button = BuildLocalizedIndexDropdown((int)current, mixed, labels, newIndex => onChanged((VRC_AnimatorPlayAudio.ApplySettings)newIndex));
+            button.AddToClassList("ygdr-audio-apply-btn");
+            return button;
+        }
+
+        static VisualElement BuildAudioMinMaxApplyRow(string label, float min, float max,
+            Func<VRCAnimatorPlayAudio, Vector2> getValue, Action<VRCAnimatorPlayAudio, Vector2> setValue,
+            Func<VRCAnimatorPlayAudio, VRC_AnimatorPlayAudio.ApplySettings> getApply, Action<VRCAnimatorPlayAudio, VRC_AnimatorPlayAudio.ApplySettings> setApply,
+            VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi,
+            string undoMin, string undoMax, string undoApply)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var labelElement = new Label(label);
+            labelElement.AddToClassList("ygdr-behavior-field-label");
+            row.Add(labelElement);
+
+            var firstValue = getValue(first);
+            var minField = new FloatField { value = firstValue.x, showMixedValue = multi && statesWithAudio.Any(state => !Mathf.Approximately(getValue(resolver(state)).x, firstValue.x)) };
+            minField.AddToClassList("ygdr-audio-minmax-field");
+            row.Add(minField);
+            var maxField = new FloatField { value = firstValue.y, showMixedValue = multi && statesWithAudio.Any(state => !Mathf.Approximately(getValue(resolver(state)).y, firstValue.y)) };
+            maxField.AddToClassList("ygdr-audio-minmax-field");
+            row.Add(maxField);
+
+            minField.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.source_path"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).SourcePath != first.SourcePath);
-                EditorGUI.BeginChangeCheck();
-                string newPath = EditorGUILayout.TextField(first.SourcePath ?? "");
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Source Path", audio => audio.SourcePath = newPath);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawAudioPlaybackOrderField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
-        {
-            using (new EditorGUILayout.HorizontalScope())
+                float clamped = Mathf.Clamp(evt.newValue, min, max);
+                minField.SetValueWithoutNotify(clamped);
+                SetAudioOnAll(statesWithName, resolver, undoMin, audio => setValue(audio, new Vector2(clamped, getValue(audio).y)));
+            });
+            maxField.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.playback_order"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).PlaybackOrder != first.PlaybackOrder);
-                EditorGUI.BeginChangeCheck();
-                var orderLabels = new[] { L10n.Get("vrc.audio.order.random"), L10n.Get("vrc.audio.order.unique"), L10n.Get("vrc.audio.order.roundabout"), L10n.Get("vrc.audio.order.parameter") };
-                var newOrder = (VRCAnimatorPlayAudio.Order)EditorGUILayout.Popup((int)first.PlaybackOrder, orderLabels);
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Playback Order", audio => audio.PlaybackOrder = newOrder);
-                EditorGUI.showMixedValue = false;
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).ClipsApplySettings != first.ClipsApplySettings);
-                EditorGUI.BeginChangeCheck();
-                var applyLabels = new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") };
-                var newClipsApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.ClipsApplySettings, applyLabels, GUILayout.Width(130));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Clips Apply Settings", audio => audio.ClipsApplySettings = newClipsApply);
-                EditorGUI.showMixedValue = false;
-            }
+                float clamped = Mathf.Clamp(evt.newValue, min, max);
+                maxField.SetValueWithoutNotify(clamped);
+                SetAudioOnAll(statesWithName, resolver, undoMax, audio => setValue(audio, new Vector2(getValue(audio).x, clamped)));
+            });
+
+            bool applyMixed = multi && statesWithAudio.Any(state => getApply(resolver(state)) != getApply(first));
+            row.Add(BuildApplySettingsDropdown(getApply(first), applyMixed, newValue =>
+                SetAudioOnAll(statesWithName, resolver, undoApply, audio => setApply(audio, newValue))));
+
+            return row;
         }
 
-        void DrawAudioParameterNameField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
+        static VisualElement BuildAudioLoopRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
         {
-            using (new EditorGUILayout.HorizontalScope())
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var label = new Label(L10n.Get("vrc.audio.loop"));
+            label.AddToClassList("ygdr-behavior-field-label");
+            row.Add(label);
+
+            var loopToggle = new Toggle { value = first.Loop, showMixedValue = multi && statesWithAudio.Any(state => resolver(state).Loop != first.Loop) };
+            loopToggle.RegisterValueChangedCallback(evt =>
+                SetAudioOnAll(statesWithName, resolver, "Edit Loop", audio => audio.Loop = evt.newValue));
+            row.Add(loopToggle);
+
+            var spacer = new VisualElement();
+            spacer.style.flexGrow = 1;
+            row.Add(spacer);
+
+            bool applyMixed = multi && statesWithAudio.Any(state => resolver(state).LoopApplySettings != first.LoopApplySettings);
+            row.Add(BuildApplySettingsDropdown(first.LoopApplySettings, applyMixed, newValue =>
+                SetAudioOnAll(statesWithName, resolver, "Edit Loop Apply Settings", audio => audio.LoopApplySettings = newValue)));
+
+            return row;
+        }
+
+        static VisualElement BuildAudioPlayStopColumnHeaders()
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var spacer = new VisualElement();
+            spacer.AddToClassList("ygdr-behavior-field-label");
+            row.Add(spacer);
+            var stopLabel = new Label(L10n.Get("vrc.audio.stop"));
+            stopLabel.AddToClassList("ygdr-audio-col-label");
+            row.Add(stopLabel);
+            var playLabel = new Label(L10n.Get("vrc.audio.play"));
+            playLabel.AddToClassList("ygdr-audio-col-label");
+            row.Add(playLabel);
+            return row;
+        }
+
+        static VisualElement BuildAudioOnEnterRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
+            => BuildAudioStopPlayRow(L10n.Get("vrc.audio.on_enter"), first.StopOnEnter, first.PlayOnEnter,
+                (audio, v) => audio.StopOnEnter = v, (audio, v) => audio.PlayOnEnter = v,
+                audio => audio.StopOnEnter, audio => audio.PlayOnEnter,
+                statesWithAudio, statesWithName, resolver, multi, "Edit Stop On Enter", "Edit Play On Enter");
+
+        static VisualElement BuildAudioOnExitRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
+            => BuildAudioStopPlayRow(L10n.Get("vrc.audio.on_exit"), first.StopOnExit, first.PlayOnExit,
+                (audio, v) => audio.StopOnExit = v, (audio, v) => audio.PlayOnExit = v,
+                audio => audio.StopOnExit, audio => audio.PlayOnExit,
+                statesWithAudio, statesWithName, resolver, multi, "Edit Stop On Exit", "Edit Play On Exit");
+
+        static VisualElement BuildAudioStopPlayRow(string label, bool firstStop, bool firstPlay,
+            Action<VRCAnimatorPlayAudio, bool> setStop, Action<VRCAnimatorPlayAudio, bool> setPlay,
+            Func<VRCAnimatorPlayAudio, bool> getStop, Func<VRCAnimatorPlayAudio, bool> getPlay,
+            AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi,
+            string undoStop, string undoPlay)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var labelElement = new Label(label);
+            labelElement.AddToClassList("ygdr-behavior-field-label");
+            row.Add(labelElement);
+
+            var stopToggle = new Toggle { value = firstStop, showMixedValue = multi && statesWithAudio.Any(state => getStop(resolver(state)) != firstStop) };
+            stopToggle.AddToClassList("ygdr-audio-col-toggle");
+            stopToggle.RegisterValueChangedCallback(evt =>
+                SetAudioOnAll(statesWithName, resolver, undoStop, audio => setStop(audio, evt.newValue)));
+            row.Add(stopToggle);
+
+            var playToggle = new Toggle { value = firstPlay, showMixedValue = multi && statesWithAudio.Any(state => getPlay(resolver(state)) != firstPlay) };
+            playToggle.AddToClassList("ygdr-audio-col-toggle");
+            playToggle.RegisterValueChangedCallback(evt =>
+                SetAudioOnAll(statesWithName, resolver, undoPlay, audio => setPlay(audio, evt.newValue)));
+            row.Add(playToggle);
+
+            return row;
+        }
+
+        static VisualElement BuildAudioDelayRow(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, bool multi)
+        {
+            var field = new FloatField { value = first.DelayInSeconds, showMixedValue = multi && statesWithAudio.Any(state => !Mathf.Approximately(resolver(state).DelayInSeconds, first.DelayInSeconds)) };
+            field.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.param_name"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).ParameterName != first.ParameterName);
-                DrawIntParamDropdown(first.ParameterName ?? "",
-                    newParam => SetAudioOnAll("Edit Parameter Name", audio => audio.ParameterName = newParam));
-                EditorGUI.showMixedValue = false;
-            }
+                float clamped = Mathf.Clamp(evt.newValue, 0f, 60f);
+                field.SetValueWithoutNotify(clamped);
+                SetAudioOnAll(statesWithName, resolver, "Edit Play Delay", audio => audio.DelayInSeconds = clamped);
+            });
+            var row = BuildBehaviorFieldRow(L10n.Get("vrc.audio.delay"), null, field);
+            row.AddToClassList("ygdr-audio-delay-row");
+            return row;
         }
 
-        void DrawAudioVolumeFields(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.volume"), GUILayout.Width(95));
-                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.min"), EditorStyles.label, GUILayout.Width(35));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Volume.x, first.Volume.x));
-                EditorGUI.BeginChangeCheck();
-                float newVolMin = Mathf.Clamp(EditorGUILayout.FloatField(first.Volume.x), 0f, 1f);
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Volume Min", audio => audio.Volume = new Vector2(newVolMin, audio.Volume.y));
-                EditorGUI.showMixedValue = false;
-                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.max"), EditorStyles.label, GUILayout.Width(35));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Volume.y, first.Volume.y));
-                EditorGUI.BeginChangeCheck();
-                float newVolMax = Mathf.Clamp(EditorGUILayout.FloatField(first.Volume.y), 0f, 1f);
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Volume Max", audio => audio.Volume = new Vector2(audio.Volume.x, newVolMax));
-                EditorGUI.showMixedValue = false;
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).VolumeApplySettings != first.VolumeApplySettings);
-                EditorGUI.BeginChangeCheck();
-                var newVolApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.VolumeApplySettings, new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") }, GUILayout.Width(130));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Volume Apply Settings", audio => audio.VolumeApplySettings = newVolApply);
-                EditorGUI.showMixedValue = false;
-            }
-        }
+        // ── Clips list (native: rows with ObjectField + ↑/↓/remove, replacing the old ReorderableList) ──
 
-        void DrawAudioPitchFields(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
+        VisualElement BuildAudioClipsSection(string name, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver)
         {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.pitch"), GUILayout.Width(95));
-                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.min"), EditorStyles.label, GUILayout.Width(35));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Pitch.x, first.Pitch.x));
-                EditorGUI.BeginChangeCheck();
-                float newPitchMin = Mathf.Clamp(EditorGUILayout.FloatField(first.Pitch.x), -3f, 3f);
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Pitch Min", audio => audio.Pitch = new Vector2(newPitchMin, audio.Pitch.y));
-                EditorGUI.showMixedValue = false;
-                EditorGUILayout.LabelField(L10n.Get("vrc.param_driver.max"), EditorStyles.label, GUILayout.Width(35));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).Pitch.y, first.Pitch.y));
-                EditorGUI.BeginChangeCheck();
-                float newPitchMax = Mathf.Clamp(EditorGUILayout.FloatField(first.Pitch.y), -3f, 3f);
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Pitch Max", audio => audio.Pitch = new Vector2(audio.Pitch.x, newPitchMax));
-                EditorGUI.showMixedValue = false;
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).PitchApplySettings != first.PitchApplySettings);
-                EditorGUI.BeginChangeCheck();
-                var newPitchApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.PitchApplySettings, new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") }, GUILayout.Width(130));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Pitch Apply Settings", audio => audio.PitchApplySettings = newPitchApply);
-                EditorGUI.showMixedValue = false;
-            }
-        }
+            var section = new VisualElement();
+            section.AddToClassList("ygdr-audio-clips-section");
+            section.style.backgroundColor = SharedWindowStyles.SecondaryColor;
 
-        void DrawAudioLoopField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.loop"), GUILayout.Width(55));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).Loop != first.Loop);
-                EditorGUI.BeginChangeCheck();
-                bool newLoop = EditorGUILayout.Toggle(first.Loop, GUILayout.Width(16));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Loop", audio => audio.Loop = newLoop);
-                EditorGUI.showMixedValue = false;
-                GUILayout.FlexibleSpace();
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).LoopApplySettings != first.LoopApplySettings);
-                EditorGUI.BeginChangeCheck();
-                var newLoopApply = (VRC_AnimatorPlayAudio.ApplySettings)EditorGUILayout.Popup((int)first.LoopApplySettings, new[] { L10n.Get("vrc.audio.apply.always"), L10n.Get("vrc.audio.apply.if_stopped"), L10n.Get("vrc.audio.apply.never") }, GUILayout.Width(130));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Loop Apply Settings", audio => audio.LoopApplySettings = newLoopApply);
-                EditorGUI.showMixedValue = false;
-            }
-        }
+            string expandKey = "clips:" + name;
+            bool expanded = IsExpandedByDefault(_audioClipsExpandedByKey, expandKey);
 
-        static void DrawAudioPlayStopColumnHeaders()
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.Space(114);
-                GUILayout.Label(L10n.Get("vrc.audio.stop"), EditorStyles.label, GUILayout.Width(40));
-                GUILayout.Label(L10n.Get("vrc.audio.play"), EditorStyles.label, GUILayout.Width(40));
-            }
-        }
+            var headerRow = new VisualElement();
+            headerRow.AddToClassList("ygdr-audio-clips-header");
 
-        void DrawAudioOnEnterFields(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.on_enter"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).StopOnEnter != first.StopOnEnter);
-                EditorGUI.BeginChangeCheck();
-                bool newStopEnter = EditorGUILayout.Toggle(first.StopOnEnter, GUILayout.Width(40));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Stop On Enter", audio => audio.StopOnEnter = newStopEnter);
-                EditorGUI.showMixedValue = false;
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).PlayOnEnter != first.PlayOnEnter);
-                EditorGUI.BeginChangeCheck();
-                bool newPlayEnter = EditorGUILayout.Toggle(first.PlayOnEnter, GUILayout.Width(40));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Play On Enter", audio => audio.PlayOnEnter = newPlayEnter);
-                EditorGUI.showMixedValue = false;
-            }
-        }
+            var foldoutArrow = new Label(expanded ? "▾" : "▸");
+            foldoutArrow.AddToClassList("ygdr-behavior-foldout-arrow");
+            headerRow.Add(foldoutArrow);
 
-        void DrawAudioOnExitFields(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.on_exit"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).StopOnExit != first.StopOnExit);
-                EditorGUI.BeginChangeCheck();
-                bool newStopExit = EditorGUILayout.Toggle(first.StopOnExit, GUILayout.Width(40));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Stop On Exit", audio => audio.StopOnExit = newStopExit);
-                EditorGUI.showMixedValue = false;
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(state => GetAudioForState(state).PlayOnExit != first.PlayOnExit);
-                EditorGUI.BeginChangeCheck();
-                bool newPlayExit = EditorGUILayout.Toggle(first.PlayOnExit, GUILayout.Width(40));
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Play On Exit", audio => audio.PlayOnExit = newPlayExit);
-                EditorGUI.showMixedValue = false;
-            }
-        }
+            var titleLabel = new Label(L10n.Get("vrc.audio.clips"));
+            titleLabel.AddToClassList("ygdr-audio-clips-title");
+            headerRow.Add(titleLabel);
 
-        void DrawAudioDelayField(VRCAnimatorPlayAudio first, AnimatorState[] statesWithAudio, bool multi)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.audio.delay"), GUILayout.Width(220));
-                EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => !Mathf.Approximately(GetAudioForState(s).DelayInSeconds, first.DelayInSeconds));
-                EditorGUI.BeginChangeCheck();
-                float newDelay = Mathf.Clamp(EditorGUILayout.FloatField(first.DelayInSeconds), 0f, 60f);
-                if (EditorGUI.EndChangeCheck()) SetAudioOnAll("Edit Play Delay", audio => audio.DelayInSeconds = newDelay);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        /* Draws the foldable clips list with a size int field and a ReorderableList for editing, reordering, and removing audio clips across all statesWithAudio. */
-        void DrawPlayAudioClipsList(AnimatorState[] statesWithAudio)
-        {
-            string key = _currentAudioBodyKey;
-            var first = GetAudioForState(statesWithAudio[0]);
+            var statesWithAudio = statesWithName.Where(state => resolver(state) != null).ToArray();
+            var first = resolver(statesWithAudio[0]);
             bool multi = statesWithAudio.Length > 1;
             var clips = first.Clips ?? Array.Empty<AudioClip>();
-            float rowHeight = EditorGUIUtility.singleLineHeight;
 
-            // Outer container — single background covers foldout header + list body
-            var outerRect = EditorGUILayout.BeginVertical();
-            if (Event.current.type == EventType.Repaint && outerRect.height > 0)
-                EditorGUI.DrawRect(outerRect, Styles.SecondaryColor);
+            var sizeField = new IntegerField { value = clips.Length, showMixedValue = multi && statesWithAudio.Any(state => (resolver(state).Clips?.Length ?? 0) != clips.Length) };
+            sizeField.AddToClassList("ygdr-audio-clips-size-field");
+            headerRow.Add(sizeField);
+            section.Add(headerRow);
 
-            // Foldout header + size int field — now inside the background
-            var headerRow = EditorGUILayout.GetControlRect(false, rowHeight);
-            const float sizeWidth = 40f;
-            var foldoutRect = new Rect(headerRow.x, headerRow.y, headerRow.width - sizeWidth - 4f, rowHeight);
-            bool clipsExpanded = !_clipsExpandedByKey.TryGetValue(key, out var storedClipsExpanded) || storedClipsExpanded;
-            clipsExpanded = EditorGUI.Foldout(foldoutRect, clipsExpanded, L10n.Get("vrc.audio.clips"), true, EditorStyles.foldout);
-            _clipsExpandedByKey[key] = clipsExpanded;
-            EditorGUIUtility.AddCursorRect(foldoutRect, MouseCursor.Link);
+            var rowsContainer = new VisualElement();
+            rowsContainer.AddToClassList("ygdr-audio-clips-rows");
+            rowsContainer.style.display = expanded ? DisplayStyle.Flex : DisplayStyle.None;
+            section.Add(rowsContainer);
 
-            EditorGUI.showMixedValue = multi && statesWithAudio.Any(s => (GetAudioForState(s).Clips?.Length ?? 0) != clips.Length);
-            EditorGUI.BeginChangeCheck();
-            int newSize = Mathf.Max(0, EditorGUI.IntField(new Rect(headerRow.xMax - sizeWidth, headerRow.y, sizeWidth, rowHeight), clips.Length));
-            if (EditorGUI.EndChangeCheck())
+            void RebuildRows()
             {
-                foreach (var state in _activeAudioStates)
+                rowsContainer.Clear();
+                var currentStatesWithAudio = statesWithName.Where(state => resolver(state) != null).ToArray();
+                if (currentStatesWithAudio.Length == 0) return;
+                var currentFirst = resolver(currentStatesWithAudio[0]);
+                bool currentMulti = currentStatesWithAudio.Length > 1;
+                var currentClips = currentFirst.Clips ?? Array.Empty<AudioClip>();
+
+                if (currentClips.Length == 0)
                 {
-                    var audio = GetOrCreateAudio(state);
+                    var emptyLabel = new Label(L10n.Get("vrc.list_empty"));
+                    emptyLabel.AddToClassList("ygdr-empty-label");
+                    rowsContainer.Add(emptyLabel);
+                }
+
+                for (int i = 0; i < currentClips.Length; i++)
+                {
+                    int capturedIndex = i;
+                    var row = new VisualElement();
+                    row.AddToClassList("ygdr-audio-clip-row");
+
+                    var currentClip = currentClips[capturedIndex];
+                    var clipField = new ObjectField
+                    {
+                        objectType = typeof(AudioClip),
+                        value = currentClip,
+                        showMixedValue = currentMulti && currentStatesWithAudio.Any(state =>
+                        {
+                            var stateClips = resolver(state).Clips;
+                            var clip = stateClips != null && capturedIndex < stateClips.Length ? stateClips[capturedIndex] : null;
+                            return clip != currentClip;
+                        })
+                    };
+                    clipField.AddToClassList("ygdr-audio-clip-field");
+                    clipField.RegisterValueChangedCallback(evt =>
+                    {
+                        foreach (var state in statesWithName)
+                        {
+                            var audio = GetOrCreateAudio(state, resolver);
+                            if (audio.Clips == null || capturedIndex >= audio.Clips.Length)
+                            {
+                                var expandedArray = new AudioClip[capturedIndex + 1];
+                                audio.Clips?.CopyTo(expandedArray, 0);
+                                audio.Clips = expandedArray;
+                            }
+                            Undo.RecordObject(audio, "Edit Audio Clip");
+                            audio.Clips[capturedIndex] = evt.newValue as AudioClip;
+                            EditorUtility.SetDirty(audio);
+                        }
+                    });
+                    row.Add(clipField);
+
+                    var upButton = new Button(() => { MoveAudioClip(statesWithName, resolver, capturedIndex, -1); RebuildRows(); }) { text = "↑" };
+                    upButton.SetEnabled(capturedIndex > 0);
+                    upButton.AddToClassList("ygdr-behavior-icon-btn");
+                    row.Add(upButton);
+
+                    var downButton = new Button(() => { MoveAudioClip(statesWithName, resolver, capturedIndex, 1); RebuildRows(); }) { text = "↓" };
+                    downButton.SetEnabled(capturedIndex < currentClips.Length - 1);
+                    downButton.AddToClassList("ygdr-behavior-icon-btn");
+                    row.Add(downButton);
+
+                    var removeButton = new Button(() => { RemoveAudioClip(statesWithName, resolver, capturedIndex); RebuildRows(); }) { text = "−" };
+                    removeButton.AddToClassList("ygdr-behavior-icon-btn");
+                    removeButton.AddToClassList("ygdr-audio-clip-remove-btn");
+                    StyleSecondaryButton(removeButton);
+                    row.Add(removeButton);
+
+                    rowsContainer.Add(row);
+                }
+
+                var addRow = new VisualElement();
+                addRow.AddToClassList("ygdr-audio-clip-add-row");
+                var addButton = new Button(() =>
+                {
+                    foreach (var state in statesWithName)
+                    {
+                        var audio = GetOrCreateAudio(state, resolver);
+                        Undo.RecordObject(audio, "Add Audio Clip");
+                        var expandedArray = new AudioClip[(audio.Clips?.Length ?? 0) + 1];
+                        audio.Clips?.CopyTo(expandedArray, 0);
+                        audio.Clips = expandedArray;
+                        EditorUtility.SetDirty(audio);
+                    }
+                    RebuildRows();
+                }) { text = "+" };
+                addButton.AddToClassList("ygdr-behavior-icon-btn");
+                StyleSecondaryButton(addButton);
+                addRow.Add(addButton);
+                rowsContainer.Add(addRow);
+            }
+
+            RebuildRows();
+
+            foldoutArrow.RegisterCallback<ClickEvent>(_ =>
+            {
+                bool nowExpanded = rowsContainer.style.display == DisplayStyle.None;
+                _audioClipsExpandedByKey[expandKey] = nowExpanded;
+                foldoutArrow.text = nowExpanded ? "▾" : "▸";
+                rowsContainer.style.display = nowExpanded ? DisplayStyle.Flex : DisplayStyle.None;
+            });
+
+            sizeField.RegisterValueChangedCallback(evt =>
+            {
+                int newSize = Mathf.Max(0, evt.newValue);
+                foreach (var state in statesWithName)
+                {
+                    var audio = GetOrCreateAudio(state, resolver);
                     Undo.RecordObject(audio, "Resize Clips");
                     var resized = new AudioClip[newSize];
                     if (audio.Clips != null) Array.Copy(audio.Clips, resized, Mathf.Min(audio.Clips.Length, newSize));
                     audio.Clips = resized;
                     EditorUtility.SetDirty(audio);
                 }
-                clips = first.Clips ?? Array.Empty<AudioClip>();
-                _clipsListDataByKey.Remove(key);
-                _clipsReorderListByKey.Remove(key);
-            }
-            EditorGUI.showMixedValue = false;
+                RebuildRows();
+            });
 
-            if (clipsExpanded)
-            {
-                // Keep listData in sync with current clips
-                if (!_clipsListDataByKey.TryGetValue(key, out var listData) || listData.Count != clips.Length)
-                {
-                    listData = new List<AudioClip>(clips);
-                    _clipsListDataByKey[key] = listData;
-                }
-                else
-                    for (int i = 0; i < clips.Length; i++)
-                        listData[i] = clips[i];
-
-                // Build ReorderableList once; rebuilt when removed from cache
-                if (!_clipsReorderListByKey.TryGetValue(key, out var reorderList))
-                {
-                    reorderList = new ReorderableList(listData, typeof(AudioClip), true, false, false, false)
-                    {
-                        elementHeight = rowHeight,
-                        showDefaultBackground = false,
-                        footerHeight = 0f,
-                    };
-
-                    reorderList.drawElementCallback = (rect, index, isActive, isFocused) =>
-                    {
-                        var currentListData = _clipsListDataByKey[key];
-                        if (index >= currentListData.Count) return;
-                        var localStates = _activeAudioStates.Where(state => GetAudioForState(state) != null).ToArray();
-                        bool localMulti = localStates.Length > 1;
-
-                        EditorGUI.showMixedValue = localMulti && localStates.Any(state => {
-                            var audio = GetAudioForState(state);
-                            return audio.Clips == null || index >= audio.Clips.Length || audio.Clips[index] != currentListData[index];
-                        });
-                        EditorGUI.BeginChangeCheck();
-                        var newClip = (AudioClip)EditorGUI.ObjectField(
-                            new Rect(rect.x, rect.y + 1f, rect.width - 26f, rect.height - 2f),
-                            currentListData[index], typeof(AudioClip), false);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            currentListData[index] = newClip;
-                            int capturedIndex = index;
-                            foreach (var state in _activeAudioStates)
-                            {
-                                var audio = GetOrCreateAudio(state);
-                                if (audio.Clips == null || capturedIndex >= audio.Clips.Length)
-                                {
-                                    var expanded = new AudioClip[capturedIndex + 1];
-                                    audio.Clips?.CopyTo(expanded, 0);
-                                    audio.Clips = expanded;
-                                }
-                                Undo.RecordObject(audio, "Edit Audio Clip");
-                                audio.Clips[capturedIndex] = newClip;
-                                EditorUtility.SetDirty(audio);
-                            }
-                        }
-                        EditorGUI.showMixedValue = false;
-
-                        if (GUI.Button(new Rect(rect.xMax - 24f, rect.y + 1f, 24f, rect.height - 2f), "−", Styles.CondBtn))
-                            _pendingRemoveClip = (key, index);
-                    };
-
-                    reorderList.onReorderCallbackWithDetails = (reorderableList, oldIndex, newIndex) =>
-                    {
-                        var currentListData = _clipsListDataByKey[key];
-                        var firstAudio = GetAudioForState(_activeAudioStates[0]);
-                        if (firstAudio != null)
-                        {
-                            Undo.RecordObject(firstAudio, "Reorder Clips");
-                            firstAudio.Clips = currentListData.ToArray();
-                            EditorUtility.SetDirty(firstAudio);
-                        }
-                        for (int stateIndex = 1; stateIndex < _activeAudioStates.Length; stateIndex++)
-                        {
-                            var audio = GetOrCreateAudio(_activeAudioStates[stateIndex]);
-                            if (audio.Clips == null || audio.Clips.Length < 2) continue;
-                            Undo.RecordObject(audio, "Reorder Clips");
-                            var stateClips = audio.Clips.ToList();
-                            if (oldIndex < stateClips.Count)
-                            {
-                                var item = stateClips[oldIndex];
-                                stateClips.RemoveAt(oldIndex);
-                                stateClips.Insert(Mathf.Clamp(newIndex, 0, stateClips.Count), item);
-                                audio.Clips = stateClips.ToArray();
-                            }
-                            EditorUtility.SetDirty(audio);
-                        }
-                    };
-
-                    _clipsReorderListByKey[key] = reorderList;
-                }
-
-                if (clips.Length == 0)
-                    EditorGUILayout.LabelField(L10n.Get("vrc.list_empty"), Styles.EmptyLabel);
-                else
-                    reorderList.DoLayoutList();
-
-                // Deferred remove — avoids layout mismatch from inside drawElementCallback
-                if (_pendingRemoveClip.index >= 0 && _pendingRemoveClip.key == key)
-                {
-                    int capturedIndex = _pendingRemoveClip.index;
-                    _pendingRemoveClip = (null, -1);
-                    foreach (var state in _activeAudioStates)
-                    {
-                        var audio = GetOrCreateAudio(state);
-                        if (audio.Clips == null || capturedIndex >= audio.Clips.Length) continue;
-                        Undo.RecordObject(audio, "Remove Audio Clip");
-                        audio.Clips = audio.Clips.Where((_, idx) => idx != capturedIndex).ToArray();
-                        EditorUtility.SetDirty(audio);
-                    }
-                    _clipsReorderListByKey.Remove(key);
-                }
-                else
-                {
-                    var addRow = EditorGUILayout.GetControlRect(false, rowHeight);
-                    if (CursorBtn(new Rect(addRow.xMax - 24f, addRow.y, 24f, rowHeight), "+", Styles.CondBtn))
-                    {
-                        foreach (var state in _activeAudioStates)
-                        {
-                            var audio = GetOrCreateAudio(state);
-                            Undo.RecordObject(audio, "Add Audio Clip");
-                            var expanded = new AudioClip[(audio.Clips?.Length ?? 0) + 1];
-                            audio.Clips?.CopyTo(expanded, 0);
-                            audio.Clips = expanded;
-                            EditorUtility.SetDirty(audio);
-                        }
-                        _clipsReorderListByKey.Remove(key);
-                    }
-                }
-
-                GUILayout.Space(4f);
-            }
-
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(4f);
+            return section;
         }
 
-        VRCAnimatorPlayAudio GetAudioForState(AnimatorState state)
-            => _activeAudioResolver != null ? _activeAudioResolver(state) : InstanceAt<VRCAnimatorPlayAudio>(state, 0);
-
-        /* Non-generic helper so callers outside the VRC_SDK_VRCSDK3 guard block can check audio presence
-           without naming VRCAnimatorPlayAudio. */
-        static bool HasAnyAudio(AnimatorState state) => HasInstance<VRCAnimatorPlayAudio>(state);
-
-        /* Returns the resolver-scoped existing audio, or the first audio, or adds and registers a new one via Undo. */
-        VRCAnimatorPlayAudio GetOrCreateAudio(AnimatorState state)
+        static void MoveAudioClip(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, int index, int direction)
         {
-            if (_activeAudioResolver != null)
+            int targetIndex = index + direction;
+            foreach (var state in statesWithName)
             {
-                var resolved = _activeAudioResolver(state);
-                if (resolved != null) return resolved;
+                var audio = GetOrCreateAudio(state, resolver);
+                if (audio.Clips == null || audio.Clips.Length < 2) continue;
+                if (index >= audio.Clips.Length || targetIndex < 0 || targetIndex >= audio.Clips.Length) continue;
+                Undo.RecordObject(audio, "Reorder Clips");
+                (audio.Clips[index], audio.Clips[targetIndex]) = (audio.Clips[targetIndex], audio.Clips[index]);
+                EditorUtility.SetDirty(audio);
             }
+        }
+
+        static void RemoveAudioClip(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, int index)
+        {
+            foreach (var state in statesWithName)
+            {
+                var audio = GetOrCreateAudio(state, resolver);
+                if (audio.Clips == null || index >= audio.Clips.Length) continue;
+                Undo.RecordObject(audio, "Remove Audio Clip");
+                audio.Clips = audio.Clips.Where((_, idx) => idx != index).ToArray();
+                EditorUtility.SetDirty(audio);
+            }
+        }
+
+        // ── Shared helpers ────────────────────────────────────────────────────
+
+        static VRCAnimatorPlayAudio GetOrCreateAudio(AnimatorState state, Func<AnimatorState, VRCAnimatorPlayAudio> resolver)
+        {
+            var resolved = resolver(state);
+            if (resolved != null) return resolved;
             var existing = InstanceAt<VRCAnimatorPlayAudio>(state, 0);
             if (existing != null) return existing;
             return AddInstance<VRCAnimatorPlayAudio>(state, "Play Audio");
@@ -559,9 +564,7 @@ namespace YGDR.Editor.Animation
                 foreach (var audio in audios) Undo.DestroyObjectImmediate(audio);
                 EditorUtility.SetDirty(state);
             }
-            _clipsReorderListByKey.Clear();
-            _clipsListDataByKey.Clear();
-            _clipsExpandedByKey.Clear();
+            _audioClipsExpandedByKey.Clear();
             _audioFoldoutExpanded.Clear();
         }
 

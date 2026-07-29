@@ -1226,24 +1226,19 @@ namespace YGDR.Editor.Animation
 #endif
         }
 
-        class ParameterRemapDropdown : AdvancedDropdown
+        class ParameterRemapDropdown : YgdrAdvancedDropdownBase
         {
             readonly AnimatorController _controller;
             readonly string _fromParam;
 
             internal ParameterRemapDropdown(AnimatorController controller, string fromParam)
-                : base(new AdvancedDropdownState())
+                : base(new Vector2(200, 250))
             {
                 _controller = controller;
                 _fromParam = fromParam;
-                minimumSize = new Vector2(200, 250);
             }
 
-            internal void ShowCapped(Rect rect)
-            {
-                WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
-                Show(rect);
-            }
+            internal void ShowCapped(Rect rect) => ShowCapped(rect, 350f);
 
             protected override AdvancedDropdownItem BuildRoot()
             {

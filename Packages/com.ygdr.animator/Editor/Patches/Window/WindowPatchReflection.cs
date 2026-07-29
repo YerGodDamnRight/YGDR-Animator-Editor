@@ -23,6 +23,7 @@ using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using UnityEditor;
+using UnityEditor.IMGUI.Controls;
 using UnityEditorInternal;
 using UnityEngine;
 
@@ -129,7 +130,6 @@ namespace YGDR.Editor.Animation
             AccessTools.TypeByName("UnityEditor.AnimationWindowClipPopup");
         internal static readonly MethodInfo AnimationWindowEditAnimationClipMethod =
             AccessTools.Method(typeof(AnimationWindow), "EditAnimationClip", new[] { typeof(AnimationClip) });
-
         // AnimationWindow.state internals (shared)
         internal static readonly PropertyInfo AnimationWindowStateProperty =
             AccessTools.Property(typeof(AnimationWindow), "state");
@@ -140,9 +140,56 @@ namespace YGDR.Editor.Animation
         internal static readonly PropertyInfo ActiveRootGameObjectProperty =
             AccessTools.Property(AnimationWindowStateType, "activeRootGameObject");
 
+        // The popup doesn't reference its owning AnimationWindow directly, only the shared state object.
+        internal static readonly FieldInfo AnimationWindowClipPopupStateField =
+            AccessTools.Field(AnimationWindowClipPopupType, "state");
+
+        // Finds the AnimationWindow whose `state` is the same object the popup was constructed with.
+        internal static AnimationWindow FindWindowOwningState(object state)
+        {
+            if (state == null) return null;
+            foreach (var window in Resources.FindObjectsOfTypeAll<AnimationWindow>())
+                if (ReferenceEquals(AnimationWindowStateProperty?.GetValue(window), state))
+                    return window;
+            return null;
+        }
+
         // AdvancedDropdown internals (shared)
         internal static readonly PropertyInfo AdvancedDropdownMaximumSizeProperty =
-            AccessTools.Property(typeof(UnityEditor.IMGUI.Controls.AdvancedDropdown), "maximumSize");
+            AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
+        internal static readonly FieldInfo AdvancedDropdownDataSourceField =
+            AccessTools.Field(typeof(AdvancedDropdown), "m_DataSource");
+        internal static readonly FieldInfo AdvancedDropdownItemIdField =
+            AccessTools.Field(typeof(AdvancedDropdownItem), "m_Id");
+        static FieldInfo _advancedDropdownSelectedIDsField;
+
+        /* Marks item as the checked row on dropdown's data source, so the current value is pre-highlighted when shown. */
+        internal static void PreselectItem(AdvancedDropdown dropdown, AdvancedDropdownItem item)
+        {
+            if (item == null) return;
+            PreselectItems(dropdown, new[] { item });
+        }
+
+        /* Marks items as the checked rows on dropdown's data source (multi-select variant). */
+        internal static void PreselectItems(AdvancedDropdown dropdown, System.Collections.Generic.IEnumerable<AdvancedDropdownItem> items)
+        {
+            if (AdvancedDropdownItemIdField == null || AdvancedDropdownDataSourceField == null) return;
+            try
+            {
+                var dataSource = AdvancedDropdownDataSourceField.GetValue(dropdown);
+                if (dataSource == null) return;
+                _advancedDropdownSelectedIDsField ??= AccessTools.Field(dataSource.GetType(), "m_SelectedIDs");
+                if (_advancedDropdownSelectedIDsField == null) return;
+                var selectedIDs = (System.Collections.Generic.List<int>)_advancedDropdownSelectedIDsField.GetValue(dataSource);
+                selectedIDs.Clear();
+                foreach (var item in items)
+                    selectedIDs.Add((int)AdvancedDropdownItemIdField.GetValue(item));
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[AnimatorTools] AdvancedDropdown checkmark: {e.Message}");
+            }
+        }
 
         // RenameOverlay (shared)
         internal static readonly Type RenameOverlayType =
@@ -179,8 +226,12 @@ namespace YGDR.Editor.Animation
         {
             readonly object _state;
 
-            internal AnimationWindowStateProxy(AnimationWindow window) =>
-                _state = AnimationWindowStateProperty?.GetValue(window);
+            internal AnimationWindowStateProxy(AnimationWindow window)
+                : this(AnimationWindowStateProperty?.GetValue(window)) { }
+
+            AnimationWindowStateProxy(object state) => _state = state;
+
+            internal static AnimationWindowStateProxy FromState(object state) => new(state);
 
             internal AnimationClip ActiveAnimationClip
             {
@@ -192,11 +243,13 @@ namespace YGDR.Editor.Animation
                 ActiveRootGameObjectProperty?.GetValue(_state) as GameObject;
         }
 
-        static FieldInfo FindReorderableListField(Type type)
+        static FieldInfo FindReorderableListField(Type type) => FindFieldOfType(type, typeof(ReorderableList));
+
+        static FieldInfo FindFieldOfType(Type type, Type fieldType)
         {
             if (type == null) return null;
             foreach (var field in type.GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
-                if (field.FieldType == typeof(ReorderableList)) return field;
+                if (field.FieldType == fieldType) return field;
             return null;
         }
 

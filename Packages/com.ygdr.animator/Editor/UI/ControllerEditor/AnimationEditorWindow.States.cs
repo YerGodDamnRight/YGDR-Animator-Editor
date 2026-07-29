@@ -24,456 +24,570 @@ using System.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.UIElements;
+using UnityEditor.UIElements;
 
 namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow
     {
-        void DrawStatesTab()
+        /* ── States tab (native shell: rows/align/properties; VRC behavior sections still IMGUI-bridged) ── */
+
+        VisualElement _statesPanel;
+        Label _statesEmptyLabel;
+        ScrollView _stateRowsScroll;
+        VisualElement _stateRowsContainer;
+        VisualElement _stateRowsResizeGrip;
+
+        const string StateRowsScrollHeightPrefsKey = "AnimatorTools.States.RowsScrollHeight";
+        const float StateRowsScrollMinHeight = 40f;
+        const float StateRowsScrollMaxHeight = 400f;
+        Button _alignVerticalButton, _alignHorizontalButton, _distributeVerticalButton, _distributeHorizontalButton;
+        VisualElement _statePropertiesContainer;
+        VisualElement _sharedBehaviorsContainer;
+        Label _sharedBehaviorsLabel;
+        TextField _stateNameField, _stateTagField;
+        ObjectField _stateMotionField;
+        FloatField _stateSpeedField;
+        Button _stateMultiplierParamButton;
+        Toggle _stateMultiplierActiveToggle;
+        Button _stateTimeParamButton;
+        Toggle _stateTimeActiveToggle;
+        Toggle _stateMirrorBoolToggle;
+        Button _stateMirrorParamButton;
+        Toggle _stateMirrorActiveToggle;
+        FloatField _stateCycleOffsetField;
+        Button _stateCycleOffsetParamButton;
+        Toggle _stateCycleOffsetActiveToggle;
+        Toggle _stateFootIKToggle;
+        Toggle _stateWriteDefaultsToggle;
+        Label _stateMultiplierLabel, _stateMotionTimeLabel, _stateMirrorLabel, _stateCycleOffsetLabel;
+
+        VisualElement BuildStatesBody()
         {
-            var panelRect = EditorGUILayout.BeginVertical(Styles.SectionPadded);
-            if (Event.current.type == EventType.Repaint && panelRect.height > 0)
-                EditorGUI.DrawRect(panelRect, Styles.PrimaryColor);
+            _statesPanel = new VisualElement();
+            _statesPanel.AddToClassList("ygdr-states-panel");
 
-            if (_selectedStates.Length == 0)
-                EditorGUILayout.LabelField(L10n.Get("states.empty"), Styles.EmptyLabel);
-            else
-                DrawStateRows();
+            _statesEmptyLabel = new Label(L10n.Get("states.empty"));
+            _statesEmptyLabel.AddToClassList("ygdr-empty-label");
+            _statesPanel.Add(_statesEmptyLabel);
 
-            EditorGUILayout.Space(4);
-            DrawStateAlignButtons();
-            EditorGUILayout.Space(8);
-            DrawStateProperties();
-            EditorGUILayout.Space(EditorGUIUtility.singleLineHeight);
+            var stateRowsWrapper = new VisualElement();
+            stateRowsWrapper.AddToClassList("ygdr-states-rows-wrapper");
+
+            _stateRowsScroll = new ScrollView(ScrollViewMode.Vertical) { verticalScrollerVisibility = ScrollerVisibility.Auto };
+            _stateRowsScroll.AddToClassList("ygdr-states-rows-scroll");
+            _stateRowsScroll.style.height = Mathf.Clamp(EditorPrefs.GetFloat(StateRowsScrollHeightPrefsKey, 96f), StateRowsScrollMinHeight, StateRowsScrollMaxHeight);
+            _stateRowsContainer = new VisualElement();
+            _stateRowsContainer.AddToClassList("ygdr-states-rows-container");
+            _stateRowsScroll.Add(_stateRowsContainer);
+            stateRowsWrapper.Add(_stateRowsScroll);
+
+            _stateRowsResizeGrip = new VisualElement();
+            _stateRowsResizeGrip.AddToClassList("ygdr-states-rows-resize-grip");
+            _stateRowsResizeGrip.style.backgroundImage = new StyleBackground(SharedWindowStyles.ResizeGripTex);
+            _stateRowsResizeGrip.style.unityBackgroundImageTintColor = SharedWindowStyles.AccentColor;
+            RegisterStateRowsScrollResizeDrag(_stateRowsResizeGrip);
+            stateRowsWrapper.Add(_stateRowsResizeGrip);
+
+            _statesPanel.Add(stateRowsWrapper);
+
+            _statesPanel.Add(BuildStateAlignButtons());
+            _statesPanel.Add(BuildStateProperties());
+
 #if VRC_SDK_VRCSDK3
-            EditorGUILayout.LabelField(L10n.Get("states.shared_behaviors"), Styles.FooterText);
-            DrawVRCDriversSection();
-            if (_selectedStates.Any(state => HasAnyDriver(state))) EditorGUILayout.Space(8);
-            DrawVRCPlayAudioSection();
-            if (_selectedStates.Any(state => HasAnyAudio(state))) EditorGUILayout.Space(8);
-            DrawVRCTrackingSection();
-            if (_selectedStates.Any(state => GetTrackingForState(state) != null)) EditorGUILayout.Space(8);
-            DrawVRCLocomotionSection();
-            if (_selectedStates.Any(state => GetLocomotionForState(state) != null)) EditorGUILayout.Space(8);
-            DrawVRCLayerControlSection();
-            if (_selectedStates.Any(state => HasAnyLayerControl(state))) EditorGUILayout.Space(8);
-            DrawVRCPlayableLayerSection();
-            if (_selectedStates.Any(state => HasAnyPlayableLayer(state))) EditorGUILayout.Space(8);
-            DrawVRCPoseSpaceSection();
+            _sharedBehaviorsContainer = new VisualElement();
+
+            _sharedBehaviorsLabel = new Label(L10n.Get("states.shared_behaviors"));
+            _sharedBehaviorsLabel.AddToClassList("ygdr-states-shared-behaviors-label");
+            _sharedBehaviorsContainer.Add(_sharedBehaviorsLabel);
+            _sharedBehaviorsContainer.Add(BuildAddBehaviorDropdownButton());
+
+            _sharedBehaviorsContainer.Add(BuildDriverBody());
+            _sharedBehaviorsContainer.Add(BuildAudioBody());
+            _sharedBehaviorsContainer.Add(BuildLayerControlBody());
+            _sharedBehaviorsContainer.Add(BuildOtherBehaviorsBody());
+            _statesPanel.Add(_sharedBehaviorsContainer);
 #endif
 
-            EditorGUILayout.EndVertical();
+            return _statesPanel;
+        }
+
+        /* Same pattern as RegisterTagsScrollResizeDrag in Transitions.cs. */
+        void RegisterStateRowsScrollResizeDrag(VisualElement grip)
+        {
+            float startHeight = 0f;
+            float startY = 0f;
+            bool dragging = false;
+
+            grip.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                dragging = true;
+                startHeight = _stateRowsScroll.resolvedStyle.height;
+                startY = evt.position.y;
+                _stateRowsScroll.style.backgroundColor = SharedWindowStyles.RowAltColor;
+                grip.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            grip.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!dragging) return;
+                float newHeight = Mathf.Clamp(startHeight + (evt.position.y - startY), StateRowsScrollMinHeight, StateRowsScrollMaxHeight);
+                _stateRowsScroll.style.height = newHeight;
+                evt.StopPropagation();
+            });
+            grip.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (!dragging) return;
+                dragging = false;
+                _stateRowsScroll.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+                grip.ReleasePointer(evt.pointerId);
+                EditorPrefs.SetFloat(StateRowsScrollHeightPrefsKey, _stateRowsScroll.resolvedStyle.height);
+                evt.StopPropagation();
+            });
+        }
+
+        /* Mirrors the old per-frame IMGUI redraw. */
+        void RefreshStatesTab()
+        {
+            if (_statesPanel == null) return;
+
+            bool hasSelection = _selectedStates.Length > 0;
+            _statesEmptyLabel.style.display = hasSelection ? DisplayStyle.None : DisplayStyle.Flex;
+            _stateRowsScroll.style.display = hasSelection ? DisplayStyle.Flex : DisplayStyle.None;
+            RebuildStateRows();
+
+            _alignVerticalButton.SetEnabled(_selectedStates.Length >= 2);
+            _alignHorizontalButton.SetEnabled(_selectedStates.Length >= 2);
+            _distributeVerticalButton.SetEnabled(_selectedStates.Length >= 3);
+            _distributeHorizontalButton.SetEnabled(_selectedStates.Length >= 3);
+
+            _statePropertiesContainer.SetEnabled(hasSelection);
+            if (hasSelection) RefreshStatePropertyValues();
+
+#if VRC_SDK_VRCSDK3
+            _sharedBehaviorsContainer.SetEnabled(hasSelection);
+            RefreshDriverBody();
+            RefreshAudioBody();
+            RefreshLayerControlBody();
+            RefreshOtherBehaviorsBody();
+#endif
+
+            if (_statesRightLabel != null)
+                _statesRightLabel.text = hasSelection
+                    ? L10n.Get("header.n_selected").Replace("{n}", _selectedStates.Length.ToString())
+                    : string.Empty;
+        }
+
+        void RefreshStatesLocalizedLabels()
+        {
+            if (_statesEmptyLabel != null) _statesEmptyLabel.text = L10n.Get("states.empty");
+
+            if (_statesRightLabel != null)
+                _statesRightLabel.text = _selectedStates.Length > 0
+                    ? L10n.Get("header.n_selected").Replace("{n}", _selectedStates.Length.ToString())
+                    : string.Empty;
+
+            if (_alignVerticalButton != null) _alignVerticalButton.text = L10n.Get("states.align_vertical");
+            if (_alignHorizontalButton != null) _alignHorizontalButton.text = L10n.Get("states.align_horizontal");
+            if (_distributeVerticalButton != null) _distributeVerticalButton.text = L10n.Get("states.distribute_vertical");
+            if (_distributeHorizontalButton != null) _distributeHorizontalButton.text = L10n.Get("states.distribute_horizontal");
+
+            if (_stateNameField != null) _stateNameField.label = L10n.Get("states.name");
+            if (_stateTagField != null) _stateTagField.label = L10n.Get("states.tag");
+            if (_stateMotionField != null) _stateMotionField.label = L10n.Get("states.motion");
+            if (_stateSpeedField != null) _stateSpeedField.label = L10n.Get("states.speed");
+            if (_stateFootIKToggle != null) _stateFootIKToggle.label = L10n.Get("states.foot_ik");
+            if (_stateWriteDefaultsToggle != null) _stateWriteDefaultsToggle.label = L10n.Get("states.write_defaults");
+
+            if (_stateMultiplierLabel != null) _stateMultiplierLabel.text = L10n.Get("states.multiplier");
+            if (_stateMotionTimeLabel != null) _stateMotionTimeLabel.text = L10n.Get("states.motion_time");
+            if (_stateMirrorLabel != null) _stateMirrorLabel.text = L10n.Get("states.mirror");
+            if (_stateCycleOffsetLabel != null) _stateCycleOffsetLabel.text = L10n.Get("states.cycle_offset");
+
+            if (_stateMultiplierActiveToggle != null) _stateMultiplierActiveToggle.label = L10n.Get("states.parameter");
+            if (_stateTimeActiveToggle != null) _stateTimeActiveToggle.label = L10n.Get("states.parameter");
+            if (_stateMirrorActiveToggle != null) _stateMirrorActiveToggle.label = L10n.Get("states.parameter");
+            if (_stateCycleOffsetActiveToggle != null) _stateCycleOffsetActiveToggle.label = L10n.Get("states.parameter");
+
+#if VRC_SDK_VRCSDK3
+            if (_sharedBehaviorsLabel != null) _sharedBehaviorsLabel.text = L10n.Get("states.shared_behaviors");
+#endif
+        }
+
+        void RefreshStatesPaletteColors()
+        {
+            if (_statesPanel != null) _statesPanel.style.backgroundColor = SharedWindowStyles.PrimaryColor;
+            if (_stateRowsScroll != null) _stateRowsScroll.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+            if (_stateRowsResizeGrip != null) _stateRowsResizeGrip.style.unityBackgroundImageTintColor = SharedWindowStyles.AccentColor;
+            if (_alignVerticalButton == null) return;
+            _alignVerticalButton.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+            _alignHorizontalButton.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+            _distributeVerticalButton.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+            _distributeHorizontalButton.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+            _stateMultiplierParamButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+            _stateTimeParamButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+            _stateMirrorParamButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+            _stateCycleOffsetParamButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+
+            // In/Out buttons are rebuilt fresh per state row (RebuildStateRows), baking in whatever
+            // SharedWindowStyles.AccentColor was live at that moment — a later palette change only self-corrects
+            // on mouse-leave (StyleAccentButton reads SharedWindowStyles.AccentColor live there) unless restyled here.
+            _stateRowsContainer.Query<Button>(className: "ygdr-state-row-btn").ForEach(b => b.style.backgroundColor = SharedWindowStyles.AccentColor);
         }
 
         // ── State list ────────────────────────────────────────────────────────
 
-void DrawStateRows()
+        void RebuildStateRows()
         {
-            float rowHeight = EditorGUIUtility.singleLineHeight;
-            const float gap = 4f;
-            const float nameWidth = 140f;
-            const float btnWidth = 44f;
-            float toggleW = Styles.k_pillW;
-
-            float totalH = gap + _selectedStates.Length * (rowHeight + gap);
-            float maxVisibleH = 4f * (rowHeight + gap);
-            float displayH = _stateRowScrollEnabled ? Mathf.Min(totalH, maxVisibleH) : totalH;
-
-            var area = EditorGUILayout.GetControlRect(false, displayH + gap);
-            if (Event.current.type == EventType.Repaint)
-                EditorGUI.DrawRect(area, Styles.SecondaryColor);
-
-            var toggleRect = new Rect(area.xMax - toggleW, area.y, toggleW, area.height);
-            _stateRowScrollEnabled = GUI.Toggle(toggleRect, _stateRowScrollEnabled, "", Styles.ScrollToggleBtn);
-            EditorGUIUtility.AddCursorRect(toggleRect, MouseCursor.Link);
-
-            var viewRect = new Rect(area.x, area.y, area.width - toggleW, area.height);
-
-            if (_stateRowScrollEnabled && totalH > maxVisibleH)
-            {
-                var contentRect = new Rect(0, 0, viewRect.width, totalH + gap);
-                _stateRowScrollPos = GUI.BeginScrollView(viewRect, _stateRowScrollPos, contentRect, false, true, GUIStyle.none, GUI.skin.verticalScrollbar);
-                DrawStateRowsInto(contentRect, rowHeight, gap, nameWidth, btnWidth);
-                GUI.EndScrollView();
-            }
-            else
-            {
-                DrawStateRowsInto(viewRect, rowHeight, gap, nameWidth, btnWidth);
-            }
-        }
-
-        void DrawStateRowsInto(Rect area, float rowHeight, float gap, float nameWidth, float btnWidth)
-        {
-            float groupW = btnWidth + nameWidth + btnWidth;
-            float groupX = area.x + (area.width - groupW) * 0.5f;
-            float currentY = area.y + gap;
-
+            _stateRowsContainer.Clear();
             foreach (var state in _selectedStates)
             {
-                if (CursorBtn(new Rect(groupX, currentY, btnWidth, rowHeight), L10n.Get("states.in"), Styles.IconBtn))
-                    SelectIncomingTransitions(_controller, new[] { state });
+                var capturedState = state;
+                var row = new VisualElement();
+                row.AddToClassList("ygdr-state-row");
 
-                var nameRect = new Rect(groupX + btnWidth, currentY, nameWidth, rowHeight);
-                if (Event.current.type == EventType.Repaint)
-                    EditorGUI.DrawRect(nameRect, Styles.SecondaryColor);
-                GUI.Label(nameRect, TruncateToFit(state.name, Styles.StateRowName, nameWidth), Styles.StateRowName);
+                var inButton = new Button(() => SelectIncomingTransitions(_controller, new[] { capturedState })) { text = L10n.Get("states.in") };
+                inButton.AddToClassList("ygdr-state-row-btn");
+                StyleAccentButton(inButton);
+                row.Add(inButton);
 
-                if (CursorBtn(new Rect(groupX + btnWidth + nameWidth, currentY, btnWidth, rowHeight), L10n.Get("states.out"), Styles.IconBtn))
-                    SelectOutgoingTransitions(new[] { state });
+                var nameLabel = new Label(state.name);
+                nameLabel.AddToClassList("ygdr-state-row-name");
+                row.Add(nameLabel);
 
-                currentY += rowHeight + gap;
+                var outButton = new Button(() => SelectOutgoingTransitions(new[] { capturedState })) { text = L10n.Get("states.out") };
+                outButton.AddToClassList("ygdr-state-row-btn");
+                StyleAccentButton(outButton);
+                row.Add(outButton);
+
+                _stateRowsContainer.Add(row);
             }
-        }
-
-        /* Truncates text to fit within maxWidth pixels using style's CalcSize, appending an ellipsis when trimmed. */
-        static string TruncateToFit(string text, GUIStyle style, float maxWidth)
-        {
-            if (style.CalcSize(new GUIContent(text)).x <= maxWidth) return text;
-            string truncated = text;
-            while (truncated.Length > 0 && style.CalcSize(new GUIContent(truncated + "…")).x > maxWidth)
-                truncated = truncated[..^1];
-            return truncated + "…";
         }
 
         // ── Align buttons ─────────────────────────────────────────────────────
 
-        void DrawStateAlignButtons()
+        VisualElement BuildStateAlignButtons()
         {
-            using (new EditorGUI.DisabledScope(_selectedStates.Length < 2))
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (CursorBtn(L10n.Get("states.align_vertical"),   Styles.IconBtn)) AlignStates(vertical: true);
-                if (CursorBtn(L10n.Get("states.align_horizontal"), Styles.IconBtn)) AlignStates(vertical: false);
-            }
-            using (new EditorGUI.DisabledScope(_selectedStates.Length < 3))
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (CursorBtn(L10n.Get("states.distribute_vertical"),   Styles.IconBtn)) DistributeStates(vertical: true);
-                if (CursorBtn(L10n.Get("states.distribute_horizontal"), Styles.IconBtn)) DistributeStates(vertical: false);
-            }
+            var container = new VisualElement();
+            container.AddToClassList("ygdr-states-align-container");
+
+            var alignRow = new VisualElement();
+            alignRow.AddToClassList("ygdr-states-button-row");
+            _alignVerticalButton = new Button(() => AlignStates(vertical: true)) { text = L10n.Get("states.align_vertical") };
+            _alignHorizontalButton = new Button(() => AlignStates(vertical: false)) { text = L10n.Get("states.align_horizontal") };
+            _alignVerticalButton.AddToClassList("ygdr-states-align-btn");
+            _alignVerticalButton.AddToClassList("u-flex-fill");
+            _alignVerticalButton.AddToClassList("u-flat-btn-sm");
+            _alignHorizontalButton.AddToClassList("ygdr-states-align-btn");
+            _alignHorizontalButton.AddToClassList("u-flex-fill");
+            _alignHorizontalButton.AddToClassList("u-flat-btn-sm");
+            StyleSecondaryButton(_alignVerticalButton);
+            StyleSecondaryButton(_alignHorizontalButton);
+            alignRow.Add(_alignVerticalButton);
+            alignRow.Add(_alignHorizontalButton);
+            container.Add(alignRow);
+
+            var distributeRow = new VisualElement();
+            distributeRow.AddToClassList("ygdr-states-button-row");
+            _distributeVerticalButton = new Button(() => DistributeStates(vertical: true)) { text = L10n.Get("states.distribute_vertical") };
+            _distributeHorizontalButton = new Button(() => DistributeStates(vertical: false)) { text = L10n.Get("states.distribute_horizontal") };
+            _distributeVerticalButton.AddToClassList("ygdr-states-align-btn");
+            _distributeVerticalButton.AddToClassList("u-flex-fill");
+            _distributeVerticalButton.AddToClassList("u-flat-btn-sm");
+            _distributeHorizontalButton.AddToClassList("ygdr-states-align-btn");
+            _distributeHorizontalButton.AddToClassList("u-flex-fill");
+            _distributeHorizontalButton.AddToClassList("u-flat-btn-sm");
+            StyleSecondaryButton(_distributeVerticalButton);
+            StyleSecondaryButton(_distributeHorizontalButton);
+            distributeRow.Add(_distributeVerticalButton);
+            distributeRow.Add(_distributeHorizontalButton);
+            container.Add(distributeRow);
+
+            return container;
         }
 
-        // ── State properties ──────────────────────────────────────────────────
+        // ── State properties (native) ───────────────────────────────────────────
 
-        void DrawStateProperties()
+        VisualElement BuildStateProperties()
+        {
+            _statePropertiesContainer = new VisualElement();
+            _statePropertiesContainer.AddToClassList("ygdr-states-properties");
+
+            _stateNameField = new TextField(L10n.Get("states.name"));
+            _stateNameField.RegisterValueChangedCallback(evt => ApplyStateNameChange(evt.newValue));
+            _statePropertiesContainer.Add(BuildStatePropertyRow(_stateNameField));
+
+            _stateTagField = new TextField(L10n.Get("states.tag"));
+            _stateTagField.RegisterValueChangedCallback(evt => { string value = evt.newValue; SetStateOnAll(state => state.tag = value); });
+            _statePropertiesContainer.Add(BuildStatePropertyRow(_stateTagField));
+
+            _stateMotionField = new ObjectField(L10n.Get("states.motion")) { objectType = typeof(Motion) };
+            _stateMotionField.RegisterValueChangedCallback(evt => { var value = (Motion)evt.newValue; SetStateOnAll(state => state.motion = value); });
+            _statePropertiesContainer.Add(BuildStatePropertyRow(_stateMotionField));
+
+            _stateSpeedField = new FloatField(L10n.Get("states.speed"));
+            _stateSpeedField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetStateOnAll(state => state.speed = value); });
+            _statePropertiesContainer.Add(BuildStatePropertyRow(_stateSpeedField));
+
+            _statePropertiesContainer.Add(BuildStateMultiplierRow());
+            _statePropertiesContainer.Add(BuildStateMotionTimeRow());
+            _statePropertiesContainer.Add(BuildStateMirrorRow());
+            _statePropertiesContainer.Add(BuildStateCycleOffsetRow());
+
+            _stateFootIKToggle = new Toggle(L10n.Get("states.foot_ik"));
+            _stateFootIKToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.iKOnFeet = value); });
+            _statePropertiesContainer.Add(BuildStatePropertyRow(_stateFootIKToggle));
+
+            _stateWriteDefaultsToggle = new Toggle(L10n.Get("states.write_defaults"));
+            _stateWriteDefaultsToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.writeDefaultValues = value); });
+            _statePropertiesContainer.Add(BuildStatePropertyRow(_stateWriteDefaultsToggle));
+
+            return _statePropertiesContainer;
+        }
+
+        static VisualElement BuildStatePropertyRow(VisualElement field)
+        {
+            field.AddToClassList("ygdr-states-property-field-full");
+            var row = BuildRow("ygdr-states-property-row", null, field);
+            row.AddToClassList("u-row");
+            row.AddToClassList("u-mb-2");
+            return row;
+        }
+
+        VisualElement BuildStateMultiplierRow()
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-states-property-row");
+            row.AddToClassList("u-row");
+            row.AddToClassList("u-mb-2");
+            _stateMultiplierLabel = new Label(L10n.Get("states.multiplier"));
+            _stateMultiplierLabel.AddToClassList("ygdr-states-property-label");
+            row.Add(_stateMultiplierLabel);
+
+            _stateMultiplierParamButton = new Button(() =>
+            {
+                var first = _selectedStates.FirstOrDefault();
+                if (first == null) return;
+                ShowParameterDropdown(_stateMultiplierParamButton.worldBound, first.speedParameter, AnimatorControllerParameterType.Float,
+                    newParam => { SetStateOnAll(state => state.speedParameter = newParam); RefreshStatePropertyValues(); });
+            });
+            _stateMultiplierParamButton.AddToClassList("ygdr-states-property-field");
+            _stateMultiplierParamButton.AddToClassList("u-flex-fill");
+            _stateMultiplierParamButton.AddToClassList("u-mr-4");
+            _stateMultiplierParamButton.AddToClassList("ygdr-states-param-dropdown");
+            RegisterDropdownLabelResize(_stateMultiplierParamButton, 18f);
+            StyleAccentButton(_stateMultiplierParamButton);
+            _stateMultiplierParamButton.Add(BuildDropdownArrow());
+            row.Add(_stateMultiplierParamButton);
+
+            _stateMultiplierActiveToggle = new Toggle(L10n.Get("states.parameter"));
+            _stateMultiplierActiveToggle.AddToClassList("ygdr-states-active-toggle");
+            _stateMultiplierActiveToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.speedParameterActive = value); RefreshStatePropertyValues(); });
+            row.Add(_stateMultiplierActiveToggle);
+
+            return row;
+        }
+
+        VisualElement BuildStateMotionTimeRow()
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-states-property-row");
+            row.AddToClassList("u-row");
+            row.AddToClassList("u-mb-2");
+            _stateMotionTimeLabel = new Label(L10n.Get("states.motion_time"));
+            _stateMotionTimeLabel.AddToClassList("ygdr-states-property-label");
+            row.Add(_stateMotionTimeLabel);
+
+            _stateTimeParamButton = new Button(() =>
+            {
+                var first = _selectedStates.FirstOrDefault();
+                if (first == null) return;
+                ShowParameterDropdown(_stateTimeParamButton.worldBound, first.timeParameter, AnimatorControllerParameterType.Float,
+                    newParam => { SetStateOnAll(state => state.timeParameter = newParam); RefreshStatePropertyValues(); });
+            });
+            _stateTimeParamButton.AddToClassList("ygdr-states-property-field");
+            _stateTimeParamButton.AddToClassList("u-flex-fill");
+            _stateTimeParamButton.AddToClassList("u-mr-4");
+            _stateTimeParamButton.AddToClassList("ygdr-states-param-dropdown");
+            RegisterDropdownLabelResize(_stateTimeParamButton, 18f);
+            StyleAccentButton(_stateTimeParamButton);
+            _stateTimeParamButton.Add(BuildDropdownArrow());
+            row.Add(_stateTimeParamButton);
+
+            _stateTimeActiveToggle = new Toggle(L10n.Get("states.parameter"));
+            _stateTimeActiveToggle.AddToClassList("ygdr-states-active-toggle");
+            _stateTimeActiveToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.timeParameterActive = value); RefreshStatePropertyValues(); });
+            row.Add(_stateTimeActiveToggle);
+
+            return row;
+        }
+
+        VisualElement BuildStateMirrorRow()
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-states-property-row");
+            row.AddToClassList("u-row");
+            row.AddToClassList("u-mb-2");
+            _stateMirrorLabel = new Label(L10n.Get("states.mirror"));
+            _stateMirrorLabel.AddToClassList("ygdr-states-property-label");
+            row.Add(_stateMirrorLabel);
+
+            _stateMirrorBoolToggle = new Toggle();
+            _stateMirrorBoolToggle.AddToClassList("ygdr-states-mirror-bool-toggle");
+            _stateMirrorBoolToggle.AddToClassList("u-flex-fill");
+            _stateMirrorBoolToggle.AddToClassList("u-mr-4");
+            _stateMirrorBoolToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.mirror = value); });
+            row.Add(_stateMirrorBoolToggle);
+
+            _stateMirrorParamButton = new Button(() =>
+            {
+                var first = _selectedStates.FirstOrDefault();
+                if (first == null) return;
+                ShowParameterDropdown(_stateMirrorParamButton.worldBound, first.mirrorParameter, AnimatorControllerParameterType.Bool,
+                    newParam => { SetStateOnAll(state => state.mirrorParameter = newParam); RefreshStatePropertyValues(); });
+            });
+            _stateMirrorParamButton.AddToClassList("ygdr-states-property-field");
+            _stateMirrorParamButton.AddToClassList("u-flex-fill");
+            _stateMirrorParamButton.AddToClassList("u-mr-4");
+            _stateMirrorParamButton.AddToClassList("ygdr-states-param-dropdown");
+            RegisterDropdownLabelResize(_stateMirrorParamButton, 18f);
+            StyleAccentButton(_stateMirrorParamButton);
+            _stateMirrorParamButton.Add(BuildDropdownArrow());
+            row.Add(_stateMirrorParamButton);
+
+            _stateMirrorActiveToggle = new Toggle(L10n.Get("states.parameter"));
+            _stateMirrorActiveToggle.AddToClassList("ygdr-states-active-toggle");
+            _stateMirrorActiveToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.mirrorParameterActive = value); RefreshStatePropertyValues(); });
+            row.Add(_stateMirrorActiveToggle);
+
+            return row;
+        }
+
+        VisualElement BuildStateCycleOffsetRow()
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-states-property-row");
+            row.AddToClassList("u-row");
+            row.AddToClassList("u-mb-2");
+            _stateCycleOffsetLabel = new Label(L10n.Get("states.cycle_offset"));
+            _stateCycleOffsetLabel.AddToClassList("ygdr-states-property-label");
+            row.Add(_stateCycleOffsetLabel);
+
+            _stateCycleOffsetField = new FloatField();
+            _stateCycleOffsetField.AddToClassList("ygdr-states-property-field");
+            _stateCycleOffsetField.AddToClassList("u-flex-fill");
+            _stateCycleOffsetField.AddToClassList("u-mr-4");
+            _stateCycleOffsetField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetStateOnAll(state => state.cycleOffset = value); });
+            row.Add(_stateCycleOffsetField);
+
+            _stateCycleOffsetParamButton = new Button(() =>
+            {
+                var first = _selectedStates.FirstOrDefault();
+                if (first == null) return;
+                ShowParameterDropdown(_stateCycleOffsetParamButton.worldBound, first.cycleOffsetParameter, AnimatorControllerParameterType.Float,
+                    newParam => { SetStateOnAll(state => state.cycleOffsetParameter = newParam); RefreshStatePropertyValues(); });
+            });
+            _stateCycleOffsetParamButton.AddToClassList("ygdr-states-property-field");
+            _stateCycleOffsetParamButton.AddToClassList("u-flex-fill");
+            _stateCycleOffsetParamButton.AddToClassList("u-mr-4");
+            _stateCycleOffsetParamButton.AddToClassList("ygdr-states-param-dropdown");
+            RegisterDropdownLabelResize(_stateCycleOffsetParamButton, 18f);
+            StyleAccentButton(_stateCycleOffsetParamButton);
+            _stateCycleOffsetParamButton.Add(BuildDropdownArrow());
+            row.Add(_stateCycleOffsetParamButton);
+
+            _stateCycleOffsetActiveToggle = new Toggle(L10n.Get("states.parameter"));
+            _stateCycleOffsetActiveToggle.AddToClassList("ygdr-states-active-toggle");
+            _stateCycleOffsetActiveToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetStateOnAll(state => state.cycleOffsetParameterActive = value); RefreshStatePropertyValues(); });
+            row.Add(_stateCycleOffsetActiveToggle);
+
+            return row;
+        }
+
+        /* Pushes current selection values into the property controls without re-firing their change callbacks. */
+        void RefreshStatePropertyValues()
         {
             int count = _selectedStates.Length;
-            bool empty = count == 0;
             bool multi = count > 1;
-            var first = empty ? null : _selectedStates[0];
+            var first = _selectedStates[0];
 
-            using var disabled = new EditorGUI.DisabledScope(empty);
-            var stateIcon = EditorGUIUtility.ObjectContent(null, typeof(AnimatorState)).image;
-            float rowHeight  = EditorGUIUtility.singleLineHeight;
-            float iconHeight = rowHeight * 2f + EditorGUIUtility.standardVerticalSpacing;
+            _stateNameField.SetValueWithoutNotify(first.name);
+            _stateNameField.showMixedValue = multi && _selectedStates.Any(x => x.name != first.name);
 
-            DrawStateNameTagFields(stateIcon, iconHeight, multi, empty, first);
-            EditorGUILayout.Space(10);
-            DrawStateMotionField(multi, empty, first);
-            DrawStateSpeedField(multi, empty, first);
-            DrawStateMultiplierField(multi, empty, first);
-            DrawStateMotionTimeField(multi, empty, first);
-            DrawStateMirrorField(multi, empty, first);
-            DrawStateCycleOffsetField(multi, empty, first);
-            DrawStateFootIKField(multi, empty, first);
-            DrawStateWriteDefaultsField(multi, empty, first);
+            _stateTagField.SetValueWithoutNotify(first.tag);
+            _stateTagField.showMixedValue = multi && _selectedStates.Any(x => x.tag != first.tag);
+
+            _stateMotionField.SetValueWithoutNotify(first.motion);
+            _stateMotionField.showMixedValue = multi && _selectedStates.Any(x => x.motion != first.motion);
+
+            _stateSpeedField.SetValueWithoutNotify(first.speed);
+            _stateSpeedField.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.speed, first.speed));
+
+            bool speedParamActive = first.speedParameterActive;
+            SetTruncatedDropdownLabel(_stateMultiplierParamButton, string.IsNullOrEmpty(first.speedParameter) ? "—" : first.speedParameter, 18f);
+            _stateMultiplierParamButton.SetEnabled(speedParamActive);
+            _stateMultiplierActiveToggle.SetValueWithoutNotify(speedParamActive);
+            _stateMultiplierActiveToggle.showMixedValue = multi && _selectedStates.Any(x => x.speedParameterActive != first.speedParameterActive);
+
+            bool timeParamActive = first.timeParameterActive;
+            SetTruncatedDropdownLabel(_stateTimeParamButton, string.IsNullOrEmpty(first.timeParameter) ? "—" : first.timeParameter, 18f);
+            _stateTimeParamButton.style.display = timeParamActive ? DisplayStyle.Flex : DisplayStyle.None;
+            _stateTimeActiveToggle.SetValueWithoutNotify(timeParamActive);
+            _stateTimeActiveToggle.showMixedValue = multi && _selectedStates.Any(x => x.timeParameterActive != first.timeParameterActive);
+
+            bool mirrorParamActive = first.mirrorParameterActive;
+            _stateMirrorBoolToggle.style.display = mirrorParamActive ? DisplayStyle.None : DisplayStyle.Flex;
+            _stateMirrorParamButton.style.display = mirrorParamActive ? DisplayStyle.Flex : DisplayStyle.None;
+            _stateMirrorBoolToggle.SetValueWithoutNotify(first.mirror);
+            _stateMirrorBoolToggle.showMixedValue = multi && _selectedStates.Any(x => x.mirror != first.mirror);
+            SetTruncatedDropdownLabel(_stateMirrorParamButton, string.IsNullOrEmpty(first.mirrorParameter) ? "—" : first.mirrorParameter, 18f);
+            _stateMirrorActiveToggle.SetValueWithoutNotify(mirrorParamActive);
+            _stateMirrorActiveToggle.showMixedValue = multi && _selectedStates.Any(x => x.mirrorParameterActive != first.mirrorParameterActive);
+
+            bool cycleOffsetParamActive = first.cycleOffsetParameterActive;
+            _stateCycleOffsetField.style.display = cycleOffsetParamActive ? DisplayStyle.None : DisplayStyle.Flex;
+            _stateCycleOffsetParamButton.style.display = cycleOffsetParamActive ? DisplayStyle.Flex : DisplayStyle.None;
+            _stateCycleOffsetField.SetValueWithoutNotify(first.cycleOffset);
+            _stateCycleOffsetField.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.cycleOffset, first.cycleOffset));
+            SetTruncatedDropdownLabel(_stateCycleOffsetParamButton, string.IsNullOrEmpty(first.cycleOffsetParameter) ? "—" : first.cycleOffsetParameter, 18f);
+            _stateCycleOffsetActiveToggle.SetValueWithoutNotify(cycleOffsetParamActive);
+            _stateCycleOffsetActiveToggle.showMixedValue = multi && _selectedStates.Any(x => x.cycleOffsetParameterActive != first.cycleOffsetParameterActive);
+
+            _stateFootIKToggle.SetValueWithoutNotify(first.iKOnFeet);
+            _stateFootIKToggle.showMixedValue = multi && _selectedStates.Any(x => x.iKOnFeet != first.iKOnFeet);
+
+            _stateWriteDefaultsToggle.SetValueWithoutNotify(first.writeDefaultValues);
+            _stateWriteDefaultsToggle.showMixedValue = multi && _selectedStates.Any(x => x.writeDefaultValues != first.writeDefaultValues);
         }
 
-        void DrawStateNameTagFields(Texture stateIcon, float iconHeight, bool multi, bool empty, AnimatorState first)
+        /* Multiple selected states get " N" suffixes to stay unique among all state names in the controller. */
+        void ApplyStateNameChange(string newName)
         {
-            using (new EditorGUILayout.HorizontalScope())
+            if (_selectedStates.Length == 0) return;
+            if (_selectedStates.Length > 1)
             {
-                var iconRect = EditorGUILayout.GetControlRect(false, iconHeight, GUILayout.Width(iconHeight));
-                if (stateIcon != null)
-                    GUI.DrawTexture(iconRect, stateIcon, ScaleMode.ScaleToFit);
-
-                using (new EditorGUILayout.VerticalScope())
+                var layerStateNames = CollectLayerStateNamesExcluding(_selectedStates);
+                int nextIndex = 1;
+                for (int i = 0; i < _selectedStates.Length; i++)
                 {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        EditorGUILayout.LabelField(L10n.Get("states.name"), GUILayout.Width(80));
-                        EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.name != first.name);
-                        EditorGUI.BeginChangeCheck();
-                        string newName = EditorGUILayout.TextField(empty ? "" : first.name);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (multi)
-                            {
-                                var layerStateNames = CollectLayerStateNamesExcluding(_selectedStates);
-                                int nextIndex = 1;
-                                for (int i = 0; i < _selectedStates.Length; i++)
-                                {
-                                    string candidate;
-                                    if (i == 0) { candidate = newName; }
-                                    else { do { candidate = newName + " " + nextIndex++; } while (layerStateNames.Contains(candidate)); }
-                                    layerStateNames.Add(candidate);
-                                    Undo.RecordObject(_selectedStates[i], "Edit State");
-                                    _selectedStates[i].name = candidate;
-                                    EditorUtility.SetDirty(_selectedStates[i]);
-                                }
-                            }
-                            else
-                            {
-                                SetStateOnAll(state => state.name = newName);
-                            }
-                        }
-                        EditorGUI.showMixedValue = false;
-                    }
-
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        EditorGUILayout.LabelField(L10n.Get("states.tag"), GUILayout.Width(80));
-                        EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.tag != first.tag);
-                        EditorGUI.BeginChangeCheck();
-                        string newTag = EditorGUILayout.TextField(empty ? "" : first.tag);
-                        if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.tag = newTag);
-                        EditorGUI.showMixedValue = false;
-                    }
+                    string candidate;
+                    if (i == 0) { candidate = newName; }
+                    else { do { candidate = newName + " " + nextIndex++; } while (layerStateNames.Contains(candidate)); }
+                    layerStateNames.Add(candidate);
+                    Undo.RecordObject(_selectedStates[i], "Edit State");
+                    _selectedStates[i].name = candidate;
+                    EditorUtility.SetDirty(_selectedStates[i]);
                 }
             }
-        }
-
-        void DrawStateMotionField(bool multi, bool empty, AnimatorState first)
-        {
-            using (new EditorGUILayout.HorizontalScope())
+            else
             {
-                EditorGUILayout.LabelField(L10n.Get("states.motion"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.motion != first.motion);
-                EditorGUI.BeginChangeCheck();
-                var newMotion = (Motion)EditorGUILayout.ObjectField(empty ? null : first.motion, typeof(Motion), false);
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.motion = newMotion);
-                EditorGUI.showMixedValue = false;
+                SetStateOnAll(state => state.name = newName);
             }
-        }
-
-        void DrawStateSpeedField(bool multi, bool empty, AnimatorState first)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("states.speed"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.speed, first.speed));
-                EditorGUI.BeginChangeCheck();
-                float newSpeed = EditorGUILayout.FloatField(empty ? 1f : first.speed);
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.speed = newSpeed);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawStateMultiplierField(bool multi, bool empty, AnimatorState first)
-        {
-            bool speedParamActive = !empty && first.speedParameterActive;
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                using (new EditorGUI.DisabledScope(!speedParamActive))
-                {
-                    EditorGUILayout.LabelField(L10n.Get("states.multiplier"), GUILayout.Width(110));
-                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.speedParameter != first.speedParameter);
-                    DrawFloatParamDropdown(empty ? "" : first.speedParameter,
-                        newSpeedParameter => SetStateOnAll(state => state.speedParameter = newSpeedParameter),
-                        GUILayout.ExpandWidth(true));
-                    EditorGUI.showMixedValue = false;
-                    GUILayout.Space(EditorGUIUtility.currentViewWidth * ParamDropdownTogglePaddingPercent);
-                }
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.speedParameterActive != first.speedParameterActive);
-                EditorGUI.BeginChangeCheck();
-                bool newSpeedActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.speedParameterActive, GUILayout.Width(90));
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.speedParameterActive = newSpeedActive);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawStateMotionTimeField(bool multi, bool empty, AnimatorState first)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("states.motion_time"), GUILayout.Width(110));
-                if (!empty && first.timeParameterActive)
-                {
-                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.timeParameter != first.timeParameter);
-                    DrawFloatParamDropdown(first.timeParameter,
-                        newTimeParameter => SetStateOnAll(state => state.timeParameter = newTimeParameter),
-                        GUILayout.ExpandWidth(true));
-                    EditorGUI.showMixedValue = false;
-                    GUILayout.Space(EditorGUIUtility.currentViewWidth * ParamDropdownTogglePaddingPercent);
-                }
-                else GUILayout.FlexibleSpace();
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.timeParameterActive != first.timeParameterActive);
-                EditorGUI.BeginChangeCheck();
-                bool newTimeActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.timeParameterActive, GUILayout.Width(90));
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.timeParameterActive = newTimeActive);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawStateMirrorField(bool multi, bool empty, AnimatorState first)
-        {
-            bool mirrorParamActive = !empty && first.mirrorParameterActive;
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("states.mirror"), GUILayout.Width(110));
-                if (mirrorParamActive)
-                {
-                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.mirrorParameter != first.mirrorParameter);
-                    DrawBoolParamDropdown(empty ? "" : first.mirrorParameter,
-                        newMirrorParameter => SetStateOnAll(state => state.mirrorParameter = newMirrorParameter),
-                        GUILayout.ExpandWidth(true));
-                    EditorGUI.showMixedValue = false;
-                    GUILayout.Space(EditorGUIUtility.currentViewWidth * ParamDropdownTogglePaddingPercent);
-                }
-                else
-                {
-                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.mirror != first.mirror);
-                    EditorGUI.BeginChangeCheck();
-                    bool newMirror = EditorGUILayout.Toggle(empty ? false : first.mirror, GUILayout.Width(16));
-                    if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.mirror = newMirror);
-                    EditorGUI.showMixedValue = false;
-                    GUILayout.FlexibleSpace();
-                }
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.mirrorParameterActive != first.mirrorParameterActive);
-                EditorGUI.BeginChangeCheck();
-                bool newMirrorActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"),empty ? false : first.mirrorParameterActive, GUILayout.Width(90));
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.mirrorParameterActive = newMirrorActive);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawStateCycleOffsetField(bool multi, bool empty, AnimatorState first)
-        {
-            bool cycleOffsetParamActive = !empty && first.cycleOffsetParameterActive;
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("states.cycle_offset"), GUILayout.Width(110));
-                if (cycleOffsetParamActive)
-                {
-                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.cycleOffsetParameter != first.cycleOffsetParameter);
-                    DrawFloatParamDropdown(empty ? "" : first.cycleOffsetParameter,
-                        newCycleOffsetParameter => SetStateOnAll(state => state.cycleOffsetParameter = newCycleOffsetParameter),
-                        GUILayout.ExpandWidth(true));
-                    EditorGUI.showMixedValue = false;
-                    GUILayout.Space(EditorGUIUtility.currentViewWidth * ParamDropdownTogglePaddingPercent);
-                }
-                else
-                {
-                    EditorGUI.showMixedValue = multi && _selectedStates.Any(x => !Mathf.Approximately(x.cycleOffset, first.cycleOffset));
-                    EditorGUI.BeginChangeCheck();
-                    float newCycleOffset = EditorGUILayout.FloatField(empty ? 0f : first.cycleOffset);
-                    if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffset = newCycleOffset);
-                    EditorGUI.showMixedValue = false;
-                    GUILayout.FlexibleSpace();
-                }
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.cycleOffsetParameterActive != first.cycleOffsetParameterActive);
-                EditorGUI.BeginChangeCheck();
-                bool newOffsetParameterActive = EditorGUILayout.ToggleLeft(L10n.Get("states.parameter"), empty ? false : first.cycleOffsetParameterActive, GUILayout.Width(90));
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.cycleOffsetParameterActive = newOffsetParameterActive);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawStateFootIKField(bool multi, bool empty, AnimatorState first)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("states.foot_ik"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.iKOnFeet != first.iKOnFeet);
-                EditorGUI.BeginChangeCheck();
-                bool newFootIK = EditorGUILayout.Toggle(empty ? false : first.iKOnFeet, GUILayout.Width(16));
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.iKOnFeet = newFootIK);
-                EditorGUI.showMixedValue = false;
-            }
-        }
-
-        void DrawStateWriteDefaultsField(bool multi, bool empty, AnimatorState first)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("states.write_defaults"), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && _selectedStates.Any(x => x.writeDefaultValues != first.writeDefaultValues);
-                EditorGUI.BeginChangeCheck();
-                bool newWriteDefaults = EditorGUILayout.Toggle(empty ? true : first.writeDefaultValues, GUILayout.Width(16));
-                if (EditorGUI.EndChangeCheck()) SetStateOnAll(state => state.writeDefaultValues = newWriteDefaults);
-                EditorGUI.showMixedValue = false;
-            }
+            RebuildStateRows();
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
-
-        AnimatorController _paramCachedController;
-        string[] _cachedIntParams   = Array.Empty<string>();
-        string[] _cachedFloatParams = Array.Empty<string>();
-        string[] _cachedBoolParams  = Array.Empty<string>();
-
-        void RebuildParamNameCaches()
-        {
-            _paramCachedController = _controller;
-            if (_controller == null)
-            {
-                _cachedIntParams   = Array.Empty<string>();
-                _cachedFloatParams = Array.Empty<string>();
-                _cachedBoolParams  = Array.Empty<string>();
-                return;
-            }
-            var parameters     = _controller.parameters;
-            _cachedIntParams   = parameters.Where(x => x.type == AnimatorControllerParameterType.Int).Select(x => x.name).ToArray();
-            _cachedFloatParams = parameters.Where(x => x.type == AnimatorControllerParameterType.Float).Select(x => x.name).ToArray();
-            _cachedBoolParams  = parameters.Where(x => x.type == AnimatorControllerParameterType.Bool).Select(x => x.name).ToArray();
-        }
-
-        const float ParamDropdownArrowWidth = 18f;
-        const float ParamDropdownTogglePaddingPercent = 0.05f;
-
-        /* Draws an AdvancedDropdown button listing all Int parameters in the active controller; invokes onSelected with the chosen name. */
-        void DrawIntParamDropdown(string current, Action<string> onSelected)
-        {
-            if (_paramCachedController != _controller) RebuildParamNameCaches();
-
-            if (_cachedIntParams.Length == 0)
-            {
-                GUILayout.Label(L10n.Get("states.no_int_float_params"), EditorStyles.miniLabel);
-                return;
-            }
-
-            var rect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.popup);
-            string label = EditorGUI.showMixedValue ? "—" : (string.IsNullOrEmpty(current) ? "—" : current);
-            label = TruncateTextLeft(label, EditorStyles.popup, rect.width - ParamDropdownArrowWidth);
-            if (EditorGUI.DropdownButton(rect, new GUIContent(label), FocusType.Passive))
-                ShowParameterDropdown(rect, current, AnimatorControllerParameterType.Int, onSelected);
-        }
-
-        /* Draws an AdvancedDropdown button listing all Float parameters in the active controller; invokes onSelected with the chosen name. */
-        void DrawFloatParamDropdown(string current, Action<string> onSelected, params GUILayoutOption[] options)
-        {
-            if (_paramCachedController != _controller) RebuildParamNameCaches();
-
-            if (_cachedFloatParams.Length == 0)
-            {
-                GUILayout.Label(string.IsNullOrEmpty(current) ? "—" : current, EditorStyles.miniLabel, options);
-                return;
-            }
-
-            var rect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.popup, options);
-            string label = EditorGUI.showMixedValue ? "—" : (string.IsNullOrEmpty(current) ? "—" : current);
-            label = TruncateTextLeft(label, EditorStyles.popup, rect.width - ParamDropdownArrowWidth);
-            if (EditorGUI.DropdownButton(rect, new GUIContent(label), FocusType.Passive))
-                ShowParameterDropdown(rect, current, AnimatorControllerParameterType.Float, onSelected);
-        }
-
-        /* Draws an AdvancedDropdown button listing all Bool parameters in the active controller; invokes onSelected with the chosen name. */
-        void DrawBoolParamDropdown(string current, Action<string> onSelected, params GUILayoutOption[] options)
-        {
-            if (_paramCachedController != _controller) RebuildParamNameCaches();
-
-            if (_cachedBoolParams.Length == 0)
-            {
-                GUILayout.Label(string.IsNullOrEmpty(current) ? "—" : current, EditorStyles.miniLabel, options);
-                return;
-            }
-
-            var rect = GUILayoutUtility.GetRect(GUIContent.none, EditorStyles.popup, options);
-            string label = EditorGUI.showMixedValue ? "—" : (string.IsNullOrEmpty(current) ? "—" : current);
-            label = TruncateTextLeft(label, EditorStyles.popup, rect.width - ParamDropdownArrowWidth);
-            if (EditorGUI.DropdownButton(rect, new GUIContent(label), FocusType.Passive))
-                ShowParameterDropdown(rect, current, AnimatorControllerParameterType.Bool, onSelected);
-        }
 
         /* Sets Selection.objects to all outgoing transitions from every state in states. */
         internal static void SelectOutgoingTransitions(AnimatorState[] states)
@@ -545,8 +659,7 @@ void DrawStateRows()
                 CollectIncoming(childStateMachine.stateMachine, targets, result);
         }
 
-        /* AnyState transitions all live on the layer's root SM, but only the ones whose destination is a direct
-           child of scopeSM (the currently active/viewed SM — root or a drilled-into subSM) are selected. */
+        /* AnyState transitions all live on the layer's root SM; only ones destined into scopeSM are selected. */
         internal static void SelectOutgoingFromAnyState(AnimatorStateMachine rootSM, AnimatorStateMachine scopeSM)
         {
             if (rootSM == null || scopeSM == null) return;

@@ -350,6 +350,7 @@ namespace YGDR.Editor.Animation
 
         // Miscellaneous
         [SerializeField] internal bool framesEnabled              = true;
+        [SerializeField] internal bool inspectorModeEnabled       = false;
         [SerializeField] internal bool wdIncludeBlendTreeStates  = false;
         [SerializeField] internal bool preventLayerScroll        = true;
         [SerializeField] internal bool preventParameterScroll    = true;

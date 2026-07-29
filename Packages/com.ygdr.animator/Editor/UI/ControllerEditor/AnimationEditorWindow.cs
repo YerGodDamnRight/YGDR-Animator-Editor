@@ -24,6 +24,7 @@ using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.UIElements;
 #if YGDR_MDV
 using YGDR.MDV;
 #endif
@@ -32,18 +33,12 @@ namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow : EditorWindow
     {
-        static readonly string[] _tabs    = { "Transitions", "States", "Controller", "Settings" };
-        static readonly string[] _tabKeys = { "tabs.transitions", "tabs.states", "tabs.controller", "tabs.settings" };
-        [SerializeField] bool[] _tabOpen = { true, false, false, false };
-        Vector2 _scrollPosition;
+        [SerializeField] bool[] _tabOpen = { true, false, false };
+        [SerializeField] bool _settingsOpen;
 
         AnimatorStateTransition[] _selectedTransitions = Array.Empty<AnimatorStateTransition>();
         AnimatorTransition[] _selectedEntryTransitions = Array.Empty<AnimatorTransition>();
-        bool _tagScrollEnabled = true;
-        Vector2 _tagScrollPos;
         AnimatorState[] _selectedStates = Array.Empty<AnimatorState>();
-        bool _stateRowScrollEnabled = true;
-        Vector2 _stateRowScrollPos;
         AnimatorController _controller;
         AnimatorStateMachine _activeStateMachine;
         string _controllerName = "—";
@@ -63,6 +58,13 @@ namespace YGDR.Editor.Animation
         Action _helpSettings;
         static Action _helpDocs;
 
+        VisualElement _layerBarRoot;
+        ScrollView _sectionScrollView;
+        VisualElement _footerRoot;
+        VisualElement _footerBar;
+        Label _footerVersionLabel;
+        Button _docsButton;
+
         [MenuItem("YGDR/Animator Editor/Open", priority = 0)]
         static void Open()
         {
@@ -77,14 +79,15 @@ namespace YGDR.Editor.Animation
             _paletteApplied   = false;
             _helpTransitions  = MdvHelpAction("Transitions", 62, 84);
             _helpStates       = MdvHelpAction("States", 87, 134);
-            _helpController   = MdvHelpAction("Controller", 137, 174);
-            _helpSettings     = MdvHelpAction("Settings", 177, 278);
+            _helpController   = MdvHelpAction("Controller", 137, 188);
+            _helpSettings     = MdvHelpAction("Settings", 191, 289);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;
             ObjectChangeEvents.changesPublished += OnAssetChangesPublished;
             Undo.undoRedoPerformed += OnUndoRedo;
             EditorApplication.hierarchyChanged += OnHierarchyChangedRefresh;
+            L10n.OnLanguageChanged += RefreshLocalizedLabels;
             wantsMouseMove = true;
             OnSelectionChanged();
         }
@@ -96,12 +99,14 @@ namespace YGDR.Editor.Animation
             ObjectChangeEvents.changesPublished -= OnAssetChangesPublished;
             Undo.undoRedoPerformed -= OnUndoRedo;
             EditorApplication.hierarchyChanged -= OnHierarchyChangedRefresh;
+            SharedWindowStyles.UnregisterPaletteRefresh(RefreshPaletteColors);
+            L10n.OnLanguageChanged -= RefreshLocalizedLabels;
             SetAutoRepathEnabled(false);
         }
 
         void OnUndoRedo()
         {
-            EditorApplication.delayCall += () => { InvalidateConditionCache(); Repaint(); };
+            EditorApplication.delayCall += () => { InvalidateConditionCache(); RefreshTransitionsTab(); RefreshStatesTab(); RefreshControllerSubTabVisibility(); Repaint(); };
         }
 
         void OnSelectionChanged()
@@ -111,6 +116,11 @@ namespace YGDR.Editor.Animation
             _selectedStates = Selection.objects.OfType<AnimatorState>().ToArray();
             _conditionCacheDirty = true;
             UpdateSelectedClipIds();
+            RefreshTransitionsTab();
+            RefreshStatesTab();
+            if (_controllerSubTab == 2) RefreshSubAssetsBody();
+            if (_controllerSubTab == 3) RefreshMenusBody();
+            ApplyInspectorModeTabs();
             Repaint();
         }
 
@@ -149,6 +159,7 @@ namespace YGDR.Editor.Animation
                     _controllerName = blendTreeController.name;
                     _layerName      = blendTreeLayerName;
                     _subContextPath = blendTreeName != null ? new[] { blendTreeName } : null;
+                    RefreshLayerBar();
                     Repaint();
                     return;
                 }
@@ -163,11 +174,12 @@ namespace YGDR.Editor.Animation
                     _controllerName = selectionController.name;
                     _layerName = firstLayer.stateMachine != null ? firstLayer.name : "—";
                     _subContextPath = null;
+                    RefreshLayerBar();
                     Repaint();
                     return;
                 }
 
-                if (_controller != null) { _controller = null; _activeStateMachine = null; _controllerName = "—"; _layerName = "—"; _subContextPath = null; Repaint(); }
+                if (_controller != null) { _controller = null; _activeStateMachine = null; _controllerName = "—"; _layerName = "—"; _subContextPath = null; RefreshLayerBar(); Repaint(); }
                 return;
             }
 
@@ -189,6 +201,7 @@ namespace YGDR.Editor.Animation
             _controllerName = controllerName;
             _layerName = layerName;
             _subContextPath = BuildSubSMPath(controller, layerName, activeStateMachine);
+            RefreshLayerBar();
             Repaint();
         }
 
@@ -291,79 +304,247 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
-        void OnGUI()
+        // ── Accordion sections (Phase 2) ────────────────────────────────────────
+        Label _transitionsRightLabel, _statesRightLabel, _controllerRightLabel;
+        Label _settingsTitleLabel, _transitionsTitleLabel, _statesTitleLabel, _controllerTitleLabel;
+        VisualElement _settingsHeader, _transitionsHeader, _statesHeader, _controllerHeader;
+        VisualElement _settingsBody, _transitionsBody, _statesBody, _controllerBody;
+        Button _transitionsTabButton, _statesTabButton, _controllerTabButton;
+
+        /* 4 collapsible sections each wrap one IMGUIContainer for still-IMGUI body content. */
+        void CreateGUI()
         {
+            var root = rootVisualElement;
+            root.Clear();
+            root.EnableInClassList("ygdr-dark", EditorGUIUtility.isProSkin);
+            root.EnableInClassList("ygdr-light", !EditorGUIUtility.isProSkin);
+
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/com.ygdr.animator/Editor/UI/SharedWindowStyles.uss");
+            if (styleSheet != null) root.styleSheets.Add(styleSheet);
+
+            // Unity's builtin Button:focus stylesheet rule outranks our USS override on specificity,
+            // so the blue focus ring persists after clicks unless we blur the button ourselves.
+            root.RegisterCallback<ClickEvent>(evt => { if (evt.target is Button button) button.Blur(); });
+
+            SharedWindowStyles.RegisterPaletteRefresh(RefreshPaletteColors);
+
             if (!_paletteApplied)
             {
                 _paletteApplied = true;
                 var settings = AnimatorDefaultSettings.Load();
-                Styles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
+                SharedWindowStyles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent);
             }
-            if (Event.current.type == EventType.MouseMove)
-                Repaint();
-            DrawTabs();
-            DrawLayerBar();
-            _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition, GUIStyle.none, GUI.skin.verticalScrollbar);
-            _scrollPosition.x = 0;
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(8);
-            EditorGUILayout.BeginVertical();
-            if (_tabOpen[0]) { DrawSectionHeader(L10n.Get("tabs.transitions"), _selectedTransitions.Length > 0 ? L10n.Get("header.n_selected").Replace("{n}", _selectedTransitions.Length.ToString()) : null, _helpTransitions); DrawTransitionsTab(); EditorGUILayout.Space(10); }
-            if (_tabOpen[1]) { DrawSectionHeader(L10n.Get("tabs.states"), _selectedStates.Length > 0 ? L10n.Get("header.n_selected").Replace("{n}", _selectedStates.Length.ToString()) : null, _helpStates); DrawStatesTab(); EditorGUILayout.Space(10); }
-            if (_tabOpen[2]) { DrawSectionHeader(L10n.Get("tabs.controller"), ControllerSectionCountLabel, _helpController); DrawControllerTab(); EditorGUILayout.Space(10); }
-            if (_tabOpen[3]) { DrawSectionHeader(L10n.Get("tabs.settings"), null, _helpSettings); DrawSettingsTab(); EditorGUILayout.Space(10); }
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(8);
-            EditorGUILayout.EndHorizontal();
-            EditorGUILayout.EndScrollView();
-            DrawFooter();
+
+            var tabStrip = new VisualElement();
+            tabStrip.AddToClassList("ygdr-tab-strip");
+            root.Add(tabStrip);
+            _transitionsTabButton = AddTabStripButton(tabStrip, L10n.Get("tabs.transitions"), 0);
+            _statesTabButton      = AddTabStripButton(tabStrip, L10n.Get("tabs.states"), 1);
+            _controllerTabButton  = AddTabStripButton(tabStrip, L10n.Get("tabs.controller"), 2);
+
+            _layerBarRoot = new VisualElement();
+            _layerBarRoot.AddToClassList("ygdr-layer-bar");
+            root.Add(_layerBarRoot);
+            RefreshLayerBar();
+
+            var scrollView = new ScrollView(ScrollViewMode.Vertical) { verticalScrollerVisibility = ScrollerVisibility.AlwaysVisible };
+            scrollView.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            scrollView.contentContainer.style.maxWidth = Length.Percent(100);
+            scrollView.AddToClassList("ygdr-section-scroll");
+            root.Add(scrollView);
+            _sectionScrollView = scrollView;
+
+            (_transitionsHeader, _transitionsBody, _transitionsTitleLabel) = BuildAccordionShell(scrollView, L10n.Get("tabs.transitions"),
+                () => _tabOpen[0], _helpTransitions, out _transitionsRightLabel, BuildTransitionsBody());
+            RefreshTransitionsTab();
+            (_statesHeader, _statesBody, _statesTitleLabel) = BuildAccordionShell(scrollView, L10n.Get("tabs.states"),
+                () => _tabOpen[1], _helpStates, out _statesRightLabel, BuildStatesBody());
+            RefreshStatesTab();
+            (_controllerHeader, _controllerBody, _controllerTitleLabel) = BuildAccordionShell(scrollView, L10n.Get("tabs.controller"),
+                () => _tabOpen[2], _helpController, out _controllerRightLabel, BuildControllerBody());
+            RefreshControllerSubTabVisibility();
+            (_settingsHeader, _settingsBody, _settingsTitleLabel) = BuildAccordionShell(scrollView, L10n.Get("tabs.settings"),
+                () => _settingsOpen, _helpSettings, out _, BuildSettingsBody());
+
+            _footerRoot = new VisualElement();
+            _footerRoot.AddToClassList("ygdr-footer");
+            root.Add(_footerRoot);
+            BuildFooter(_footerRoot);
+
+            RefreshTabStrip();
+            RefreshPaletteColors();
         }
 
-        void DrawTabs()
+        /* Second entry point onto the same _tabOpen[] state the accordion headers use. */
+        Button AddTabStripButton(VisualElement parent, string label, int index)
         {
-            float baseTabW = Mathf.Floor(EditorGUIUtility.currentViewWidth / _tabs.Length);
-            using var _ = new EditorGUILayout.HorizontalScope(GUIStyle.none, GUILayout.Height(24), GUILayout.ExpandWidth(true));
-            for (int i = 0; i < _tabs.Length; i++)
+            var button = new Button(() => ToggleTabStripSection(index)) { text = label };
+            button.AddToClassList("ygdr-tab-strip-button");
+            parent.Add(button);
+            return button;
+        }
+
+        void ToggleTabStripSection(int index) => SetTabOpen(index, !_tabOpen[index]);
+
+        void SetTabOpen(int index, bool open)
+        {
+            if (_tabOpen[index] == open) return;
+            PreserveScrollOffset(() =>
             {
-                float tabW = i < _tabs.Length - 1 ? baseTabW : EditorGUIUtility.currentViewWidth - baseTabW * (_tabs.Length - 1);
-                var style = _tabOpen[i] ? Styles.TabActive : Styles.TabInactive;
-                _tabOpen[i] = GUILayout.Toggle(_tabOpen[i], L10n.Get(_tabKeys[i]), style, GUILayout.Width(tabW), GUILayout.Height(24));
-                EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
+                _tabOpen[index] = open;
+                var body = index == 0 ? _transitionsBody : index == 1 ? _statesBody : _controllerBody;
+                var header = index == 0 ? _transitionsHeader : index == 1 ? _statesHeader : _controllerHeader;
+                if (body != null) body.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
+                if (header != null) header.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
+                RefreshTabStrip();
+            });
+        }
+
+        /* Inspector Mode: opens only the tab relevant to selection, Controller as fallback. */
+        void ApplyInspectorModeTabs()
+        {
+            if (!AnimatorDefaultSettings.Load().inspectorModeEnabled) return;
+
+            bool stateSelected = _selectedStates.Length > 0;
+            bool transitionSelected = _selectedTransitions.Length > 0;
+
+            SetTabOpen(0, transitionSelected);
+            SetTabOpen(1, stateSelected);
+            SetTabOpen(2, !stateSelected && !transitionSelected);
+        }
+
+        void ToggleSettingsSection()
+        {
+            _settingsOpen = !_settingsOpen;
+            if (_settingsBody == null) return;
+
+            if (_settingsOpen)
+            {
+                if (_settingsHeader != null) _settingsHeader.style.display = DisplayStyle.Flex;
+                AnimateSectionBody(_settingsHeader, _settingsBody, true, SnapScrollToBottom);
+            }
+            else
+            {
+                AnimateSectionBody(_settingsHeader, _settingsBody, false, SnapScrollToBottom);
+                _settingsBody.schedule.Execute(() => { if (!_settingsOpen && _settingsHeader != null) _settingsHeader.style.display = DisplayStyle.None; })
+                    .StartingIn((long)(SectionAnimDurationSeconds * 1000));
             }
         }
 
-        void DrawLayerBar()
+        // Settings sits at the bottom of the scroll (just above the footer). Keeping the scroll
+        // pinned to the bottom every tween frame makes the section read as rising up out of the
+        // footer rather than unrolling downward from the top.
+        void SnapScrollToBottom()
         {
-            var barRect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
-            EditorGUI.DrawRect(new Rect(0, barRect.y, EditorGUIUtility.currentViewWidth, barRect.height), Styles.SectionHeaderBg);
+            if (_sectionScrollView == null) return;
+            float maxScroll = Mathf.Max(0f, _sectionScrollView.contentContainer.resolvedStyle.height - _sectionScrollView.resolvedStyle.height);
+            _sectionScrollView.scrollOffset = new Vector2(_sectionScrollView.scrollOffset.x, maxScroll);
+        }
+
+        /* Section toggle changes content height, which makes ScrollView reclamp and jump — restore offset after. */
+        void PreserveScrollOffset(Action toggle)
+        {
+            if (_sectionScrollView == null) { toggle(); return; }
+            var offset = _sectionScrollView.scrollOffset;
+            toggle();
+            _sectionScrollView.schedule.Execute(() => _sectionScrollView.scrollOffset = offset);
+        }
+
+        void RefreshTabStrip()
+        {
+            _transitionsTabButton?.EnableInClassList("ygdr-tab-strip-button-active", _tabOpen[0]);
+            _statesTabButton?.EnableInClassList("ygdr-tab-strip-button-active", _tabOpen[1]);
+            _controllerTabButton?.EnableInClassList("ygdr-tab-strip-button-active", _tabOpen[2]);
+        }
+
+        /* Header is not clickable — toggling only happens via AddTabStripButton / ToggleSettingsSection. */
+        static (VisualElement header, VisualElement body, Label titleLabel) BuildAccordionShell(VisualElement parent, string title, Func<bool> getOpen, Action helpAction, out Label rightLabel, VisualElement bodyElement)
+        {
+            var section = new VisualElement();
+            section.AddToClassList("ygdr-accordion-section");
+
+            var header = new VisualElement();
+            header.AddToClassList("ygdr-accordion-header");
+
+            var body = bodyElement;
+            body.style.marginBottom = 10;
+
+            var titleLabel = new Label(title);
+            titleLabel.AddToClassList("ygdr-accordion-title");
+            header.Add(titleLabel);
+
+            var localRightLabel = new Label();
+            localRightLabel.AddToClassList("ygdr-accordion-right-label");
+            header.Add(localRightLabel);
+            rightLabel = localRightLabel;
+
+            if (helpAction != null)
+            {
+                var helpButton = new Button(helpAction);
+                helpButton.AddToClassList("ygdr-accordion-help-button");
+                helpButton.AddToClassList("ygdr-icon-btn-base");
+                helpButton.style.backgroundImage = new StyleBackground(HelpIcon);
+                helpButton.RegisterCallback<ClickEvent>(evt => evt.StopPropagation());
+                header.Add(helpButton);
+            }
+
+            section.Add(header);
+
+            body.style.display = getOpen() ? DisplayStyle.Flex : DisplayStyle.None;
+            header.style.display = getOpen() ? DisplayStyle.Flex : DisplayStyle.None;
+            section.Add(body);
+
+            parent.Add(section);
+            return (header, body, titleLabel);
+        }
+
+        void RefreshLayerBar()
+        {
+            RefreshControllerSubTabVisibility();
+            if (_layerBarRoot == null) return;
+            _layerBarRoot.Clear();
 
             bool hasLayer      = _layerName != "—";
             bool hasSubContext = _subContextPath != null && _subContextPath.Length > 0;
 
-            float x = barRect.x + 8f;
-            DrawBreadcrumbSegment(ref x, barRect, _controllerName, isLeaf: !hasLayer && !hasSubContext);
+            AddBreadcrumbSegment(_controllerName, isLeaf: !hasLayer && !hasSubContext);
 
             if (hasLayer)
             {
-                DrawBreadcrumbSeparator(ref x, barRect);
-                DrawBreadcrumbSegment(ref x, barRect, _layerName, isLeaf: !hasSubContext);
+                AddBreadcrumbSeparator();
+                AddBreadcrumbSegment(_layerName, isLeaf: !hasSubContext);
             }
 
             if (hasSubContext)
             {
                 for (int i = 0; i < _subContextPath.Length; i++)
                 {
-                    DrawBreadcrumbSeparator(ref x, barRect);
-                    DrawBreadcrumbSegment(ref x, barRect, _subContextPath[i], isLeaf: i == _subContextPath.Length - 1);
+                    AddBreadcrumbSeparator();
+                    AddBreadcrumbSegment(_subContextPath[i], isLeaf: i == _subContextPath.Length - 1);
                 }
             }
         }
 
-        static readonly GUIContent s_breadcrumbSeparatorContent = new(" > ");
-        static readonly GUIContent s_breadcrumbSegmentContent  = new();
+        void AddBreadcrumbSegment(string text, bool isLeaf)
+        {
+            var label = new Label(text);
+            label.AddToClassList("ygdr-breadcrumb-segment");
+            label.EnableInClassList("ygdr-breadcrumb-leaf", isLeaf);
+            _layerBarRoot.Add(label);
+        }
 
-        static GUIContent s_helpIconContent;
-        static GUIContent HelpIconContent => s_helpIconContent ??= EditorGUIUtility.IconContent("d__Help@2x");
+        void AddBreadcrumbSeparator()
+        {
+            var label = new Label(" > ");
+            label.AddToClassList("ygdr-breadcrumb-separator");
+            _layerBarRoot.Add(label);
+        }
+
+        static Texture2D s_helpIcon;
+        static Texture2D HelpIcon => s_helpIcon ??= EditorGUIUtility.IconContent("d__Help@2x").image as Texture2D;
+
+        static Texture2D s_settingsIcon;
+        static Texture2D SettingsIcon => s_settingsIcon ??= EditorGUIUtility.IconContent("d_SettingsIcon@2x").image as Texture2D;
 
         static Texture2D _discordIcon;
         static Texture2D _twitterIcon;
@@ -375,60 +556,6 @@ namespace YGDR.Editor.Animation
         static Texture2D GumroadIcon  => _gumroadIcon  ??= Resources.Load<Texture2D>("Gumroad-Icon");
         static Texture2D JinxxyIcon   => _jinxxyIcon   ??= Resources.Load<Texture2D>("Jinxxy-icon");
         static Texture2D BoothIcon   => _boothIcon   ??= Resources.Load<Texture2D>("Booth-icon");
-
-        static readonly GUIContent _iconBtnContent = new GUIContent();
-
-        static void DrawFooterIcon(Rect rect, Texture2D icon, string tooltip, string url)
-        {
-            if (icon == null) return;
-            _iconBtnContent.image   = icon;
-            _iconBtnContent.tooltip = tooltip;
-            var prevColor = GUI.color;
-            GUI.color = EditorGUIUtility.isProSkin ? Color.white : Color.black;
-            if (CursorBtn(rect, _iconBtnContent, GUIStyle.none))
-                Application.OpenURL(url);
-            GUI.color = prevColor;
-        }
-
-        static void DrawBreadcrumbSegment(ref float x, Rect barRect, string text, bool isLeaf)
-        {
-            var style = isLeaf ? Styles.BreadcrumbLeaf : Styles.BreadcrumbParent;
-            s_breadcrumbSegmentContent.text = text;
-            float width = style.CalcSize(s_breadcrumbSegmentContent).x;
-            GUI.Label(new Rect(x, barRect.y, width, barRect.height), text, style);
-            x += width;
-        }
-
-        static void DrawBreadcrumbSeparator(ref float x, Rect barRect)
-        {
-            float width = Styles.BreadcrumbParent.CalcSize(s_breadcrumbSeparatorContent).x;
-            GUI.Label(new Rect(x, barRect.y, width, barRect.height), s_breadcrumbSeparatorContent, Styles.BreadcrumbParent);
-            x += width;
-        }
-
-        /* GUILayout.Button that shows the finger-pointer cursor on hover. */
-        static bool CursorBtn(string text, GUIStyle style, params GUILayoutOption[] options)
-        {
-            bool clicked = GUILayout.Button(text, style, options);
-            EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
-            return clicked;
-        }
-
-        /* GUI.Button at rect with a finger-pointer cursor (string label overload). */
-        static bool CursorBtn(Rect rect, string text, GUIStyle style)
-        {
-            bool clicked = GUI.Button(rect, text, style);
-            EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
-            return clicked;
-        }
-
-        /* GUI.Button at rect with a finger-pointer cursor (GUIContent overload for tooltip support). */
-        static bool CursorBtn(Rect rect, GUIContent content, GUIStyle style)
-        {
-            bool clicked = GUI.Button(rect, content, style);
-            EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
-            return clicked;
-        }
 
         const string MdvDocGuid = "2dba3511e1633094a83bbdb970508e8f";
 
@@ -444,29 +571,6 @@ namespace YGDR.Editor.Animation
 #endif
         }
 
-        /* Draws a full-width dark header bar containing label, spanning edge-to-edge regardless of scroll indent.
-           Pass helpAction to render a help icon button on the right that invokes MDV.Open() with section-specific args. */
-        static void DrawSectionHeader(string label, string rightLabel = null, Action helpAction = null)
-        {
-            var rect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
-            var backgroundRect = new Rect(0, rect.y - EditorGUIUtility.standardVerticalSpacing, EditorGUIUtility.currentViewWidth, rect.height + EditorGUIUtility.standardVerticalSpacing);
-            EditorGUI.DrawRect(backgroundRect, Styles.SectionHeaderBg);
-            GUI.Label(rect, label, Styles.TabSectionLabel);
-
-            if (helpAction != null)
-            {
-                var buttonRect = new Rect(rect.xMax - 22, rect.y + 4, 20, 20);
-                if (CursorBtn(buttonRect, HelpIconContent, GUIStyle.none))
-                    helpAction();
-            }
-
-            if (rightLabel != null)
-            {
-                var rightLabelRect = helpAction != null ? new Rect(rect.x, rect.y, rect.width - 26, rect.height) : rect;
-                GUI.Label(rightLabelRect, rightLabel, Styles.SectionHeaderCount);
-            }
-        }
-
         static string _cachedVersion;
         static string GetVersion()
         {
@@ -475,49 +579,122 @@ namespace YGDR.Editor.Animation
             return _cachedVersion;
         }
 
-        static void DrawFooter()
+        /* Colors/labels pushed in by RefreshPaletteColors/RefreshFooterLabels, not recomputed per frame. */
+        void BuildFooter(VisualElement parent)
         {
-            var separatorRect = EditorGUILayout.GetControlRect(false, 1f, GUILayout.ExpandWidth(true));
-            EditorGUI.DrawRect(new Rect(0, separatorRect.y, EditorGUIUtility.currentViewWidth, 1f), new Color(0f, 0f, 0f, 0.6f));
+            var separator = new VisualElement();
+            separator.AddToClassList("ygdr-footer-separator");
+            parent.Add(separator);
 
-            var rect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
-            EditorGUI.DrawRect(new Rect(0, rect.y, EditorGUIUtility.currentViewWidth, rect.height), Styles.FooterBg);
+            _footerBar = new VisualElement();
+            _footerBar.AddToClassList("ygdr-footer-bar");
+            parent.Add(_footerBar);
 
-            GUI.Label(rect, "Created by YerGodDamnRight", Styles.FooterText);
+            var settingsButton = new Button(ToggleSettingsSection);
+            settingsButton.AddToClassList("ygdr-footer-icon-button");
+            settingsButton.AddToClassList("ygdr-icon-btn-base");
+            settingsButton.style.backgroundImage = new StyleBackground(SettingsIcon);
+            _footerBar.Add(settingsButton);
 
-            const float iconSize = 16f;
-            const float iconGap  = 8f;
-            const float rightPad = 6f;
-            float iconY = rect.y + (rect.height - iconSize) * 0.5f;
+            var createdByLabel = new Label("Created by YerGodDamnRight");
+            createdByLabel.AddToClassList("ygdr-footer-text");
+            _footerBar.Add(createdByLabel);
 
-            string version = GetVersion();
-            float versionWidth = Styles.FooterText.CalcSize(new GUIContent(version)).x;
-            float x = rect.xMax - rightPad - versionWidth;
-            GUI.Label(new Rect(x, rect.y, versionWidth, rect.height), version, Styles.FooterText);
+            var spacer = new VisualElement();
+            spacer.AddToClassList("ygdr-footer-spacer");
+            _footerBar.Add(spacer);
 
-            x -= iconGap + iconSize;
-            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), BoothIcon,  "Booth",    "https://yergoddamnright.booth.pm/");
-            x -= iconGap + iconSize;
-            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), JinxxyIcon,  "Jinxxy",    "https://jinxxy.com/YerGodDamnRight");
-            x -= iconGap + iconSize;
-            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), GumroadIcon, "Gumroad",   "https://yergoddamnright.gumroad.com");
-            x -= iconGap + iconSize;
-            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), TwitterIcon, "Twitter / X", "https://x.com/YerGodDamnRight");
-            x -= iconGap + iconSize;
-            DrawFooterIcon(new Rect(x, iconY, iconSize, iconSize), DiscordIcon, "Discord",   "https://discord.gg/s8gTEk8xFb");
+            AddFooterIconButton(_footerBar, DiscordIcon, "Discord",     "https://discord.gg/s8gTEk8xFb");
+            AddFooterIconButton(_footerBar, TwitterIcon, "Twitter / X", "https://x.com/YerGodDamnRight");
+            AddFooterIconButton(_footerBar, GumroadIcon, "Gumroad",     "https://yergoddamnright.gumroad.com");
+            AddFooterIconButton(_footerBar, JinxxyIcon,  "Jinxxy",      "https://jinxxy.com/YerGodDamnRight");
+            AddFooterIconButton(_footerBar, BoothIcon,   "Booth",       "https://yergoddamnright.booth.pm/");
 
-            x -= iconGap;
-            string docsLabel = L10n.Get("footer.docs");
-            float docsWidth = Styles.FooterDocsBtn.CalcSize(new GUIContent(docsLabel)).x;
-            x -= docsWidth;
-            if (CursorBtn(new Rect(x, rect.y, docsWidth, rect.height), docsLabel, Styles.FooterDocsBtn))
-                _helpDocs?.Invoke();
+            _docsButton = new Button(() => _helpDocs?.Invoke());
+            _docsButton.AddToClassList("ygdr-footer-docs-button");
+            _footerBar.Add(_docsButton);
+
+            _footerVersionLabel = new Label();
+            _footerVersionLabel.AddToClassList("ygdr-footer-text");
+            _footerBar.Add(_footerVersionLabel);
+
+            RefreshFooterLabels();
         }
 
-        static void DrawSeparator()
+        /// Shared row-container primitive: a VisualElement tagged with <paramref name="ussClass"/>, with
+        /// <paramref name="children"/> appended and, if <paramref name="parent"/> is given, added to it.
+        static VisualElement BuildRow(string ussClass, VisualElement parent = null, params VisualElement[] children)
         {
-            var rect = EditorGUILayout.GetControlRect(false, 1f, GUILayout.ExpandWidth(true));
-            EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.4f));
+            var row = new VisualElement();
+            row.AddToClassList(ussClass);
+            foreach (var child in children) row.Add(child);
+            parent?.Add(row);
+            return row;
+        }
+
+        static Image BuildWarningIcon(Texture icon, string tooltip, string ussClass)
+        {
+            var image = new Image { image = icon, tooltip = tooltip };
+            image.AddToClassList(ussClass);
+            return image;
+        }
+
+        static void AddFooterIconButton(VisualElement parent, Texture2D icon, string tooltip, string url)
+        {
+            if (icon == null) return;
+            var button = new Button(() => Application.OpenURL(url)) { tooltip = tooltip };
+            button.AddToClassList("ygdr-footer-icon-button");
+            button.AddToClassList("ygdr-icon-btn-base");
+            button.style.backgroundImage = new StyleBackground(icon);
+            parent.Add(button);
+        }
+
+        /* Text content that only changes on language switch or package version resolve — not palette. */
+        void RefreshFooterLabels()
+        {
+            if (_docsButton != null) _docsButton.text = L10n.Get("footer.docs");
+            if (_footerVersionLabel != null) _footerVersionLabel.text = GetVersion();
+        }
+
+        /* Wired to L10n.OnLanguageChanged so switching language relabels instantly. */
+        void RefreshLocalizedLabels()
+        {
+            RefreshFooterLabels();
+            if (_transitionsTabButton != null) _transitionsTabButton.text = L10n.Get("tabs.transitions");
+            if (_statesTabButton != null) _statesTabButton.text = L10n.Get("tabs.states");
+            if (_controllerTabButton != null) _controllerTabButton.text = L10n.Get("tabs.controller");
+            if (_settingsTitleLabel != null) _settingsTitleLabel.text = L10n.Get("tabs.settings");
+            if (_transitionsTitleLabel != null) _transitionsTitleLabel.text = L10n.Get("tabs.transitions");
+            if (_statesTitleLabel != null) _statesTitleLabel.text = L10n.Get("tabs.states");
+            if (_controllerTitleLabel != null) _controllerTitleLabel.text = L10n.Get("tabs.controller");
+            RefreshTransitionsLocalizedLabels();
+            RebuildTransitionTags();
+            RebuildConditionRows();
+
+            RefreshStatesLocalizedLabels();
+            RebuildStateRows();
+
+            RefreshControllerSubTabLabels();
+
+            RefreshSettingsLocalizedLabels();
+        }
+
+        /* Registered via SharedWindowStyles.RegisterPaletteRefresh so live palette edits in Settings re-theme these too. */
+        void RefreshPaletteColors()
+        {
+            if (_layerBarRoot != null) _layerBarRoot.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            if (_footerBar != null) _footerBar.style.backgroundColor = SharedWindowStyles.FooterBg;
+            if (_settingsHeader != null) _settingsHeader.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            if (_transitionsHeader != null) _transitionsHeader.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            if (_statesHeader != null) _statesHeader.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            if (_controllerHeader != null) _controllerHeader.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            RefreshTransitionsPaletteColors();
+            RefreshStatesPaletteColors();
+            RefreshControllerPaletteColors();
+            RefreshSettingsPaletteColors();
+#if VRC_SDK_VRCSDK3
+            RefreshSharedBehaviorsPaletteColors();
+#endif
         }
     }
 }

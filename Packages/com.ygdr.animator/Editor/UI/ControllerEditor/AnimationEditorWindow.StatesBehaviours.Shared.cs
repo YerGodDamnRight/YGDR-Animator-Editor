@@ -23,8 +23,9 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
-using ReorderableList = UnityEditorInternal.ReorderableList;
 using UnityEngine;
+using UnityEngine.UIElements;
+using UnityEditor.UIElements;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDKBase;
 
@@ -32,12 +33,8 @@ namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow
     {
-        /* Multi-instance accessors (Phase 1 step 1) for the 4 in-scope behaviour types
-           (Driver, PlayAudio, LayerControl, PlayableLayerControl). Instances<T>(state)[0]
-           == today's GetXForState(state) — N=0/1 cases are unaffected.
-           Allocates a List — only use where the full set is actually needed (e.g. destroying
-           all instances of a type). Per-frame lookups should use HasInstance/InstanceCount/
-           FindInstance/InstanceAt below, which scan state.behaviours directly with no allocation. */
+        /* Allocates a List — only use where the full set is needed (e.g. destroying all instances of a type).
+           Per-frame lookups should use HasInstance/InstanceCount/FindInstance/InstanceAt below (no allocation). */
         static List<T> Instances<T>(AnimatorState state) where T : StateMachineBehaviour
             => state.behaviours.OfType<T>().ToList();
 
@@ -75,9 +72,7 @@ namespace YGDR.Editor.Animation
             return null;
         }
 
-        /* Groups instances of T across states by name in a single pass (no per-name re-scan of every
-           state), preserving first-seen name order. Replaces the "namesUnion.Distinct() then re-filter
-           states per name" pattern, which is O(names x states) — this is O(states x instancesPerState). */
+        /* Single pass, O(states x instancesPerState) — replaces an O(names x states) "distinct then re-filter" pattern. */
         static List<(string name, AnimatorState[] states)> GroupInstancesByName<T>(AnimatorState[] selectedStates) where T : StateMachineBehaviour
         {
             var order = new List<string>();
@@ -113,73 +108,6 @@ namespace YGDR.Editor.Animation
             return instance;
         }
 
-        /* Draws a foldout header for one named instance: expand arrow, editable name field, ↑/↓ reorder
-           buttons, "−" remove button. Renames on the spot (rejects blank names — pairing requires a
-           non-blank name, see plan §7). isFirst/isLast (position within the grouped-by-name list, not
-           the raw behaviours array) gray out the arrow that would be a no-op.
-           Returns true if removal was requested; caller destroys the instance(s) and clears its own caches. */
-        bool DrawInstanceFoldoutHeader<T>(string name, AnimatorState[] statesWithName, Dictionary<string, bool> expandedByName, bool isFirst, bool isLast, out bool expanded, out bool moveUp, out bool moveDown,
-            string extraButtonIcon = null, bool extraButtonEnabled = false, Action extraButtonClicked = null,
-            string extraButton2Icon = null, bool extraButton2Enabled = false, Action extraButton2Clicked = null) where T : StateMachineBehaviour
-        {
-            expanded = !expandedByName.TryGetValue(name, out var stored) || stored;
-            bool removeRequested = false;
-            moveUp = false;
-            moveDown = false;
-
-            using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
-            {
-                var foldoutRect = EditorGUILayout.GetControlRect(false, 24, GUILayout.Width(16));
-                bool newExpanded = EditorGUI.Foldout(foldoutRect, expanded, GUIContent.none, true);
-                if (newExpanded != expanded)
-                {
-                    expandedByName[name] = newExpanded;
-                    expanded = newExpanded;
-                }
-
-                // The name is the grouping key — every instance in statesWithName shares it exactly, so this
-                // field must never show mixed. Force it off in case a prior field left showMixedValue leaked true.
-                EditorGUI.showMixedValue = false;
-                EditorGUI.BeginChangeCheck();
-                string newName = EditorGUILayout.DelayedTextField(name, GUILayout.ExpandWidth(true), GUILayout.Height(24));
-                if (EditorGUI.EndChangeCheck() && !string.IsNullOrEmpty(newName) && newName != name)
-                {
-                    foreach (var state in statesWithName)
-                    {
-                        var instance = FindInstance<T>(state, name);
-                        if (instance == null) continue;
-                        Undo.RecordObject(instance, "Rename Instance");
-                        instance.name = newName;
-                        EditorUtility.SetDirty(instance);
-                    }
-                    expandedByName.Remove(name);
-                    expandedByName[newName] = expanded;
-                }
-
-                if (extraButtonIcon != null)
-                    using (new EditorGUI.DisabledScope(!extraButtonEnabled))
-                        if (CursorBtn(extraButtonIcon, Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))
-                            extraButtonClicked?.Invoke();
-
-                if (extraButton2Icon != null)
-                    using (new EditorGUI.DisabledScope(!extraButton2Enabled))
-                        if (CursorBtn(extraButton2Icon, Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))
-                            extraButton2Clicked?.Invoke();
-
-                using (new EditorGUI.DisabledScope(isFirst))
-                    if (CursorBtn("↑", Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))
-                        moveUp = true;
-                using (new EditorGUI.DisabledScope(isLast))
-                    if (CursorBtn("↓", Styles.IconBtn, GUILayout.Width(18), GUILayout.Height(24)))
-                        moveDown = true;
-
-                if (CursorBtn("−", Styles.IconBtn, GUILayout.Width(24), GUILayout.Height(24)))
-                    removeRequested = true;
-            }
-
-            return removeRequested;
-        }
-
         /* Destroys the instance named `name` on every state in statesWithName. */
         void RemoveNamedInstance<T>(string name, AnimatorState[] statesWithName) where T : StateMachineBehaviour
         {
@@ -194,9 +122,7 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        /* Swaps the named instance with its nearest same-type neighbor in state.behaviours (direction
-           -1 = up, +1 = down), skipping over other behaviour types so the swap actually changes this
-           instance's position among same-type rows in the UI. No-op per-state at the edge. */
+        /* direction -1 = up, +1 = down; skips over other behaviour types so the swap changes UI row position. No-op per-state at the edge. */
         static void MoveNamedInstance<T>(string name, AnimatorState[] statesWithName, int direction) where T : StateMachineBehaviour
         {
             foreach (var state in statesWithName)
@@ -218,17 +144,232 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        void DrawBoolToggleButtons(bool currentValue, bool isMixed, string trueLabel, string falseLabel, float buttonWidth, Action<bool> onChanged)
+        // ── Native (UI Toolkit) equivalents, used by the migrated behavior sections below. ──────
+
+        /* Unlike the IMGUI version, remove/move/rename call straight into RemoveNamedInstance/MoveNamedInstance then
+           onMutated, since retained-mode rendering has no equivalent to the old "return early, next OnGUI redraws" trick. */
+        VisualElement BuildInstanceFoldoutHeader<T>(string name, AnimatorState[] statesWithName, Dictionary<string, bool> expandedByName,
+            bool isFirst, bool isLast, out bool expanded, Action<bool> onExpandToggled, Action onMutated,
+            string extraButtonIcon = null, bool extraButtonEnabled = false, Action extraButtonClicked = null,
+            string extraButton2Icon = null, bool extraButton2Enabled = false, Action extraButton2Clicked = null) where T : StateMachineBehaviour
         {
-            var prevContentColor = GUI.contentColor;
-            GUI.contentColor = isMixed ? Color.gray : currentValue ? Color.green : Color.gray;
-            if (CursorBtn(trueLabel, EditorStyles.miniButton, GUILayout.Width(buttonWidth)) && (isMixed || !currentValue))
-                onChanged(true);
-            GUILayout.Space(2f);
-            GUI.contentColor = isMixed ? Color.gray : !currentValue ? Color.green : Color.gray;
-            if (CursorBtn(falseLabel, EditorStyles.miniButton, GUILayout.Width(buttonWidth)) && (isMixed || currentValue))
-                onChanged(false);
-            GUI.contentColor = prevContentColor;
+            var header = new VisualElement();
+            header.AddToClassList("ygdr-behavior-foldout-header");
+            header.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+
+            bool isExpanded = !expandedByName.TryGetValue(name, out var stored) || stored;
+            expanded = isExpanded;
+
+            var foldoutArrow = new VisualElement();
+            foldoutArrow.AddToClassList("ygdr-behavior-foldout-arrow-icon");
+            foldoutArrow.style.backgroundImage = new StyleBackground(DropdownArrowIconTex);
+            foldoutArrow.style.rotate = new StyleRotate(new Rotate(isExpanded ? Angle.Degrees(0f) : Angle.Degrees(-90f)));
+            foldoutArrow.RegisterCallback<ClickEvent>(_ =>
+            {
+                isExpanded = !isExpanded;
+                expandedByName[name] = isExpanded;
+                foldoutArrow.style.rotate = new StyleRotate(new Rotate(isExpanded ? Angle.Degrees(0f) : Angle.Degrees(-90f)));
+                onExpandToggled(isExpanded);
+            });
+            header.Add(foldoutArrow);
+
+            var nameField = new TextField { value = name, isDelayed = true };
+            nameField.AddToClassList("ygdr-behavior-foldout-name");
+            nameField.RegisterValueChangedCallback(evt =>
+            {
+                string newName = evt.newValue;
+                if (string.IsNullOrEmpty(newName) || newName == name) { nameField.SetValueWithoutNotify(name); return; }
+                foreach (var state in statesWithName)
+                {
+                    var instance = FindInstance<T>(state, name);
+                    if (instance == null) continue;
+                    Undo.RecordObject(instance, "Rename Instance");
+                    instance.name = newName;
+                    EditorUtility.SetDirty(instance);
+                }
+                expandedByName.Remove(name);
+                expandedByName[newName] = isExpanded;
+                onMutated();
+            });
+            header.Add(nameField);
+
+            if (extraButtonIcon != null)
+            {
+                var extraButton = new Button(() => extraButtonClicked?.Invoke()) { text = extraButtonIcon };
+                extraButton.SetEnabled(extraButtonEnabled);
+                extraButton.AddToClassList("ygdr-behavior-icon-btn");
+                StyleSecondaryButton(extraButton);
+                header.Add(extraButton);
+            }
+
+            if (extraButton2Icon != null)
+            {
+                var extraButton2 = new Button(() => extraButton2Clicked?.Invoke()) { text = extraButton2Icon };
+                extraButton2.SetEnabled(extraButton2Enabled);
+                extraButton2.AddToClassList("ygdr-behavior-icon-btn");
+                StyleSecondaryButton(extraButton2);
+                header.Add(extraButton2);
+            }
+
+            var upButton = new Button(() => { MoveNamedInstance<T>(name, statesWithName, -1); onMutated(); }) { text = "↑" };
+            upButton.SetEnabled(!isFirst);
+            upButton.AddToClassList("ygdr-behavior-icon-btn");
+            StyleSecondaryButton(upButton);
+            header.Add(upButton);
+
+            var downButton = new Button(() => { MoveNamedInstance<T>(name, statesWithName, 1); onMutated(); }) { text = "↓" };
+            downButton.SetEnabled(!isLast);
+            downButton.AddToClassList("ygdr-behavior-icon-btn");
+            StyleSecondaryButton(downButton);
+            header.Add(downButton);
+
+            var removeButton = new Button(() => { RemoveNamedInstance<T>(name, statesWithName); onMutated(); }) { text = "−" };
+            removeButton.AddToClassList("ygdr-behavior-icon-btn");
+            StyleSecondaryButton(removeButton);
+            header.Add(removeButton);
+
+            return header;
+        }
+
+        /* content is the field body directly for single-instance sections (Tracking/Locomotion/PoseSpace), or a
+           rows container with one foldout per named instance for multi-instance sections (LayerControl/PlayableLayer).
+           No per-section "Add" button — sections stay hidden until populated via the single top-level Add Behavior dropdown. */
+        static VisualElement BuildBehaviorSectionShell(string label, out Button removeButton, out VisualElement content)
+        {
+            var section = new VisualElement();
+            section.AddToClassList("ygdr-behavior-section");
+
+            var header = new VisualElement();
+            header.AddToClassList("ygdr-behavior-section-header");
+            header.style.backgroundColor = SharedWindowStyles.AccentColor;
+            var headerLabel = new Label(label);
+            headerLabel.AddToClassList("ygdr-behavior-section-label");
+            header.Add(headerLabel);
+
+            removeButton = new Button { text = L10n.Get("vrc.remove_all") };
+            removeButton.AddToClassList("ygdr-behavior-header-btn");
+            StyleSecondaryButton(removeButton);
+            header.Add(removeButton);
+
+            section.Add(header);
+
+            content = new VisualElement();
+            content.AddToClassList("ygdr-behavior-section-rows");
+            section.Add(content);
+
+            return section;
+        }
+
+        /* _sharedBehaviorsContainer is built once, so unlike other panels nothing here auto re-applies a later
+           palette edit. Re-style by class name (same pattern as Settings.cs) instead of threading header refs. */
+        void RefreshSharedBehaviorsPaletteColors()
+        {
+            if (_sharedBehaviorsContainer == null) return;
+            // Section shell (header/add-all/remove-all) is never rebuilt, only restyled here.
+            _sharedBehaviorsContainer.Query<VisualElement>(className: "ygdr-behavior-section-header").ForEach(h => h.style.backgroundColor = SharedWindowStyles.AccentColor);
+            _sharedBehaviorsContainer.Query<Button>(className: "ygdr-behavior-header-btn").ForEach(b => b.style.backgroundColor = SharedWindowStyles.SecondaryColor);
+            // Rows/bodies/dropdowns below the shell ARE rebuilt on selection change, so the simplest
+            // way to repaint them with live colors is to rebuild them now instead of re-deriving every
+            // row's alt-banding and dropdown state via Query.
+            RefreshDriverBody();
+            RefreshAudioBody();
+            RefreshLayerControlBody();
+            RefreshOtherBehaviorsBody();
+        }
+
+        /* Caller's onChanged must both mutate data and trigger whatever refresh keeps the tint in sync — no automatic re-render. */
+        static VisualElement BuildBoolToggleButtonsField(bool currentValue, bool isMixed, string trueLabel, string falseLabel, Action<bool> onChanged)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-bool-toggle-row");
+
+            var trueButton = new Button(() => { if (isMixed || !currentValue) onChanged(true); }) { text = trueLabel };
+            trueButton.AddToClassList("ygdr-bool-toggle-btn");
+            trueButton.style.color = isMixed ? Color.gray : currentValue ? Color.green : Color.gray;
+            row.Add(trueButton);
+
+            var falseButton = new Button(() => { if (isMixed || currentValue) onChanged(false); }) { text = falseLabel };
+            falseButton.AddToClassList("ygdr-bool-toggle-btn");
+            falseButton.style.color = isMixed ? Color.gray : !currentValue ? Color.green : Color.gray;
+            row.Add(falseButton);
+
+            return row;
+        }
+
+        /* Stand-in for EditorGUILayout.Popup(int, string[]) where labels are localized text, not raw enum member names — a plain EnumField would show the wrong text. */
+        static Button BuildLocalizedIndexDropdown(int currentIndex, bool mixed, string[] labels, Action<int> onChanged)
+        {
+            var button = new Button { text = mixed ? "—" : (currentIndex >= 0 && currentIndex < labels.Length ? labels[currentIndex] : "") };
+            StyleAccentButton(button);
+            button.clicked += () =>
+            {
+                var menu = new GenericMenu();
+                for (int i = 0; i < labels.Length; i++)
+                {
+                    int capturedIndex = i;
+                    menu.AddItem(new GUIContent(labels[capturedIndex]), !mixed && capturedIndex == currentIndex, () =>
+                    {
+                        onChanged(capturedIndex);
+                        button.text = labels[capturedIndex];
+                    });
+                }
+                menu.ShowAsContext();
+            };
+            return button;
+        }
+
+        /* EnumField/PopupField don't expose the input as the field itself, so StyleAccentButton needs to target the actual clickable box. */
+        static void StyleAccentPopupField(VisualElement field)
+        {
+            var input = field.Q(className: "unity-base-popup-field__input")
+                ?? field.Q(className: "unity-enum-field__input")
+                ?? field.Q(className: "unity-popup-field__input");
+            if (input != null) StyleAccentButton(input);
+        }
+
+        /* Single entry point for adding a shared behavior — mirrors native Unity's "Add Behaviour" menu.
+           Multi-instance types (Driver/Audio/LayerControl/PlayableLayer) always listed since duplicates are valid.
+           Singleton types (Tracking/Locomotion/PoseSpace) drop out once every selected state already has one —
+           further edits happen in the section below instead. */
+        Button BuildAddBehaviorDropdownButton()
+        {
+            var button = new Button { text = "+ " + L10n.Get("states.add_behavior") };
+            button.AddToClassList("ygdr-add-behavior-btn");
+            StyleAccentButton(button);
+            button.clicked += () =>
+            {
+                var menu = new GenericMenu();
+                menu.AddItem(new GUIContent(L10n.Get("vrc.param_driver")), false, AddDriverBehaviorToSelected);
+                menu.AddItem(new GUIContent(L10n.Get("vrc.audio")), false, AddAudioBehaviorToSelected);
+                menu.AddItem(new GUIContent(L10n.Get("vrc.layer_control")), false, AddLayerControlBehaviorToSelected);
+                menu.AddItem(new GUIContent(L10n.Get("vrc.playable_layer")), false, AddPlayableLayerBehaviorToSelected);
+
+                bool allHaveTracking = _selectedStates.Length > 0 && _selectedStates.All(state => GetTrackingForState(state) != null);
+                if (!allHaveTracking) menu.AddItem(new GUIContent(L10n.Get("vrc.tracking")), false, AddTrackingBehaviorToSelected);
+
+                bool allHaveLocomotion = _selectedStates.Length > 0 && _selectedStates.All(state => GetLocomotionForState(state) != null);
+                if (!allHaveLocomotion) menu.AddItem(new GUIContent(L10n.Get("vrc.locomotion")), false, AddLocomotionBehaviorToSelected);
+
+                bool allHavePoseSpace = _selectedStates.Length > 0 && _selectedStates.All(state => GetPoseSpaceForState(state) != null);
+                if (!allHavePoseSpace) menu.AddItem(new GUIContent(L10n.Get("vrc.pose_space")), false, AddPoseSpaceBehaviorToSelected);
+
+                menu.ShowAsContext();
+            };
+            return button;
+        }
+
+        static VisualElement BuildBehaviorFieldRow(string label, string tooltip, VisualElement field)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var labelElement = new Label(label) { tooltip = tooltip };
+            labelElement.AddToClassList("ygdr-behavior-field-label");
+            row.Add(labelElement);
+            field.AddToClassList("ygdr-behavior-field-value");
+            field.AddToClassList("u-flex-fill");
+            field.AddToClassList("u-mr-4");
+            row.Add(field);
+            return row;
         }
     }
 }

@@ -21,8 +21,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.IMGUI.Controls;
@@ -33,10 +31,10 @@ namespace YGDR.Editor.Animation
     internal partial class AnimationEditorWindow
     {
         /* Opens an AdvancedDropdown listing all controller parameters below rect, invoking onSelected with the chosen name. */
-        void ShowParameterDropdown(Rect rect, string currentParam, Action<string> onSelected)
+        void ShowParameterDropdown(Rect rect, string currentParam, Action<string> onSelected, bool includeNone = false)
         {
             if (_controller == null || _controller.parameters.Length == 0) return;
-            new ParameterDropdown(_controller.parameters, currentParam, onSelected).ShowWithCheckmark(rect);
+            new ParameterDropdown(_controller.parameters, currentParam, onSelected, includeNone: includeNone).ShowWithCheckmark(rect);
         }
 
         /* Opens an AdvancedDropdown listing controller parameters of a single type below rect, invoking onSelected with the chosen name. */
@@ -56,61 +54,36 @@ namespace YGDR.Editor.Animation
                 .ShowWithCheckmark(rect);
         }
 
-        class ParameterDropdown : AdvancedDropdown
+        class ParameterDropdown : YgdrAdvancedDropdownBase
         {
-            static readonly FieldInfo    ItemIdField         = AccessTools.Field(typeof(AdvancedDropdownItem), "m_Id");
-            static readonly FieldInfo    DataSourceField     = AccessTools.Field(typeof(AdvancedDropdown), "m_DataSource");
-            static readonly PropertyInfo MaximumSizeProperty = AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
-            static FieldInfo             _selectedIDsField;
-
             readonly AnimatorControllerParameter[] _parameters;
             readonly string[] _items;
             readonly string _currentParam;
             readonly Action<string> _onSelected;
             readonly float _maxHeight;
+            readonly bool _includeNone;
             ParameterItem _currentItem;
 
-            internal ParameterDropdown(AnimatorControllerParameter[] parameters, string currentParam, Action<string> onSelected, float maxHeight = 350f)
-                : base(new AdvancedDropdownState())
+            internal ParameterDropdown(AnimatorControllerParameter[] parameters, string currentParam, Action<string> onSelected, float maxHeight = 350f, bool includeNone = false)
+                : base(new Vector2(200, 250))
             {
                 _parameters = parameters;
                 _currentParam = currentParam;
                 _onSelected = onSelected;
                 _maxHeight = maxHeight;
-                minimumSize = new Vector2(200, 250);
+                _includeNone = includeNone;
             }
 
             internal ParameterDropdown(string[] items, string current, Action<string> onSelected, float maxHeight = 250f)
-                : base(new AdvancedDropdownState())
+                : base(new Vector2(200, 150))
             {
                 _items = items;
                 _currentParam = current;
                 _onSelected = onSelected;
                 _maxHeight = maxHeight;
-                minimumSize = new Vector2(200, 150);
             }
 
-            internal void ShowWithCheckmark(Rect rect)
-            {
-                MaximumSizeProperty?.SetValue(this, new Vector2(10000f, _maxHeight));
-                Show(rect);
-
-                if (_currentItem == null || ItemIdField == null || DataSourceField == null) return;
-                try
-                {
-                    var dataSource = DataSourceField.GetValue(this);
-                    if (dataSource == null) return;
-                    _selectedIDsField ??= AccessTools.Field(dataSource.GetType(), "m_SelectedIDs");
-                    if (_selectedIDsField == null) return;
-                    var selectedIDs = (List<int>)_selectedIDsField.GetValue(dataSource);
-                    selectedIDs.Clear();
-                    selectedIDs.Add((int)ItemIdField.GetValue(_currentItem));
-                }
-                catch (Exception e)
-                {
-                    Debug.LogWarning($"[AnimatorTools] ParameterDropdown checkmark: {e.Message}");
-                }
-            }
+            internal void ShowWithCheckmark(Rect rect) => ShowCapped(rect, _maxHeight, getPreselect: () => _currentItem);
 
             protected override AdvancedDropdownItem BuildRoot()
             {
@@ -127,6 +100,12 @@ namespace YGDR.Editor.Animation
                     return root;
                 }
                 var parametersRoot = new AdvancedDropdownItem("Parameters");
+                if (_includeNone)
+                {
+                    var noneItem = new ParameterItem("[None]", "");
+                    if (string.IsNullOrEmpty(_currentParam)) _currentItem = noneItem;
+                    parametersRoot.AddChild(noneItem);
+                }
                 var groups = new Dictionary<string, AdvancedDropdownItem>();
                 foreach (var param in _parameters)
                 {
@@ -171,13 +150,40 @@ namespace YGDR.Editor.Animation
             }
         }
     }
-    internal class ClipDropdown : AdvancedDropdown
-    {
-        static readonly FieldInfo    ItemIdField         = AccessTools.Field(typeof(AdvancedDropdownItem), "m_Id");
-        static readonly FieldInfo    DataSourceField     = AccessTools.Field(typeof(AdvancedDropdown), "m_DataSource");
-        static readonly PropertyInfo MaximumSizeProperty = AccessTools.Property(typeof(AdvancedDropdown), "maximumSize");
-        static FieldInfo             _selectedIDsField;
 
+    /* Shared base for the package's AdvancedDropdown subclasses (parameter/layer/clip/blendshape pickers).
+       AdvancedDropdown has no public API to raise its built-in width/height ceiling, so every subclass needs
+       the same reflection call before Show() - this centralizes it instead of repeating it per dropdown. */
+    internal abstract class YgdrAdvancedDropdownBase : AdvancedDropdown
+    {
+        protected YgdrAdvancedDropdownBase(Vector2 minSize) : base(new AdvancedDropdownState())
+        {
+            minimumSize = minSize;
+        }
+
+        /* Uncaps AdvancedDropdown's internal maximumSize via reflection, shows it, and optionally pre-highlights
+           the current selection. getPreselect is resolved AFTER Show() runs BuildRoot() - subclasses that track
+           "current item" only populate it inside BuildRoot, so reading it any earlier would see a stale value. */
+        protected void ShowCapped(Rect rect, float maxHeight, float maxWidth = 10000f, Func<AdvancedDropdownItem> getPreselect = null)
+        {
+            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(maxWidth, maxHeight));
+            Show(rect);
+            if (getPreselect != null) WindowPatchReflection.PreselectItem(this, getPreselect());
+        }
+
+        /* Multi-select variant - same reflection uncap, but pre-highlights every item in getPreselects()
+           (e.g. all clips already linked to a parameter) instead of a single current value. */
+        protected void ShowCapped(Rect rect, float maxHeight, Func<IEnumerable<AdvancedDropdownItem>> getPreselects)
+        {
+            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, maxHeight));
+            Show(rect);
+            var preselects = getPreselects?.Invoke();
+            if (preselects != null) WindowPatchReflection.PreselectItems(this, preselects);
+        }
+    }
+
+    internal class ClipDropdown : YgdrAdvancedDropdownBase
+    {
         readonly AnimatorController          _controller;
         readonly AnimatorControllerParameter _parameter;
         readonly HashSet<AnimationClip>      _alreadyLinked = new();
@@ -192,11 +198,10 @@ namespace YGDR.Editor.Animation
         }
 
         internal ClipDropdown(AnimatorController controller, AnimatorControllerParameter parameter)
-            : base(new AdvancedDropdownState())
+            : base(new Vector2(220, 300))
         {
             _controller = controller;
             _parameter  = parameter;
-            minimumSize = new Vector2(220, 300);
 
             foreach (var clip in CollectAllClips(controller))
             {
@@ -206,29 +211,8 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        internal void ShowWithCheckmarks(Rect rect)
-        {
-            MaximumSizeProperty?.SetValue(this, new Vector2(10000f, 400f));
-            Show(rect);
-
-            if (ItemIdField == null || DataSourceField == null || _leafItems.Count == 0) return;
-            try
-            {
-                var dataSource = DataSourceField.GetValue(this);
-                if (dataSource == null) return;
-                _selectedIDsField ??= AccessTools.Field(dataSource.GetType(), "m_SelectedIDs");
-                if (_selectedIDsField == null) return;
-                var selectedIDs = (List<int>)_selectedIDsField.GetValue(dataSource);
-                selectedIDs.Clear();
-                foreach (var leafItem in _leafItems)
-                    if (_alreadyLinked.Contains(leafItem.clip))
-                        selectedIDs.Add((int)ItemIdField.GetValue(leafItem));
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[AnimatorTools] ClipDropdown checkmarks: {e.Message}");
-            }
-        }
+        internal void ShowWithCheckmarks(Rect rect) => ShowCapped(rect, 400f,
+            getPreselects: () => _leafItems.Where(leafItem => _alreadyLinked.Contains(leafItem.clip)));
 
         protected override AdvancedDropdownItem BuildRoot()
         {

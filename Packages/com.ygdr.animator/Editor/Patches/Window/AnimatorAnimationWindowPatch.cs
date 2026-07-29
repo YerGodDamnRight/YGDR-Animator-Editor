@@ -134,31 +134,41 @@ namespace YGDR.Editor.Animation
     {
         internal const string CreateNewClipLabel = "Create New Clip...";
 
-        static AnimatorController  _cachedController;
-        static List<AnimationClip> _cachedClips;
+        class ClipCacheEntry { internal AnimatorController Controller; internal List<AnimationClip> Clips; }
+        static readonly Dictionary<AnimationWindow, ClipCacheEntry> _clipCache = new();
 
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() =>
             AccessTools.Method(WindowPatchReflection.AnimationWindowClipPopupType, "OnGUI");
 
         [HarmonyPrefix]
-        static bool Prefix()
+        static bool Prefix(object __instance)
         {
             if (!AnimatorDefaultSettings.Load().clipMenuNestingEnabled) return true;
 
-            var animWindow = Resources.FindObjectsOfTypeAll<AnimationWindow>().FirstOrDefault();
+            var popupState = WindowPatchReflection.AnimationWindowClipPopupStateField?.GetValue(__instance);
+            if (popupState == null) return true;
+
+            var animWindow = WindowPatchReflection.FindWindowOwningState(popupState);
             if (animWindow == null) return true;
 
-            var controller = WindowPatchReflection.GetOpenController();
+            var stateProxy = WindowPatchReflection.AnimationWindowStateProxy.FromState(popupState);
+
+            // A locked window keeps editing whatever GameObject it's locked to, even while the graph
+            // editor has a different controller open elsewhere — so prefer that GameObject's controller
+            // over the globally open one, letting a locked and unlocked window compare different controllers.
+            var controller = (stateProxy.ActiveRootGameObject?.GetComponentInParent<Animator>(true)?.runtimeAnimatorController as AnimatorController)
+                ?? WindowPatchReflection.GetOpenController();
             if (controller == null) return true;
 
-            if (_cachedController != controller)
+            if (!_clipCache.TryGetValue(animWindow, out var cacheEntry) || cacheEntry.Controller != controller)
             {
-                _cachedController = controller;
-                _cachedClips      = CollectClips(controller);
+                cacheEntry = new ClipCacheEntry { Controller = controller, Clips = CollectClips(controller) };
+                _clipCache[animWindow] = cacheEntry;
             }
+            var cachedClips = cacheEntry.Clips;
 
-            var activeClip = new WindowPatchReflection.AnimationWindowStateProxy(animWindow).ActiveAnimationClip;
+            var activeClip = stateProxy.ActiveAnimationClip;
             string label = activeClip != null ? activeClip.name : "[No Clip]";
 
             var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight, EditorStyles.toolbarPopup);
@@ -168,9 +178,13 @@ namespace YGDR.Editor.Animation
                 {
                     try { WindowPatchReflection.AnimationWindowEditAnimationClipMethod?.Invoke(animWindow, new object[] { clip }); }
                     catch (Exception e) { Debug.LogError($"[AnimatorTools] ClipMenuDropdown select: {e}"); }
+
+                    // EditAnimationClip silently no-ops while the window is locked; force the write directly.
+                    if (stateProxy.ActiveAnimationClip != clip) stateProxy.ActiveAnimationClip = clip;
+                    animWindow.Repaint();
                 }
 
-                new ClipMenuDropdown(_cachedClips, activeClip, SelectClip, () =>
+                new ClipMenuDropdown(cachedClips, activeClip, SelectClip, () =>
                 {
                     var newClip = CreateNewClipAsset(controller);
                     if (newClip == null) return;
@@ -184,7 +198,7 @@ namespace YGDR.Editor.Animation
 
         static PatchClipMenuAdvancedDropdown() => ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream _) => InvalidateClipCache();
 
-        internal static void InvalidateClipCache() => _cachedController = null;
+        internal static void InvalidateClipCache() => _clipCache.Clear();
 
         // In-memory only: reset every editor session, seeded from the controller's own folder.
         static string _lastClipCreationFolder;
@@ -245,12 +259,8 @@ namespace YGDR.Editor.Animation
         }
     }
 
-    internal class ClipMenuDropdown : AdvancedDropdown
+    internal class ClipMenuDropdown : YgdrAdvancedDropdownBase
     {
-        static readonly FieldInfo    DataSourceField     = AccessTools.Field(typeof(AdvancedDropdown), "m_DataSource");
-        static readonly FieldInfo    ItemIdField         = AccessTools.Field(typeof(AdvancedDropdownItem), "m_Id");
-        static FieldInfo _selectedIDsField;
-
         readonly List<AnimationClip>   _clips;
         readonly AnimationClip         _currentClip;
         readonly Action<AnimationClip> _onSelected;
@@ -258,33 +268,15 @@ namespace YGDR.Editor.Animation
         ClipItem                       _currentItem;
 
         internal ClipMenuDropdown(List<AnimationClip> clips, AnimationClip currentClip, Action<AnimationClip> onSelected, Action onCreateNew)
-            : base(new AdvancedDropdownState())
+            : base(new Vector2(220, 150))
         {
             _clips       = clips;
             _currentClip = currentClip;
             _onSelected  = onSelected;
             _onCreateNew = onCreateNew;
-            minimumSize  = new Vector2(220, 150);
         }
 
-        internal void ShowDropdown(Rect rect)
-        {
-            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 500f));
-            Show(rect);
-
-            if (_currentItem == null || ItemIdField == null || DataSourceField == null) return;
-            try
-            {
-                var dataSource = DataSourceField.GetValue(this);
-                if (dataSource == null) return;
-                _selectedIDsField ??= AccessTools.Field(dataSource.GetType(), "m_SelectedIDs");
-                if (_selectedIDsField == null) return;
-                var selectedIDs = (List<int>)_selectedIDsField.GetValue(dataSource);
-                selectedIDs.Clear();
-                selectedIDs.Add((int)ItemIdField.GetValue(_currentItem));
-            }
-            catch (Exception) { }
-        }
+        internal void ShowDropdown(Rect rect) => ShowCapped(rect, 500f, getPreselect: () => _currentItem);
 
         protected override AdvancedDropdownItem BuildRoot()
         {

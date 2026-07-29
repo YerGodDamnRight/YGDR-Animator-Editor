@@ -62,7 +62,16 @@ namespace YGDR.Editor.Animation
         {
             if (state == PlayModeStateChange.ExitingPlayMode)
                 ClearCache();
+            // Re-run selection logic once edit-mode objects are live again — the animator
+            // graph otherwise stays blank until the user manually reselects the avatar GO.
+            else if (state == PlayModeStateChange.EnteredEditMode)
+                EditorApplication.delayCall += OnSelectionChanged;
         }
+
+        // Forces the cache current for the active selection before a read, since this
+        // class's own Selection.selectionChanged subscription can run after callers'
+        // (subscription order depends on which type touches VRCSyncCache first).
+        internal static void EnsureSynced() => OnSelectionChanged();
 
         static void OnSelectionChanged()
         {

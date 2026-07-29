@@ -37,7 +37,7 @@ namespace YGDR.Editor.Animation
     internal static class AnimatorParameterOps
     {
 #if VRC_SDK_VRCSDK3
-        static VRCExpressionParameters.ValueType MapToVrcValueType(AnimatorControllerParameterType type) => type switch
+        internal static VRCExpressionParameters.ValueType MapToVrcValueType(AnimatorControllerParameterType type) => type switch
         {
             AnimatorControllerParameterType.Float => VRCExpressionParameters.ValueType.Float,
             AnimatorControllerParameterType.Int   => VRCExpressionParameters.ValueType.Int,
@@ -368,6 +368,17 @@ namespace YGDR.Editor.Animation
             transition.conditions = conditions;
         }
 
+        static void RemapBehavioursInStateMachine(AnimatorStateMachine stateMachine, string fromParamName, string toParamName)
+        {
+#if VRC_SDK_VRCSDK3
+            RemapBehaviours(stateMachine.behaviours, fromParamName, toParamName);
+            foreach (var childState in stateMachine.states)
+                RemapBehaviours(childState.state.behaviours, fromParamName, toParamName);
+            foreach (var childStateMachine in stateMachine.stateMachines)
+                RemapBehavioursInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
+#endif
+        }
+
 #if VRC_SDK_VRCSDK3
         static void RemapBehaviours(StateMachineBehaviour[] behaviours, string fromParamName, string toParamName)
         {
@@ -408,15 +419,6 @@ namespace YGDR.Editor.Animation
                 playAudio.ParameterName = toParamName;
                 EditorUtility.SetDirty(playAudio);
             }
-        }
-
-        static void RemapBehavioursInStateMachine(AnimatorStateMachine stateMachine, string fromParamName, string toParamName)
-        {
-            RemapBehaviours(stateMachine.behaviours, fromParamName, toParamName);
-            foreach (var childState in stateMachine.states)
-                RemapBehaviours(childState.state.behaviours, fromParamName, toParamName);
-            foreach (var childStateMachine in stateMachine.stateMachines)
-                RemapBehavioursInStateMachine(childStateMachine.stateMachine, fromParamName, toParamName);
         }
 
         internal static (List<string> toAdd, List<string> toRemove) PreviewVrcParameterSync(

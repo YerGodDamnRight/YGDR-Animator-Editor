@@ -140,6 +140,10 @@ namespace YGDR.Editor.Animation
         // Whether a feature is currently patched (use this for UI display — reflects actual patch state)
         internal static bool IsEnabled(string featureId) => _instances.ContainsKey(featureId);
 
+        // Fired whenever a feature's actual patch state changes — patching is deferred a few frames
+        // past editor/domain-reload startup, so UI built earlier must resync via this instead of a one-time read.
+        internal static event Action<string> Changed;
+
         internal static void SetEnabled(string featureId, bool enabled)
         {
             // Always persist user preference, even if patch state is already correct
@@ -166,6 +170,7 @@ namespace YGDR.Editor.Animation
                     EditorPrefs.DeleteKey($"AnimatorTools.PendingEnable.{featureId}");
                     EditorPrefs.SetBool($"AnimatorTools.Feature.{featureId}", false);
                 }
+                Changed?.Invoke(featureId);
             }
             else
             {
@@ -173,6 +178,7 @@ namespace YGDR.Editor.Animation
                 var harmony = _instances[featureId];
                 harmony.UnpatchAll(harmony.Id);  // pass ID — no-arg removes ALL patches system-wide
                 _instances.Remove(featureId);
+                Changed?.Invoke(featureId);
             }
         }
 

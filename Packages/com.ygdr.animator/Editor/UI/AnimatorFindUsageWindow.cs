@@ -21,7 +21,9 @@
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 #if VRC_SDK_VRCSDK3
 using VRC.Dynamics;
 using VRC.SDK3.Avatars.Components;
@@ -61,46 +63,15 @@ namespace YGDR.Editor.Animation
         List<GameObject> _effectingObjects = new();
         string _effectingComponentTypeName = "";
         string _headerText = "";
-        Vector2 _scrollPosition;
-        bool    _rowsScrollEnabled;
         int _activeTab;
 
-
-
-        static GUIStyle s_tabLabelStyle;
-        static GUIStyle TabLabelStyle => s_tabLabelStyle ??= new GUIStyle(EditorStyles.label)
-        {
-            alignment = TextAnchor.MiddleCenter,
-            fontSize  = 11
-        };
-
-        static GUIStyle s_rowLabelStyle;
-        static GUIStyle RowLabelStyle => s_rowLabelStyle ??= new GUIStyle(EditorStyles.label)
-        {
-            alignment = TextAnchor.MiddleLeft,
-            fontSize  = 11,
-            padding   = new RectOffset(4, 4, 0, 0)
-        };
-
-        static GUIStyle s_clickableRowStyle;
-        static GUIStyle ClickableRowStyle
-        {
-            get
-            {
-                if (s_clickableRowStyle != null) return s_clickableRowStyle;
-                var hoverTex = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
-                hoverTex.SetPixel(0, 0, new Color(1f, 1f, 1f, 0.07f));
-                hoverTex.Apply();
-                s_clickableRowStyle = new GUIStyle(EditorStyles.label)
-                {
-                    alignment = TextAnchor.MiddleLeft,
-                    fontSize  = 11,
-                    padding   = new RectOffset(4, 4, 0, 0),
-                    hover     = { background = hoverTex, textColor = Color.white }
-                };
-                return s_clickableRowStyle;
-            }
-        }
+        Label _headerLabel;
+        VisualElement _panel;
+        VisualElement _tabStripContainer;
+        Button[] _tabButtons;
+        Label _leftHeaderLabel;
+        Label _rightHeaderLabel;
+        ScrollView _rowsScroll;
 
         internal static void Open(AnimatorControllerParameter parameter, AnimatorController controller)
         {
@@ -114,6 +85,7 @@ namespace YGDR.Editor.Animation
             window._controllerPath = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
             window.RebuildCache();
             window.SelectDefaultTab();
+            window.RefreshAll();
             window.Show();
         }
 
@@ -127,26 +99,35 @@ namespace YGDR.Editor.Animation
             window._parameterName = null;
             window._controllerPath = controller != null ? AssetDatabase.GetAssetPath(controller) : null;
             window.RebuildCache();
+            window.RefreshAll();
             window.Show();
         }
 
         void OnEnable()
         {
-            wantsMouseMove = true;
             ObjectChangeEvents.changesPublished += OnAssetChangesPublished;
             Undo.undoRedoPerformed += OnUndoRedo;
+            L10n.OnLanguageChanged += OnLanguageChanged;
         }
 
         void OnDisable()
         {
             ObjectChangeEvents.changesPublished -= OnAssetChangesPublished;
             Undo.undoRedoPerformed -= OnUndoRedo;
+            L10n.OnLanguageChanged -= OnLanguageChanged;
+            SharedWindowStyles.UnregisterPaletteRefresh(RefreshPaletteColors);
+        }
+
+        void OnLanguageChanged()
+        {
+            RebuildCache();
+            RefreshAll();
         }
 
         void OnUndoRedo()
         {
             RebuildCache();
-            Repaint();
+            RefreshAll();
         }
 
         void OnAssetChangesPublished(ref ObjectChangeEventStream stream)
@@ -178,7 +159,7 @@ namespace YGDR.Editor.Animation
 
                 if (!relevant) continue;
                 RebuildCache();
-                Repaint();
+                RefreshAll();
                 return;
             }
         }
@@ -476,93 +457,114 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
-        // ── GUI ───────────────────────────────────────────────────────────────
+        // ── GUI (native UI Toolkit) ──────────────────────────────────────────
 
-        void OnGUI()
+        void CreateGUI()
         {
-            DrawHeader();
-            DrawColumns();
+            var root = rootVisualElement;
+            root.style.flexGrow = 1;
+            root.EnableInClassList("ygdr-dark", EditorGUIUtility.isProSkin);
+            root.EnableInClassList("ygdr-light", !EditorGUIUtility.isProSkin);
+
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/com.ygdr.animator/Editor/UI/SharedWindowStyles.uss");
+            if (styleSheet != null) root.styleSheets.Add(styleSheet);
+
+            BuildLayout(root);
+
+            SharedWindowStyles.RegisterPaletteRefresh(RefreshPaletteColors);
+            RefreshAll();
         }
 
-        void DrawHeader()
+        void BuildLayout(VisualElement root)
         {
-            var headerRect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
-            if (Event.current.type == EventType.Repaint)
-            {
-                var fullWidthRect = headerRect;
-                fullWidthRect.x = 0;
-                fullWidthRect.width = EditorGUIUtility.currentViewWidth;
-                EditorGUI.DrawRect(fullWidthRect, AnimationEditorWindow.Styles.SectionHeaderBg);
-            }
+            _headerLabel = new Label { enableRichText = true };
+            _headerLabel.AddToClassList("ygdr-fu-header");
+            root.Add(_headerLabel);
 
-            GUI.Label(headerRect, _headerText, AnimationEditorWindow.Styles.FindUsesHeader);
-        }
+            _panel = new VisualElement();
+            _panel.AddToClassList("ygdr-fu-body");
+            root.Add(_panel);
 
-        void DrawTabStrip()
-        {
-            const float stripHeight = 28f;
-            const float sectionPad  = 12f; // matches SectionPadded.padding
-            var layoutRect = EditorGUILayout.GetControlRect(false, stripHeight);
-            // Expand to full section width and shift up to cancel top padding — flush with section top edge
-            var stripRect = new Rect(layoutRect.x - sectionPad, layoutRect.y - sectionPad, layoutRect.width + sectionPad * 2f, stripHeight);
-            GUILayout.Space(8f); // gap between strip and scroll content
+            _tabStripContainer = new VisualElement();
+            _tabStripContainer.AddToClassList("ygdr-tab-strip");
+            _panel.Add(_tabStripContainer);
 
 #if VRC_SDK_VRCSDK3
             const int tabCount = 4;
 #else
             const int tabCount = 3;
 #endif
-            float tabWidth = stripRect.width / tabCount;
+            _tabButtons = new Button[tabCount];
+            for (int i = 0; i < tabCount; i++)
+            {
+                int tabIndex = i;
+                var button = new Button(() => SetActiveTab(tabIndex));
+                button.AddToClassList("ygdr-tab-strip-button");
+                AnimationEditorWindow.StyleHoverTint(button, () => _activeTab == tabIndex,
+                    () => AnimationEditorWindow.AccentHoverColor, () => SharedWindowStyles.AccentColor);
+                _tabStripContainer.Add(button);
+                _tabButtons[i] = button;
+            }
 
-            DrawTabRect(new Rect(stripRect.x,                 stripRect.y, tabWidth, stripRect.height), TabTransitions, L10n.Get("find_usage.tab.transitions").Replace("{n}", _transitionRows.Count.ToString()),    _transitionRows.Count > 0);
-            DrawTabRect(new Rect(stripRect.x + tabWidth,      stripRect.y, tabWidth, stripRect.height), TabBehaviors,   L10n.Get("find_usage.tab.behaviors").Replace("{n}",   _behaviorRows.Count.ToString()),      _behaviorRows.Count > 0);
-            DrawTabRect(new Rect(stripRect.x + tabWidth * 2f, stripRect.y, tabWidth, stripRect.height), TabAapClips,    L10n.Get("find_usage.tab.aap_clips").Replace("{n}",   _clipStates.Count.ToString()),         _clipStates.Count > 0);
+            _rowsScroll = SharedWindowStyles.BuildColumnHeaderAndScroll(_panel, "ygdr-fu-col-header-row",
+                "ygdr-fu-col-header", "ygdr-fu-rows-scroll", out _leftHeaderLabel, out _rightHeaderLabel);
+        }
+
+        void RefreshPaletteColors()
+        {
+            if (_headerLabel == null) return;
+            _headerLabel.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            SharedWindowStyles.ApplyStandardPanelPalette(_panel, _leftHeaderLabel, _rightHeaderLabel, _rowsScroll);
+            RefreshTabStrip();
+        }
+
+        void RefreshAll()
+        {
+            if (_headerLabel == null) return;
+            RefreshHeader();
+            RefreshTabStrip();
+            RefreshColumnsAndRows();
+        }
+
+        void RefreshHeader()
+        {
+            _headerLabel.text = _headerText;
+        }
+
+        void RefreshTabStrip()
+        {
+            bool show = _parameterName != null;
+            _tabStripContainer.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!show) return;
+
+            SetTabButton(0, TabTransitions, L10n.Get("find_usage.tab.transitions").Replace("{n}", _transitionRows.Count.ToString()), _transitionRows.Count > 0);
+            SetTabButton(1, TabBehaviors,   L10n.Get("find_usage.tab.behaviors").Replace("{n}", _behaviorRows.Count.ToString()),     _behaviorRows.Count > 0);
+            SetTabButton(2, TabAapClips,    L10n.Get("find_usage.tab.aap_clips").Replace("{n}", _clipStates.Count.ToString()),        _clipStates.Count > 0);
 #if VRC_SDK_VRCSDK3
-            DrawTabRect(new Rect(stripRect.x + tabWidth * 3f, stripRect.y, tabWidth, stripRect.height), TabObjects,     L10n.Get("find_usage.tab.objects").Replace("{n}",     _effectingObjects.Count.ToString()),   _effectingObjects.Count > 0);
+            SetTabButton(3, TabObjects,     L10n.Get("find_usage.tab.objects").Replace("{n}", _effectingObjects.Count.ToString()),    _effectingObjects.Count > 0);
 #endif
         }
 
-        void DrawTabRect(Rect rect, int tabIndex, string label, bool enabled)
+        void SetTabButton(int uiIndex, int tabIndex, string label, bool enabled)
         {
-            bool isActive = _activeTab == tabIndex;
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                var accent = AnimationEditorWindow.Styles.AccentColor;
-                var bgColor = isActive
-                    ? new Color(accent.r + 0.16f, accent.g + 0.16f, accent.b + 0.16f, 1f)
-                    : accent;
-                EditorGUI.DrawRect(rect, bgColor);
-
-                var previousColor = GUI.color;
-                GUI.color = enabled ? Color.white : new Color(1f, 1f, 1f, 0.35f);
-                GUI.Label(rect, label, TabLabelStyle);
-                GUI.color = previousColor;
-            }
-
-            if (enabled)
-            {
-                if (Event.current.type == EventType.MouseDown && Event.current.button == 0 && rect.Contains(Event.current.mousePosition))
-                {
-                    _activeTab = tabIndex;
-                    Event.current.Use();
-                    Repaint();
-                }
-                if (!isActive)
-                    EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
-            }
+            var button = _tabButtons[uiIndex];
+            button.text = label;
+            button.SetEnabled(enabled);
+            button.EnableInClassList("ygdr-tab-strip-button-active", _activeTab == tabIndex);
+            button.style.backgroundColor = _activeTab == tabIndex ? AnimationEditorWindow.AccentHoverColor : SharedWindowStyles.AccentColor;
         }
 
-        void DrawColumns()
+        void SetActiveTab(int tabIndex)
         {
-            const float middleGap          = 8f;
-            const float columnHeaderHeight = 24f;
-            const float rowPad             = 2f;
-            float rowHeight = EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+            if (_activeTab == tabIndex) return;
+            _activeTab = tabIndex;
+            RefreshTabStrip();
+            RefreshColumnsAndRows();
+        }
 
+        void RefreshColumnsAndRows()
+        {
             bool isPathMode = _parameterName == null;
-
-            int displayRows;
             string leftHeader;
             string rightHeader;
             bool isEmpty;
@@ -570,7 +572,6 @@ namespace YGDR.Editor.Animation
 
             if (isPathMode)
             {
-                displayRows  = Mathf.Max(_clipStates.Count, _clipAssets.Count, 1);
                 leftHeader   = L10n.Get("find_usage.col.state_node");
                 rightHeader  = L10n.Get("find_usage.col.animation_clip");
                 isEmpty      = _clipStates.Count == 0 && _clipAssets.Count == 0;
@@ -581,28 +582,24 @@ namespace YGDR.Editor.Animation
                 switch (_activeTab)
                 {
                     case TabTransitions:
-                        displayRows  = Mathf.Max(_transitionRows.Count, 1);
                         leftHeader   = L10n.Get("find_usage.col.transition");
                         rightHeader  = L10n.Get("find_usage.col.condition");
                         isEmpty      = _transitionRows.Count == 0;
                         emptyMessage = L10n.Get("find_usage.empty.no_transitions");
                         break;
                     case TabBehaviors:
-                        displayRows  = Mathf.Max(_behaviorRows.Count, 1);
                         leftHeader   = L10n.Get("find_usage.col.state_node");
                         rightHeader  = L10n.Get("find_usage.col.behavior");
                         isEmpty      = _behaviorRows.Count == 0;
                         emptyMessage = L10n.Get("find_usage.empty.no_behaviors");
                         break;
                     case TabAapClips:
-                        displayRows  = Mathf.Max(_clipStates.Count, _clipAssets.Count, 1);
                         leftHeader   = L10n.Get("find_usage.col.state_node");
                         rightHeader  = L10n.Get("find_usage.col.animation_clip");
                         isEmpty      = _clipStates.Count == 0 && _clipAssets.Count == 0;
                         emptyMessage = L10n.Get("find_usage.empty.no_clips");
                         break;
                     default: // TabObjects
-                        displayRows  = Mathf.Max(_effectingObjects.Count, 1);
                         leftHeader   = _effectingComponentTypeName;
                         rightHeader  = L10n.Get("find_usage.col.effecting_object");
                         isEmpty      = _effectingObjects.Count == 0;
@@ -611,109 +608,59 @@ namespace YGDR.Editor.Animation
                 }
             }
 
-            float rowsHeight = rowPad + displayRows * rowHeight;
+            _leftHeaderLabel.text = leftHeader;
+            _rightHeaderLabel.text = rightHeader;
 
-            GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(8f);
-            var outerRect = EditorGUILayout.BeginVertical(AnimationEditorWindow.Styles.SectionPadded);
-            if (Event.current.type == EventType.Repaint && outerRect.height > 0)
-                EditorGUI.DrawRect(outerRect, AnimationEditorWindow.Styles.PrimaryColor);
+            _rowsScroll.Clear();
 
-            if (_parameterName != null)
-                DrawTabStrip();
-
-            // Column headers — fixed, outside scroll view
-            float pillW     = AnimationEditorWindow.Styles.k_pillW;
-            var headerRect  = EditorGUILayout.GetControlRect(false, columnHeaderHeight);
-            float halfWidth = (headerRect.width - middleGap) / 2f;
-
-            var leftHeaderRect  = new Rect(headerRect.x,                         headerRect.y, halfWidth, columnHeaderHeight);
-            var rightHeaderRect = new Rect(headerRect.x + halfWidth + middleGap, headerRect.y, halfWidth, columnHeaderHeight);
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(leftHeaderRect,  AnimationEditorWindow.Styles.AccentColor);
-                EditorGUI.DrawRect(rightHeaderRect, AnimationEditorWindow.Styles.AccentColor);
-            }
-            GUI.Label(leftHeaderRect,  leftHeader,  AnimationEditorWindow.Styles.FindUsesHeader);
-            GUI.Label(rightHeaderRect, rightHeader, AnimationEditorWindow.Styles.FindUsesHeader);
-
-            // Rows — pill toggles height clamp, shared scroll position
-            float maxVisibleRowsH = 8f * rowHeight + rowPad * 2;
-            float clampedH        = _rowsScrollEnabled ? Mathf.Min(rowsHeight, maxVisibleRowsH) : rowsHeight;
-
-            GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
-            var rowsAreaRect = EditorGUILayout.GetControlRect(false, clampedH);
-            var viewRect     = new Rect(rowsAreaRect.x, rowsAreaRect.y, rowsAreaRect.width - pillW, rowsAreaRect.height);
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(new Rect(viewRect.x,                         viewRect.y, halfWidth, viewRect.height), AnimationEditorWindow.Styles.SecondaryColor);
-                EditorGUI.DrawRect(new Rect(viewRect.x + halfWidth + middleGap, viewRect.y, halfWidth, viewRect.height), AnimationEditorWindow.Styles.SecondaryColor);
-            }
-
-            if (_rowsScrollEnabled && rowsHeight > maxVisibleRowsH)
-            {
-                var contentRect = new Rect(0, 0, viewRect.width, rowsHeight);
-                _scrollPosition = GUI.BeginScrollView(viewRect, _scrollPosition, contentRect, false, true, GUIStyle.none, GUI.skin.verticalScrollbar);
-                DrawRowsContent(0, halfWidth, middleGap, rowPad, rowHeight, isEmpty, isPathMode, emptyMessage);
-                GUI.EndScrollView();
-            }
-            else
-            {
-                DrawRowsContent(viewRect.x, halfWidth, middleGap, viewRect.y + rowPad, rowHeight, isEmpty, isPathMode, emptyMessage);
-            }
-
-            // Draw pill last so it renders on top of row content
-            var rowsPillRect    = new Rect(rowsAreaRect.xMax - pillW, rowsAreaRect.y, pillW, rowsAreaRect.height);
-            bool newRowsEnabled = GUI.Toggle(rowsPillRect, _rowsScrollEnabled, "", AnimationEditorWindow.Styles.ScrollToggleBtn);
-            if (newRowsEnabled != _rowsScrollEnabled) { _rowsScrollEnabled = newRowsEnabled; _scrollPosition = Vector2.zero; }
-            EditorGUIUtility.AddCursorRect(rowsPillRect, MouseCursor.Link);
-            if (Event.current.type == EventType.MouseMove) Repaint();
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(8f);
-            EditorGUILayout.EndHorizontal();
-            EditorGUILayout.Space(10);
-        }
-
-        void DrawRowsContent(float x, float halfWidth, float middleGap, float rowY, float rowHeight, bool isEmpty, bool isPathMode, string emptyMessage)
-        {
             if (isEmpty)
             {
-                GUI.Label(new Rect(x, rowY, halfWidth, rowHeight), emptyMessage, AnimationEditorWindow.Styles.EmptyLabel);
+                var emptyLabel = new Label(emptyMessage);
+                emptyLabel.AddToClassList("ygdr-fu-empty");
+                _rowsScroll.Add(emptyLabel);
+                return;
             }
-            else if (isPathMode)
+
+            if (isPathMode)
             {
-                DrawClipRows(x, halfWidth, middleGap, rowY, rowHeight);
+                BuildClipRows();
+                return;
             }
-            else
+
+            switch (_activeTab)
             {
-                switch (_activeTab)
-                {
-                    case TabTransitions: DrawParameterRows(_transitionRows, x, halfWidth, middleGap, rowY, rowHeight); break;
-                    case TabBehaviors:   DrawParameterRows(_behaviorRows,   x, halfWidth, middleGap, rowY, rowHeight); break;
-                    case TabAapClips:    DrawClipRows(x, halfWidth, middleGap, rowY, rowHeight);                       break;
-                    default:             DrawEffectingObjectRows(x, halfWidth, middleGap, rowY, rowHeight);            break;
-                }
+                case TabTransitions: BuildParameterRows(_transitionRows); break;
+                case TabBehaviors:   BuildParameterRows(_behaviorRows);   break;
+                case TabAapClips:    BuildClipRows();                     break;
+                default:             BuildEffectingObjectRows();          break; // TabObjects
             }
         }
 
-        void DrawParameterRows(List<UsageRow> rows, float x, float halfWidth, float middleGap, float startY, float rowHeight)
+        VisualElement MakeRow(int index) => SharedWindowStyles.MakeStripedRow("ygdr-fu-row", index);
+
+        static Button MakeClickableCell(string text, System.Action onClick)
         {
-            float rowY = startY;
-            for (int i = 0; i < rows.Count; i++, rowY += rowHeight)
+            var button = new Button(onClick) { text = text };
+            button.AddToClassList("ygdr-fu-cell");
+            button.AddToClassList("ygdr-fu-cell-clickable");
+            return button;
+        }
+
+        static VisualElement MakeEmptyCell()
+        {
+            var spacer = new VisualElement();
+            spacer.AddToClassList("ygdr-fu-cell");
+            return spacer;
+        }
+
+        void BuildParameterRows(List<UsageRow> rows)
+        {
+            for (int i = 0; i < rows.Count; i++)
             {
-                var row       = rows[i];
-                var leftRect  = new Rect(x,                         rowY, halfWidth, rowHeight);
-                var rightRect = new Rect(x + halfWidth + middleGap, rowY, halfWidth, rowHeight);
+                var row = rows[i];
+                var rowElement = MakeRow(i);
 
-                if (Event.current.type == EventType.Repaint && i % 2 == 1)
-                {
-                    EditorGUI.DrawRect(leftRect,  AnimationEditorWindow.Styles.RowAltColor);
-                    EditorGUI.DrawRect(rightRect, AnimationEditorWindow.Styles.RowAltColor);
-                }
-
-                if (GUI.Button(leftRect, row.transitionLabel, ClickableRowStyle))
+                rowElement.Add(MakeClickableCell(row.transitionLabel, () =>
                 {
                     if (row.transition != null)
                         AnimationEditorWindow.FocusTransition(row.transition, _controller);
@@ -721,10 +668,48 @@ namespace YGDR.Editor.Animation
                         AnimationEditorWindow.FocusAsset(row.blendTree, _controller);
                     else if (row.state != null)
                         AnimationEditorWindow.FocusState(row.state, _controller);
-                }
-                EditorGUIUtility.AddCursorRect(leftRect, MouseCursor.Link);
+                }));
 
-                GUI.Label(rightRect, row.conditionLabel, RowLabelStyle);
+                var conditionLabel = new Label(row.conditionLabel);
+                conditionLabel.AddToClassList("ygdr-fu-cell");
+                rowElement.Add(conditionLabel);
+
+                _rowsScroll.Add(rowElement);
+            }
+        }
+
+        void BuildClipRows()
+        {
+            int maxRows = Mathf.Max(_clipStates.Count, _clipAssets.Count);
+            for (int i = 0; i < maxRows; i++)
+            {
+                var rowElement = MakeRow(i);
+
+                if (i < _clipStates.Count)
+                {
+                    var state = _clipStates[i];
+                    rowElement.Add(MakeClickableCell(state.name, () => AnimationEditorWindow.FocusAsset(state, _controller)));
+                }
+                else
+                {
+                    rowElement.Add(MakeEmptyCell());
+                }
+
+                if (i < _clipAssets.Count)
+                {
+                    var clip = _clipAssets[i];
+                    rowElement.Add(MakeClickableCell(clip.name, () =>
+                    {
+                        Selection.activeObject = clip;
+                        EditorGUIUtility.PingObject(clip);
+                    }));
+                }
+                else
+                {
+                    rowElement.Add(MakeEmptyCell());
+                }
+
+                _rowsScroll.Add(rowElement);
             }
         }
 
@@ -869,60 +854,22 @@ namespace YGDR.Editor.Animation
         }
 #endif
 
-        void DrawEffectingObjectRows(float x, float halfWidth, float middleGap, float startY, float rowHeight)
+        void BuildEffectingObjectRows()
         {
-            float rowY = startY;
-            for (int i = 0; i < _effectingObjects.Count; i++, rowY += rowHeight)
+            for (int i = 0; i < _effectingObjects.Count; i++)
             {
                 var go = _effectingObjects[i];
                 if (go == null) continue;
 
-                var rightRect = new Rect(x + halfWidth + middleGap, rowY, halfWidth, rowHeight);
-                if (Event.current.type == EventType.Repaint && i % 2 == 1)
-                    EditorGUI.DrawRect(rightRect, AnimationEditorWindow.Styles.RowAltColor);
-                if (GUI.Button(rightRect, go.name, ClickableRowStyle))
+                var rowElement = MakeRow(i);
+                rowElement.Add(MakeEmptyCell());
+                rowElement.Add(MakeClickableCell(go.name, () =>
                 {
                     Selection.activeGameObject = go;
                     EditorGUIUtility.PingObject(go);
-                }
-                EditorGUIUtility.AddCursorRect(rightRect, MouseCursor.Link);
-            }
-        }
+                }));
 
-        void DrawClipRows(float x, float halfWidth, float middleGap, float startY, float rowHeight)
-        {
-            int maxRows = Mathf.Max(_clipStates.Count, _clipAssets.Count);
-            float rowY = startY;
-            for (int i = 0; i < maxRows; i++, rowY += rowHeight)
-            {
-                bool hasState = i < _clipStates.Count;
-                bool hasClip  = i < _clipAssets.Count;
-
-                var leftRect  = new Rect(x,                         rowY, halfWidth, rowHeight);
-                var rightRect = new Rect(x + halfWidth + middleGap, rowY, halfWidth, rowHeight);
-
-                if (Event.current.type == EventType.Repaint && i % 2 == 1)
-                {
-                    if (hasState) EditorGUI.DrawRect(leftRect,  AnimationEditorWindow.Styles.RowAltColor);
-                    if (hasClip)  EditorGUI.DrawRect(rightRect, AnimationEditorWindow.Styles.RowAltColor);
-                }
-
-                if (hasState)
-                {
-                    if (GUI.Button(leftRect, _clipStates[i].name, ClickableRowStyle))
-                        AnimationEditorWindow.FocusAsset(_clipStates[i], _controller);
-                    EditorGUIUtility.AddCursorRect(leftRect, MouseCursor.Link);
-                }
-
-                if (hasClip)
-                {
-                    if (GUI.Button(rightRect, _clipAssets[i].name, ClickableRowStyle))
-                    {
-                        Selection.activeObject = _clipAssets[i];
-                        EditorGUIUtility.PingObject(_clipAssets[i]);
-                    }
-                    EditorGUIUtility.AddCursorRect(rightRect, MouseCursor.Link);
-                }
+                _rowsScroll.Add(rowElement);
             }
         }
     }

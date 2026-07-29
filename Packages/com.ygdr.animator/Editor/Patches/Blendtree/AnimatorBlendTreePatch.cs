@@ -1083,26 +1083,21 @@ namespace YGDR.Editor.Animation
     // ── Remap parameter dropdowns ────────────────────────────────────────────
 
     /* First step of blend tree parameter remap: lists parameters actually used by rootNode and its descendants. */
-    internal class BlendTreeRemapSourceDropdown : AdvancedDropdown
+    internal class BlendTreeRemapSourceDropdown : YgdrAdvancedDropdownBase
     {
         readonly BlendTree _rootNode;
         readonly AnimatorController _controller;
         readonly Rect _screenRect;
 
         internal BlendTreeRemapSourceDropdown(BlendTree rootNode, AnimatorController controller, Rect screenRect)
-            : base(new AdvancedDropdownState())
+            : base(new Vector2(200, 250))
         {
             _rootNode   = rootNode;
             _controller = controller;
             _screenRect = screenRect;
-            minimumSize = new Vector2(200, 250);
         }
 
-        internal void ShowCapped(Rect rect)
-        {
-            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
-            Show(rect);
-        }
+        internal void ShowCapped(Rect rect) => ShowCapped(rect, 350f);
 
         protected override AdvancedDropdownItem BuildRoot()
         {
@@ -1133,26 +1128,21 @@ namespace YGDR.Editor.Animation
     }
 
     /* Second step of blend tree parameter remap: lists all float parameters on the controller, then remaps rootNode's subtree on selection. */
-    internal class BlendTreeRemapTargetDropdown : AdvancedDropdown
+    internal class BlendTreeRemapTargetDropdown : YgdrAdvancedDropdownBase
     {
         readonly BlendTree _rootNode;
         readonly AnimatorController _controller;
         readonly string _fromParam;
 
         internal BlendTreeRemapTargetDropdown(BlendTree rootNode, AnimatorController controller, string fromParam)
-            : base(new AdvancedDropdownState())
+            : base(new Vector2(200, 250))
         {
             _rootNode   = rootNode;
             _controller = controller;
             _fromParam  = fromParam;
-            minimumSize = new Vector2(200, 250);
         }
 
-        internal void ShowCapped(Rect rect)
-        {
-            WindowPatchReflection.AdvancedDropdownMaximumSizeProperty?.SetValue(this, new Vector2(10000f, 350f));
-            Show(rect);
-        }
+        internal void ShowCapped(Rect rect) => ShowCapped(rect, 350f);
 
         protected override AdvancedDropdownItem BuildRoot()
         {

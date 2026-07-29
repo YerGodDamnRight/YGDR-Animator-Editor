@@ -23,8 +23,9 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.Animations;
-using ReorderableList = UnityEditorInternal.ReorderableList;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDKBase;
 
@@ -32,160 +33,229 @@ namespace YGDR.Editor.Animation
 {
     internal partial class AnimationEditorWindow
     {
-        // ── VRC Tracking Control section ──────────────────────────────────────
+        // ── VRC Tracking / Locomotion / Temporary Pose Space sections (native, single-instance) ────────
 
-        void DrawVRCTrackingSection()
+        static readonly VRC_AnimatorTrackingControl.TrackingType[] TrackingTypes =
         {
-            bool allHave = _selectedStates.Length > 0 && _selectedStates.All(state => GetTrackingForState(state) != null);
-            bool anyHave = _selectedStates.Any(state => GetTrackingForState(state) != null);
+            VRC_AnimatorTrackingControl.TrackingType.NoChange,
+            VRC_AnimatorTrackingControl.TrackingType.Tracking,
+            VRC_AnimatorTrackingControl.TrackingType.Animation,
+        };
 
-            using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
+        VisualElement _trackingSection;
+        Button _trackingRemoveButton;
+        VisualElement _trackingBody;
+        VisualElement _locomotionSection;
+        Button _locomotionRemoveButton;
+        VisualElement _locomotionBody;
+        VisualElement _poseSpaceSection;
+        Button _poseSpaceRemoveButton;
+        VisualElement _poseSpaceBody;
+
+        VisualElement BuildOtherBehaviorsBody()
+        {
+            var root = new VisualElement();
+            root.AddToClassList("ygdr-behavior-group");
+
+            _trackingSection = BuildBehaviorSectionShell(L10n.Get("vrc.tracking"), out _trackingRemoveButton, out _trackingBody);
+            _trackingBody.AddToClassList("ygdr-behavior-instance-body");
+            _trackingRemoveButton.clicked += () =>
             {
-                GUILayout.Label(L10n.Get("vrc.tracking"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
-                GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                    foreach (var state in _selectedStates)
-                        GetOrCreateTracking(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                {
-                    RemoveTrackingFromAll();
-                    anyHave = false;
-                }
-            }
+                RemoveTrackingFromAll();
+                RefreshTrackingSection();
+            };
+            root.Add(_trackingSection);
 
-            if (!anyHave) return;
+            _locomotionSection = BuildBehaviorSectionShell(L10n.Get("vrc.locomotion"), out _locomotionRemoveButton, out _locomotionBody);
+            _locomotionBody.AddToClassList("ygdr-behavior-instance-body");
+            _locomotionRemoveButton.clicked += () =>
+            {
+                RemoveLocomotionFromAll();
+                RefreshLocomotionSection();
+            };
+            root.Add(_locomotionSection);
 
-            const float pad = 6f;
-            var bodyRect = EditorGUILayout.BeginVertical();
-            if (Event.current.type == EventType.Repaint && bodyRect.height > 0)
-                EditorGUI.DrawRect(bodyRect, Styles.SecondaryColor);
+            _poseSpaceSection = BuildBehaviorSectionShell(L10n.Get("vrc.pose_space"), out _poseSpaceRemoveButton, out _poseSpaceBody);
+            _poseSpaceBody.AddToClassList("ygdr-behavior-instance-body");
+            _poseSpaceRemoveButton.clicked += () =>
+            {
+                RemovePoseSpaceFromAll();
+                RefreshPoseSpaceSection();
+            };
+            root.Add(_poseSpaceSection);
 
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginVertical();
-
-            DrawTrackingFields();
-
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndVertical();
+            return root;
         }
 
-        void DrawTrackingFields()
+        void RefreshOtherBehaviorsBody()
         {
+            RefreshTrackingSection();
+            RefreshLocomotionSection();
+            RefreshPoseSpaceSection();
+        }
+
+        /* Entry points for the top-level Add Behavior dropdown. Singleton types — loop is a no-op for states
+           that already have one, so this doubles as "fill the gap" for a mixed selection. */
+        void AddTrackingBehaviorToSelected()
+        {
+            foreach (var state in _selectedStates) GetOrCreateTracking(state);
+            RefreshTrackingSection();
+        }
+
+        void AddLocomotionBehaviorToSelected()
+        {
+            foreach (var state in _selectedStates) GetOrCreateLocomotion(state);
+            RefreshLocomotionSection();
+        }
+
+        void AddPoseSpaceBehaviorToSelected()
+        {
+            foreach (var state in _selectedStates) GetOrCreatePoseSpace(state);
+            RefreshPoseSpaceSection();
+        }
+
+        // ── Tracking ──────────────────────────────────────────────────────────
+
+        void RefreshTrackingSection()
+        {
+            if (_trackingBody == null) return;
+            bool anyHave = _selectedStates.Any(state => GetTrackingForState(state) != null);
+            _trackingSection.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
+            _trackingRemoveButton.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
+
+            _trackingBody.Clear();
+            _trackingBody.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!anyHave) return;
+
             var statesWithTracking = _selectedStates.Where(state => GetTrackingForState(state) != null).ToArray();
             var first = GetTrackingForState(statesWithTracking[0]);
             bool multi = statesWithTracking.Length > 1;
 
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                GUILayout.Space(114);
-                GUILayout.Label(L10n.Get("vrc.tracking.no_change"), EditorStyles.label, GUILayout.Width(70));
-                GUILayout.Label(L10n.Get("vrc.tracking.tracking"),   EditorStyles.label, GUILayout.Width(70));
-                GUILayout.Label(L10n.Get("vrc.tracking.animation"),  EditorStyles.label, GUILayout.Width(70));
-            }
+            _trackingBody.Add(BuildTrackingColumnHeaderRow());
+            _trackingBody.Add(BuildTrackingSetAllRow(statesWithTracking));
 
-            // Set All row
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(L10n.Get("vrc.tracking.set_all"), GUILayout.Width(110));
-                DrawSetAllTrackingRadio(statesWithTracking, VRC_AnimatorTrackingControl.TrackingType.NoChange,  70f);
-                DrawSetAllTrackingRadio(statesWithTracking, VRC_AnimatorTrackingControl.TrackingType.Tracking,  70f);
-                DrawSetAllTrackingRadio(statesWithTracking, VRC_AnimatorTrackingControl.TrackingType.Animation, 70f);
-            }
-            EditorGUILayout.Space(2f);
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.head"),          statesWithTracking, ctrl => ctrl.trackingHead,         (ctrl, v) => ctrl.trackingHead         = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.left_hand"),     statesWithTracking, ctrl => ctrl.trackingLeftHand,      (ctrl, v) => ctrl.trackingLeftHand     = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.right_hand"),    statesWithTracking, ctrl => ctrl.trackingRightHand,     (ctrl, v) => ctrl.trackingRightHand    = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.hip"),           statesWithTracking, ctrl => ctrl.trackingHip,           (ctrl, v) => ctrl.trackingHip          = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.left_foot"),     statesWithTracking, ctrl => ctrl.trackingLeftFoot,      (ctrl, v) => ctrl.trackingLeftFoot     = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.right_foot"),    statesWithTracking, ctrl => ctrl.trackingRightFoot,     (ctrl, v) => ctrl.trackingRightFoot    = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.left_fingers"),  statesWithTracking, ctrl => ctrl.trackingLeftFingers,   (ctrl, v) => ctrl.trackingLeftFingers  = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.right_fingers"), statesWithTracking, ctrl => ctrl.trackingRightFingers,  (ctrl, v) => ctrl.trackingRightFingers = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.eyes_eyelids"),  statesWithTracking, ctrl => ctrl.trackingEyes,          (ctrl, v) => ctrl.trackingEyes         = v));
+            _trackingBody.Add(BuildTrackingBodyPartRow(L10n.Get("vrc.tracking.mouth_jaw"),     statesWithTracking, ctrl => ctrl.trackingMouth,         (ctrl, v) => ctrl.trackingMouth        = v));
 
-            DrawTrackingRow(L10n.Get("vrc.tracking.head"),          statesWithTracking, audio => audio.trackingHead,         (a, v) => a.trackingHead         = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.left_hand"),     statesWithTracking, audio => audio.trackingLeftHand,      (a, v) => a.trackingLeftHand     = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.right_hand"),    statesWithTracking, audio => audio.trackingRightHand,     (a, v) => a.trackingRightHand    = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.hip"),           statesWithTracking, audio => audio.trackingHip,           (a, v) => a.trackingHip          = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.left_foot"),     statesWithTracking, audio => audio.trackingLeftFoot,      (a, v) => a.trackingLeftFoot     = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.right_foot"),    statesWithTracking, audio => audio.trackingRightFoot,     (a, v) => a.trackingRightFoot    = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.left_fingers"),  statesWithTracking, audio => audio.trackingLeftFingers,   (a, v) => a.trackingLeftFingers  = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.right_fingers"), statesWithTracking, audio => audio.trackingRightFingers,  (a, v) => a.trackingRightFingers = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.eyes_eyelids"),  statesWithTracking, audio => audio.trackingEyes,          (a, v) => a.trackingEyes         = v);
-            DrawTrackingRow(L10n.Get("vrc.tracking.mouth_jaw"),     statesWithTracking, audio => audio.trackingMouth,         (a, v) => a.trackingMouth        = v);
-
-            using (new EditorGUILayout.HorizontalScope())
+            var debugStringField = new TextField { value = first.debugString ?? "", showMixedValue = multi && statesWithTracking.Any(state => GetTrackingForState(state).debugString != first.debugString) };
+            debugStringField.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithTracking.Any(state => GetTrackingForState(state).debugString != first.debugString);
-                EditorGUI.BeginChangeCheck();
-                string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
-                if (EditorGUI.EndChangeCheck())
+                foreach (var state in _selectedStates)
                 {
+                    var tracking = GetOrCreateTracking(state);
+                    Undo.RecordObject(tracking, "Edit Debug String");
+                    tracking.debugString = evt.newValue;
+                    EditorUtility.SetDirty(tracking);
+                }
+            });
+            _trackingBody.Add(BuildBehaviorFieldRow(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string"), debugStringField));
+        }
+
+        static VisualElement BuildTrackingColumnHeaderRow()
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-tracking-row");
+            var spacer = new VisualElement();
+            spacer.AddToClassList("ygdr-behavior-field-label");
+            row.Add(spacer);
+            row.Add(BuildTrackingColumnLabel(L10n.Get("vrc.tracking.no_change")));
+            row.Add(BuildTrackingColumnLabel(L10n.Get("vrc.tracking.tracking")));
+            row.Add(BuildTrackingColumnLabel(L10n.Get("vrc.tracking.animation")));
+            return row;
+        }
+
+        static Label BuildTrackingColumnLabel(string text)
+        {
+            var label = new Label(text);
+            label.AddToClassList("ygdr-tracking-col");
+            return label;
+        }
+
+        VisualElement BuildTrackingSetAllRow(AnimatorState[] statesWithTracking)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-tracking-row");
+            var label = new Label(L10n.Get("vrc.tracking.set_all"));
+            label.AddToClassList("ygdr-behavior-field-label");
+            row.Add(label);
+
+            foreach (var type in TrackingTypes)
+            {
+                bool allMatch = statesWithTracking.All(state => TrackingAllFieldsAre(GetTrackingForState(state), type));
+                var toggle = new Toggle { value = allMatch };
+                toggle.AddToClassList("ygdr-tracking-col");
+                var capturedType = type;
+                toggle.RegisterValueChangedCallback(evt =>
+                {
+                    if (!evt.newValue) { toggle.SetValueWithoutNotify(allMatch); return; }
                     foreach (var state in _selectedStates)
                     {
                         var tracking = GetOrCreateTracking(state);
-                        Undo.RecordObject(tracking, "Edit Debug String");
-                        tracking.debugString = newDebugString;
+                        Undo.RecordObject(tracking, "Set All Tracking");
+                        TrackingSetAllFields(tracking, capturedType);
                         EditorUtility.SetDirty(tracking);
                     }
-                }
-                EditorGUI.showMixedValue = false;
+                    RefreshTrackingSection();
+                });
+                row.Add(toggle);
             }
+            return row;
         }
 
-        /* Draws a single tracking body-part row with label and three radio toggles (NoChange/Tracking/Animation), applying set to all selected states on change. */
-        void DrawTrackingRow(
-            string label,
-            AnimatorState[] statesWithTracking,
+        VisualElement BuildTrackingBodyPartRow(string label, AnimatorState[] statesWithTracking,
             Func<VRCAnimatorTrackingControl, VRC_AnimatorTrackingControl.TrackingType> get,
             Action<VRCAnimatorTrackingControl, VRC_AnimatorTrackingControl.TrackingType> set)
         {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-tracking-row");
+
             var firstVal = get(GetTrackingForState(statesWithTracking[0]));
             bool mixed = statesWithTracking.Length > 1 && statesWithTracking.Any(state => get(GetTrackingForState(state)) != firstVal);
-
             Color labelColor = mixed
                 ? new Color(0.4f, 0.7f, 1f)
                 : firstVal == VRC_AnimatorTrackingControl.TrackingType.Tracking  ? new Color(0.4f, 0.9f, 0.4f)
                 : firstVal == VRC_AnimatorTrackingControl.TrackingType.Animation ? new Color(1f, 0.85f, 0.2f)
                 : Color.white;
 
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                var prevColor = GUI.color;
-                GUI.color = labelColor;
-                EditorGUILayout.LabelField(label, GUILayout.Width(110));
-                GUI.color = prevColor;
-                DrawTrackingRadio(statesWithTracking, get, set, VRC_AnimatorTrackingControl.TrackingType.NoChange,  firstVal, mixed, 70f);
-                DrawTrackingRadio(statesWithTracking, get, set, VRC_AnimatorTrackingControl.TrackingType.Tracking,  firstVal, mixed, 70f);
-                DrawTrackingRadio(statesWithTracking, get, set, VRC_AnimatorTrackingControl.TrackingType.Animation, firstVal, mixed, 70f);
-            }
-        }
+            var labelElement = new Label(label);
+            labelElement.AddToClassList("ygdr-behavior-field-label");
+            labelElement.style.color = labelColor;
+            row.Add(labelElement);
 
-        /* Draws one radio Toggle for targetType; sets all selected states to targetType via set when clicked while not already selected. */
-        void DrawTrackingRadio(
-            AnimatorState[] statesWithTracking,
-            Func<VRCAnimatorTrackingControl, VRC_AnimatorTrackingControl.TrackingType> get,
-            Action<VRCAnimatorTrackingControl, VRC_AnimatorTrackingControl.TrackingType> set,
-            VRC_AnimatorTrackingControl.TrackingType targetType,
-            VRC_AnimatorTrackingControl.TrackingType currentVal,
-            bool mixed,
-            float width)
-        {
-            bool isSelected = !mixed && currentVal == targetType;
-            EditorGUI.BeginChangeCheck();
-            EditorGUILayout.Toggle(isSelected, GUILayout.Width(width));
-            if (EditorGUI.EndChangeCheck() && !isSelected)
+            foreach (var type in TrackingTypes)
             {
-                foreach (var state in _selectedStates)
+                bool isSelected = !mixed && firstVal == type;
+                var toggle = new Toggle { value = isSelected };
+                toggle.AddToClassList("ygdr-tracking-col");
+                var capturedType = type;
+                toggle.RegisterValueChangedCallback(evt =>
                 {
-                    var tracking = GetOrCreateTracking(state);
-                    Undo.RecordObject(tracking, "Edit Tracking Control");
-                    set(tracking, targetType);
-                    EditorUtility.SetDirty(tracking);
-                }
+                    if (!evt.newValue) { toggle.SetValueWithoutNotify(isSelected); return; }
+                    foreach (var state in _selectedStates)
+                    {
+                        var tracking = GetOrCreateTracking(state);
+                        Undo.RecordObject(tracking, "Edit Tracking Control");
+                        set(tracking, capturedType);
+                        EditorUtility.SetDirty(tracking);
+                    }
+                    RefreshTrackingSection();
+                });
+                row.Add(toggle);
             }
+            return row;
         }
 
         static VRCAnimatorTrackingControl GetTrackingForState(AnimatorState state)
             => state.behaviours.OfType<VRCAnimatorTrackingControl>().FirstOrDefault();
 
-        /* Returns the existing VRCAnimatorTrackingControl on state, or adds and registers a new one via Undo. */
         static VRCAnimatorTrackingControl GetOrCreateTracking(AnimatorState state)
         {
             var tracking = state.behaviours.OfType<VRCAnimatorTrackingControl>().FirstOrDefault();
@@ -196,35 +266,12 @@ namespace YGDR.Editor.Animation
             return tracking;
         }
 
-        /* Draws a "Set All" radio toggle that sets every tracking field on all selected states to targetType when clicked. */
-        void DrawSetAllTrackingRadio(
-            AnimatorState[] statesWithTracking,
-            VRC_AnimatorTrackingControl.TrackingType targetType,
-            float width)
-        {
-            bool allMatch = statesWithTracking.All(state => TrackingAllFieldsAre(GetTrackingForState(state), targetType));
-            EditorGUI.BeginChangeCheck();
-            EditorGUILayout.Toggle(allMatch, GUILayout.Width(width));
-            if (EditorGUI.EndChangeCheck() && !allMatch)
-            {
-                foreach (var state in _selectedStates)
-                {
-                    var tracking = GetOrCreateTracking(state);
-                    Undo.RecordObject(tracking, "Set All Tracking");
-                    TrackingSetAllFields(tracking, targetType);
-                    EditorUtility.SetDirty(tracking);
-                }
-            }
-        }
-
-        /* Returns true if every tracking field on ctrl equals type, used to determine "Set All" radio state. */
         static bool TrackingAllFieldsAre(VRCAnimatorTrackingControl ctrl, VRC_AnimatorTrackingControl.TrackingType type)
             => ctrl.trackingHead == type && ctrl.trackingLeftHand == type && ctrl.trackingRightHand == type
             && ctrl.trackingHip == type && ctrl.trackingLeftFoot == type && ctrl.trackingRightFoot == type
             && ctrl.trackingLeftFingers == type && ctrl.trackingRightFingers == type
             && ctrl.trackingEyes == type && ctrl.trackingMouth == type;
 
-        /* Sets every tracking body-part field on ctrl to type in a single statement. */
         static void TrackingSetAllFields(VRCAnimatorTrackingControl ctrl, VRC_AnimatorTrackingControl.TrackingType type)
         {
             ctrl.trackingHead = ctrl.trackingLeftHand = ctrl.trackingRightHand = ctrl.trackingHip =
@@ -245,88 +292,49 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        // ── VRC Locomotion Control section ────────────────────────────────────
+        // ── Locomotion ────────────────────────────────────────────────────────
 
-        void DrawVRCLocomotionSection()
+        void RefreshLocomotionSection()
         {
-            bool allHave = _selectedStates.Length > 0 && _selectedStates.All(state => GetLocomotionForState(state) != null);
+            if (_locomotionBody == null) return;
             bool anyHave = _selectedStates.Any(state => GetLocomotionForState(state) != null);
+            _locomotionSection.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
+            _locomotionRemoveButton.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
 
-            using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
-            {
-                GUILayout.Label(L10n.Get("vrc.locomotion"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
-                GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                    foreach (var state in _selectedStates)
-                        GetOrCreateLocomotion(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                {
-                    RemoveLocomotionFromAll();
-                    anyHave = false;
-                }
-            }
-
+            _locomotionBody.Clear();
+            _locomotionBody.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
             if (!anyHave) return;
 
-            const float pad = 6f;
-            var bodyRect = EditorGUILayout.BeginVertical();
-            if (Event.current.type == EventType.Repaint && bodyRect.height > 0)
-                EditorGUI.DrawRect(bodyRect, Styles.SecondaryColor);
-
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginVertical();
-
-            DrawLocomotionFields();
-
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndVertical();
-        }
-
-        void DrawLocomotionFields()
-        {
             var statesWithLocomotion = _selectedStates.Where(state => GetLocomotionForState(state) != null).ToArray();
             var first = GetLocomotionForState(statesWithLocomotion[0]);
             bool multi = statesWithLocomotion.Length > 1;
 
-            using (new EditorGUILayout.HorizontalScope())
+            bool mixedDisable = multi && statesWithLocomotion.Any(state => GetLocomotionForState(state).disableLocomotion != first.disableLocomotion);
+            var disableField = BuildBoolToggleButtonsField(first.disableLocomotion, mixedDisable, L10n.Get("vrc.locomotion.disable"), L10n.Get("vrc.locomotion.enable"), isDisabled =>
             {
-                bool mixedDisable = multi && statesWithLocomotion.Any(state => GetLocomotionForState(state).disableLocomotion != first.disableLocomotion);
-                EditorGUILayout.LabelField(L10n.Get("vrc.locomotion.label"), GUILayout.Width(110));
-                DrawBoolToggleButtons(first.disableLocomotion, mixedDisable, L10n.Get("vrc.locomotion.disable"), L10n.Get("vrc.locomotion.enable"), 60f, isDisabled =>
+                foreach (var state in _selectedStates)
                 {
-                    foreach (var state in _selectedStates)
-                    {
-                        var locomotion = GetOrCreateLocomotion(state);
-                        Undo.RecordObject(locomotion, "Edit Locomotion Control");
-                        locomotion.disableLocomotion = isDisabled;
-                        EditorUtility.SetDirty(locomotion);
-                    }
-                });
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithLocomotion.Any(state => GetLocomotionForState(state).debugString != first.debugString);
-                EditorGUI.BeginChangeCheck();
-                string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
-                if (EditorGUI.EndChangeCheck())
-                {
-                    foreach (var state in _selectedStates)
-                    {
-                        var locomotion = GetOrCreateLocomotion(state);
-                        Undo.RecordObject(locomotion, "Edit Debug String");
-                        locomotion.debugString = newDebugString;
-                        EditorUtility.SetDirty(locomotion);
-                    }
+                    var locomotion = GetOrCreateLocomotion(state);
+                    Undo.RecordObject(locomotion, "Edit Locomotion Control");
+                    locomotion.disableLocomotion = isDisabled;
+                    EditorUtility.SetDirty(locomotion);
                 }
-                EditorGUI.showMixedValue = false;
-            }
+                RefreshLocomotionSection();
+            });
+            _locomotionBody.Add(BuildBehaviorFieldRow(L10n.Get("vrc.locomotion.label"), null, disableField));
+
+            var debugStringField = new TextField { value = first.debugString ?? "", showMixedValue = multi && statesWithLocomotion.Any(state => GetLocomotionForState(state).debugString != first.debugString) };
+            debugStringField.RegisterValueChangedCallback(evt =>
+            {
+                foreach (var state in _selectedStates)
+                {
+                    var locomotion = GetOrCreateLocomotion(state);
+                    Undo.RecordObject(locomotion, "Edit Debug String");
+                    locomotion.debugString = evt.newValue;
+                    EditorUtility.SetDirty(locomotion);
+                }
+            });
+            _locomotionBody.Add(BuildBehaviorFieldRow(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string"), debugStringField));
         }
 
         static VRCAnimatorLocomotionControl GetLocomotionForState(AnimatorState state)
@@ -355,126 +363,77 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        // ── VRC Temporary Pose Space section ─────────────────────────────────
+        // ── Temporary Pose Space ─────────────────────────────────────────────
 
-        void DrawVRCPoseSpaceSection()
+        void RefreshPoseSpaceSection()
         {
-            bool allHave = _selectedStates.Length > 0 && _selectedStates.All(state => GetPoseSpaceForState(state) != null);
+            if (_poseSpaceBody == null) return;
             bool anyHave = _selectedStates.Any(state => GetPoseSpaceForState(state) != null);
+            _poseSpaceSection.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
+            _poseSpaceRemoveButton.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
 
-            using (new EditorGUILayout.HorizontalScope(Styles.BehaviorSectionHeader))
-            {
-                GUILayout.Label(L10n.Get("vrc.pose_space"), Styles.BehaviorSectionLabel, GUILayout.Height(24));
-                GUILayout.FlexibleSpace();
-                if (!allHave && CursorBtn(L10n.Get("vrc.add_to_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                    foreach (var state in _selectedStates)
-                        GetOrCreatePoseSpace(state);
-                if (anyHave && CursorBtn(L10n.Get("vrc.remove_all"), Styles.BehaviorHeaderBtn, GUILayout.Width(125)))
-                {
-                    RemovePoseSpaceFromAll();
-                    anyHave = false;
-                }
-            }
-
+            _poseSpaceBody.Clear();
+            _poseSpaceBody.style.display = anyHave ? DisplayStyle.Flex : DisplayStyle.None;
             if (!anyHave) return;
 
-            const float pad = 6f;
-            var bodyRect = EditorGUILayout.BeginVertical();
-            if (Event.current.type == EventType.Repaint && bodyRect.height > 0)
-                EditorGUI.DrawRect(bodyRect, Styles.SecondaryColor);
-
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.BeginVertical();
-
-            DrawPoseSpaceFields();
-
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndHorizontal();
-            GUILayout.Space(pad);
-            EditorGUILayout.EndVertical();
-        }
-
-        void DrawPoseSpaceFields()
-        {
             var statesWithPoseSpace = _selectedStates.Where(state => GetPoseSpaceForState(state) != null).ToArray();
             var first = GetPoseSpaceForState(statesWithPoseSpace[0]);
             bool multi = statesWithPoseSpace.Length > 1;
 
-            using (new EditorGUILayout.HorizontalScope())
+            bool mixedEnter = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).enterPoseSpace != first.enterPoseSpace);
+            var enterField = BuildBoolToggleButtonsField(first.enterPoseSpace, mixedEnter, L10n.Get("vrc.pose_space.enter"), L10n.Get("vrc.pose_space.exit"), isEnter =>
             {
-                bool mixedEnter = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).enterPoseSpace != first.enterPoseSpace);
-                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.pose_space.pose_space"), L10n.Get("vrc.tooltip.pose_space")), GUILayout.Width(110));
-                DrawBoolToggleButtons(first.enterPoseSpace, mixedEnter, L10n.Get("vrc.pose_space.enter"), L10n.Get("vrc.pose_space.exit"), 60f, isEnter =>
+                foreach (var state in _selectedStates)
                 {
-                    foreach (var state in _selectedStates)
-                    {
-                        var poseSpace = GetOrCreatePoseSpace(state);
-                        Undo.RecordObject(poseSpace, "Edit Pose Space");
-                        poseSpace.enterPoseSpace = isEnter;
-                        EditorUtility.SetDirty(poseSpace);
-                    }
-                });
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.pose_space.fixed_delay"), L10n.Get("vrc.tooltip.fixed_delay")), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).fixedDelay != first.fixedDelay);
-                EditorGUI.BeginChangeCheck();
-                bool newFixedDelay = EditorGUILayout.Toggle(first.fixedDelay, GUILayout.Width(16));
-                if (EditorGUI.EndChangeCheck())
-                {
-                    foreach (var state in _selectedStates)
-                    {
-                        var poseSpace = GetOrCreatePoseSpace(state);
-                        Undo.RecordObject(poseSpace, "Edit Fixed Delay");
-                        poseSpace.fixedDelay = newFixedDelay;
-                        EditorUtility.SetDirty(poseSpace);
-                    }
+                    var poseSpace = GetOrCreatePoseSpace(state);
+                    Undo.RecordObject(poseSpace, "Edit Pose Space");
+                    poseSpace.enterPoseSpace = isEnter;
+                    EditorUtility.SetDirty(poseSpace);
                 }
-                EditorGUI.showMixedValue = false;
-            }
+                RefreshPoseSpaceSection();
+            });
+            _poseSpaceBody.Add(BuildBehaviorFieldRow(L10n.Get("vrc.pose_space.pose_space"), L10n.Get("vrc.tooltip.pose_space"), enterField));
 
-            using (new EditorGUILayout.HorizontalScope())
+            var fixedDelayField = new Toggle { value = first.fixedDelay, showMixedValue = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).fixedDelay != first.fixedDelay) };
+            fixedDelayField.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.LabelField(new GUIContent(first.fixedDelay ? L10n.Get("vrc.pose_space.delay_time_s") : L10n.Get("vrc.pose_space.delay_time_pct"), L10n.Get("vrc.tooltip.delay_time")), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithPoseSpace.Any(state => !Mathf.Approximately(GetPoseSpaceForState(state).delayTime, first.delayTime));
-                EditorGUI.BeginChangeCheck();
-                float newDelayTime = EditorGUILayout.FloatField(first.delayTime);
-                if (EditorGUI.EndChangeCheck())
+                foreach (var state in _selectedStates)
                 {
-                    foreach (var state in _selectedStates)
-                    {
-                        var poseSpace = GetOrCreatePoseSpace(state);
-                        Undo.RecordObject(poseSpace, "Edit Delay Time");
-                        poseSpace.delayTime = newDelayTime;
-                        EditorUtility.SetDirty(poseSpace);
-                    }
+                    var poseSpace = GetOrCreatePoseSpace(state);
+                    Undo.RecordObject(poseSpace, "Edit Fixed Delay");
+                    poseSpace.fixedDelay = evt.newValue;
+                    EditorUtility.SetDirty(poseSpace);
                 }
-                EditorGUI.showMixedValue = false;
-            }
+                RefreshPoseSpaceSection();
+            });
+            _poseSpaceBody.Add(BuildBehaviorFieldRow(L10n.Get("vrc.pose_space.fixed_delay"), L10n.Get("vrc.tooltip.fixed_delay"), fixedDelayField));
 
-            using (new EditorGUILayout.HorizontalScope())
+            var delayTimeField = new FloatField { value = first.delayTime, showMixedValue = multi && statesWithPoseSpace.Any(state => !Mathf.Approximately(GetPoseSpaceForState(state).delayTime, first.delayTime)) };
+            delayTimeField.RegisterValueChangedCallback(evt =>
             {
-                EditorGUILayout.LabelField(new GUIContent(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string")), GUILayout.Width(110));
-                EditorGUI.showMixedValue = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).debugString != first.debugString);
-                EditorGUI.BeginChangeCheck();
-                string newDebugString = EditorGUILayout.TextField(first.debugString ?? "");
-                if (EditorGUI.EndChangeCheck())
+                foreach (var state in _selectedStates)
                 {
-                    foreach (var state in _selectedStates)
-                    {
-                        var poseSpace = GetOrCreatePoseSpace(state);
-                        Undo.RecordObject(poseSpace, "Edit Debug String");
-                        poseSpace.debugString = newDebugString;
-                        EditorUtility.SetDirty(poseSpace);
-                    }
+                    var poseSpace = GetOrCreatePoseSpace(state);
+                    Undo.RecordObject(poseSpace, "Edit Delay Time");
+                    poseSpace.delayTime = evt.newValue;
+                    EditorUtility.SetDirty(poseSpace);
                 }
-                EditorGUI.showMixedValue = false;
-            }
+            });
+            string delayLabel = first.fixedDelay ? L10n.Get("vrc.pose_space.delay_time_s") : L10n.Get("vrc.pose_space.delay_time_pct");
+            _poseSpaceBody.Add(BuildBehaviorFieldRow(delayLabel, L10n.Get("vrc.tooltip.delay_time"), delayTimeField));
+
+            var debugStringField = new TextField { value = first.debugString ?? "", showMixedValue = multi && statesWithPoseSpace.Any(state => GetPoseSpaceForState(state).debugString != first.debugString) };
+            debugStringField.RegisterValueChangedCallback(evt =>
+            {
+                foreach (var state in _selectedStates)
+                {
+                    var poseSpace = GetOrCreatePoseSpace(state);
+                    Undo.RecordObject(poseSpace, "Edit Debug String");
+                    poseSpace.debugString = evt.newValue;
+                    EditorUtility.SetDirty(poseSpace);
+                }
+            });
+            _poseSpaceBody.Add(BuildBehaviorFieldRow(L10n.Get("vrc.debug_string"), L10n.Get("vrc.tooltip.debug_string"), debugStringField));
         }
 
         static VRCAnimatorTemporaryPoseSpace GetPoseSpaceForState(AnimatorState state)

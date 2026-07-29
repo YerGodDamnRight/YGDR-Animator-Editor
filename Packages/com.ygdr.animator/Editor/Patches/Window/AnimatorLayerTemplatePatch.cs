@@ -26,8 +26,11 @@ using System.Reflection.Emit;
 using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
+using UnityEditor.UIElements;
 using UnityEngine;
+using UnityEngine.UIElements;
 using ReorderableList = UnityEditorInternal.ReorderableList;
+using Label = UnityEngine.UIElements.Label;
 
 namespace YGDR.Editor.Animation
 {
@@ -307,7 +310,6 @@ namespace YGDR.Editor.Animation
         object _targetLayerView;
         string[] _renamedParameterNames;
         string[] _cachedParamLabels;
-        Vector2 _scrollPosition;
         string _targetControllerPath;
         string _importedLayerName;
 
@@ -327,48 +329,17 @@ namespace YGDR.Editor.Animation
         AnimatorControllerParameter[] _blendTreeTemplateParams;
         string             _importedBlendTreeName;
 
-        static Color s_hoverColor;
-        static bool s_hoverColorValid;
-
-        static GUIStyle s_columnHeaderStyle;
-        static GUIStyle ColumnHeaderStyle => s_columnHeaderStyle ??= new GUIStyle(EditorStyles.boldLabel)
-        {
-            alignment = TextAnchor.MiddleLeft,
-            fontSize  = 11,
-            padding   = new RectOffset(4, 4, 0, 0),
-            normal    = { textColor = Color.white }
-        };
-
-        static GUIStyle s_confirmLabelStyle;
-        static GUIStyle ConfirmLabelStyle => s_confirmLabelStyle ??= new GUIStyle(GUIStyle.none)
-        {
-            alignment = TextAnchor.MiddleCenter,
-            fontStyle = FontStyle.Bold,
-            fontSize  = 12,
-            normal    = { textColor = Color.white }
-        };
-
-        internal static void InvalidateStyles()
-        {
-            s_confirmLabelStyle = null;
-            s_columnHeaderStyle = null;
-            s_hoverColorValid   = false;
-        }
-
-        static Color GetHoverColor()
-        {
-            if (s_hoverColorValid) return s_hoverColor;
-            var accent = AnimationEditorWindow.Styles.AccentColor;
-            s_hoverColor = new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f);
-            s_hoverColorValid = true;
-            return s_hoverColor;
-        }
+        VisualElement _panel;
+        Label _leftHeaderLabel;
+        Label _rightHeaderLabel;
+        ScrollView _rowsScroll;
+        VisualElement _footerContainer;
+        Button _confirmButton;
 
         static AnimatorTemplateParameterWindow GetOrCreate()
         {
             s_activeWindow = GetWindow<AnimatorTemplateParameterWindow>("Template");
             s_activeWindow.minSize = new Vector2(400, 280);
-            s_activeWindow.wantsMouseMove = true;
             return s_activeWindow;
         }
 
@@ -381,13 +352,13 @@ namespace YGDR.Editor.Animation
             window._sourceController  = controller;
             window._sourceLayerIndex  = layerIndex;
             window._templateName      = controller.layers[layerIndex].name;
-            window._scrollPosition    = Vector2.zero;
 
             var qualifiedNames         = CollectLayerParams(controller, layerIndex);
             var parameters             = controller.parameters.Where(p => qualifiedNames.Contains(p.name)).ToArray();
             window._createModeParams       = parameters;
             window._renamedParameterNames  = parameters.Select(p => p.name).ToArray();
             window._cachedParamLabels      = BuildParamLabels(parameters);
+            window.RefreshAll();
             window.Focus();
         }
 
@@ -399,7 +370,6 @@ namespace YGDR.Editor.Animation
             window._isBlendTreeMode    = false;
             window._templateController = templateController;
             window._targetLayerView    = targetLayerView;
-            window._scrollPosition     = Vector2.zero;
 
             var parameters                = templateController.parameters;
             window._renamedParameterNames = parameters.Select(p => p.name).ToArray();
@@ -411,6 +381,7 @@ namespace YGDR.Editor.Animation
                 ? AssetDatabase.GetAssetPath(targetController) : "";
             window._importedLayerName = templateController.layers.Length > 0
                 ? templateController.layers[0].name : "";
+            window.RefreshAll();
             window.Focus();
         }
 
@@ -422,7 +393,6 @@ namespace YGDR.Editor.Animation
             window._isBlendTreeMode = true;
             window._sourceBlendTree = sourceBlendTree;
             window._templateName    = sourceBlendTree.name;
-            window._scrollPosition  = Vector2.zero;
 
             var paramNames = new HashSet<string>();
             CollectMotionParamNames(sourceBlendTree, paramNames);
@@ -434,6 +404,7 @@ namespace YGDR.Editor.Animation
             window._createModeParams      = parameters;
             window._renamedParameterNames = parameters.Select(p => p.name).ToArray();
             window._cachedParamLabels     = BuildParamLabels(parameters);
+            window.RefreshAll();
             window.Focus();
         }
 
@@ -447,7 +418,6 @@ namespace YGDR.Editor.Animation
             window._targetBlendTree       = targetBlendTree;
             window._targetControllerForBT = targetController;
             window._importedBlendTreeName = templateBlendTree.name;
-            window._scrollPosition        = Vector2.zero;
 
             var paramNames = new HashSet<string>();
             CollectMotionParamNames(templateBlendTree, paramNames);
@@ -459,159 +429,196 @@ namespace YGDR.Editor.Animation
             window._blendTreeTemplateParams   = parameters;
             window._renamedParameterNames     = parameters.Select(p => p.name).ToArray();
             window._cachedParamLabels         = BuildParamLabels(parameters);
+            window.RefreshAll();
             window.Focus();
         }
 
-        void OnDestroy() => s_activeWindow = null;
-
-        void OnGUI()
+        void OnEnable()
         {
-            try
-            {
-                if (Event.current.type == EventType.MouseMove) Repaint();
-                DrawParameterList();
-            }
-            catch (ExitGUIException) { throw; }
-            catch (Exception e)
-            {
-                Debug.LogError($"[AnimatorTools] AnimatorTemplateParameterWindow.OnGUI: {e}");
-            }
+            L10n.OnLanguageChanged += OnLanguageChanged;
         }
 
-        void DrawParameterList()
+        void OnDestroy()
         {
-            var parameters = _isCreateMode
-                ? (_createModeParams ?? System.Array.Empty<AnimatorControllerParameter>())
-                : _isBlendTreeMode
-                    ? (_blendTreeTemplateParams ?? System.Array.Empty<AnimatorControllerParameter>())
-                    : (_templateController != null ? _templateController.parameters : System.Array.Empty<AnimatorControllerParameter>());
-
-            GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(8f);
-            var outerRect = EditorGUILayout.BeginVertical(AnimationEditorWindow.Styles.SectionPadded);
-            if (Event.current.type == EventType.Repaint && outerRect.height > 0)
-                EditorGUI.DrawRect(outerRect, AnimationEditorWindow.Styles.PrimaryColor);
-
-            DrawParamScrollView(parameters);
-            DrawConfirmFooter();
-
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(8f);
-            EditorGUILayout.EndHorizontal();
-            EditorGUILayout.Space(8f);
+            SharedWindowStyles.UnregisterPaletteRefresh(RefreshPaletteColors);
+            L10n.OnLanguageChanged -= OnLanguageChanged;
+            s_activeWindow = null;
         }
 
-        void DrawParamScrollView(AnimatorControllerParameter[] parameters)
+        void OnLanguageChanged()
         {
-            const float middleGap          = 8f;
-            const float columnHeaderHeight = 24f;
-            const float rowPad             = 2f;
-            float rowHeight   = EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
-            float totalHeight = columnHeaderHeight + rowPad + Mathf.Max(parameters.Length, 1) * rowHeight;
+            titleContent = new GUIContent(_isCreateMode
+                ? (_isBlendTreeMode ? L10n.Get("layer_template.create_blendtree") : L10n.Get("layer_template.create_template"))
+                : (_isBlendTreeMode ? L10n.Get("layer_template.import_blendtree") : L10n.Get("layer_template.import_template")));
+            RefreshAll();
+        }
 
-            _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
-            var rect        = EditorGUILayout.GetControlRect(false, totalHeight);
-            float halfWidth = (rect.width - middleGap) / 2f;
+        // ── GUI (native UI Toolkit) ──────────────────────────────────────────
 
-            if (Event.current.type == EventType.Repaint)
-            {
-                EditorGUI.DrawRect(new Rect(rect.x,                         rect.y, halfWidth, rect.height), AnimationEditorWindow.Styles.SecondaryColor);
-                EditorGUI.DrawRect(new Rect(rect.x + halfWidth + middleGap, rect.y, halfWidth, rect.height), AnimationEditorWindow.Styles.SecondaryColor);
-                EditorGUI.DrawRect(new Rect(rect.x,                         rect.y, halfWidth, columnHeaderHeight), AnimationEditorWindow.Styles.AccentColor);
-                EditorGUI.DrawRect(new Rect(rect.x + halfWidth + middleGap, rect.y, halfWidth, columnHeaderHeight), AnimationEditorWindow.Styles.AccentColor);
-            }
+        void CreateGUI()
+        {
+            var root = rootVisualElement;
+            root.style.flexGrow = 1;
+            root.EnableInClassList("ygdr-dark", EditorGUIUtility.isProSkin);
+            root.EnableInClassList("ygdr-light", !EditorGUIUtility.isProSkin);
 
-            GUI.Label(new Rect(rect.x + 4f,                         rect.y, halfWidth - 4f, columnHeaderHeight), L10n.Get("layer_template.parameter"),                                                          ColumnHeaderStyle);
-            GUI.Label(new Rect(rect.x + halfWidth + middleGap + 4f, rect.y, halfWidth - 4f, columnHeaderHeight), _isCreateMode ? L10n.Get("layer_template.export_as") : L10n.Get("layer_template.import_as"), ColumnHeaderStyle);
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/com.ygdr.animator/Editor/UI/SharedWindowStyles.uss");
+            if (styleSheet != null) root.styleSheets.Add(styleSheet);
 
-            float rowY = rect.y + columnHeaderHeight + rowPad;
+            BuildLayout(root);
+
+            SharedWindowStyles.RegisterPaletteRefresh(RefreshPaletteColors);
+            RefreshAll();
+        }
+
+        void BuildLayout(VisualElement root)
+        {
+            var body = new VisualElement();
+            body.AddToClassList("ygdr-tpl-body");
+            root.Add(body);
+
+            _panel = new VisualElement();
+            _panel.AddToClassList("ygdr-tpl-panel");
+            body.Add(_panel);
+
+            _rowsScroll = SharedWindowStyles.BuildColumnHeaderAndScroll(_panel, "ygdr-tpl-col-header-row",
+                "ygdr-tpl-col-header", "ygdr-tpl-rows-scroll", out _leftHeaderLabel, out _rightHeaderLabel);
+
+            _footerContainer = new VisualElement();
+            _panel.Add(_footerContainer);
+        }
+
+        void RefreshPaletteColors()
+        {
+            if (_panel == null) return;
+            SharedWindowStyles.ApplyStandardPanelPalette(_panel, _leftHeaderLabel, _rightHeaderLabel, _rowsScroll);
+            if (_confirmButton != null) _confirmButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+        }
+
+        void RefreshAll()
+        {
+            if (_panel == null) return;
+            RefreshParamList();
+            RefreshFooter();
+        }
+
+        AnimatorControllerParameter[] GetParameters() => _isCreateMode
+            ? (_createModeParams ?? System.Array.Empty<AnimatorControllerParameter>())
+            : _isBlendTreeMode
+                ? (_blendTreeTemplateParams ?? System.Array.Empty<AnimatorControllerParameter>())
+                : (_templateController != null ? _templateController.parameters : System.Array.Empty<AnimatorControllerParameter>());
+
+        void RefreshParamList()
+        {
+            var parameters = GetParameters();
+
+            _leftHeaderLabel.text = L10n.Get("layer_template.parameter");
+            _rightHeaderLabel.text = _isCreateMode ? L10n.Get("layer_template.export_as") : L10n.Get("layer_template.import_as");
+
+            _rowsScroll.Clear();
+
             if (parameters.Length == 0)
             {
-                GUI.Label(new Rect(rect.x, rowY, halfWidth, rowHeight), L10n.Get("layer_template.no_params"), AnimationEditorWindow.Styles.EmptyLabel);
-            }
-            else
-            {
-                for (int i = 0; i < parameters.Length; i++, rowY += rowHeight)
-                    DrawParamRow(i, rowY, rect, halfWidth, middleGap, rowHeight);
+                var emptyLabel = new Label(L10n.Get("layer_template.no_params"));
+                emptyLabel.AddToClassList("ygdr-fu-empty");
+                _rowsScroll.Add(emptyLabel);
+                return;
             }
 
-            EditorGUILayout.EndScrollView();
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                int rowIndex = i;
+
+                var rowElement = SharedWindowStyles.MakeStripedRow("ygdr-tpl-row", rowIndex);
+
+                var nameLabel = new Label(_cachedParamLabels[rowIndex]) { enableRichText = true };
+                nameLabel.AddToClassList("ygdr-tpl-cell-label");
+                rowElement.Add(nameLabel);
+
+                var renameField = new TextField { value = _renamedParameterNames[rowIndex] };
+                renameField.AddToClassList("ygdr-tpl-cell-field");
+                renameField.RegisterValueChangedCallback(evt => _renamedParameterNames[rowIndex] = evt.newValue);
+                rowElement.Add(renameField);
+
+                _rowsScroll.Add(rowElement);
+            }
         }
 
-        void DrawParamRow(int rowIndex, float rowY, Rect rect, float halfWidth, float middleGap, float rowHeight)
+        void RefreshFooter()
         {
-            if (Event.current.type == EventType.Repaint && rowIndex % 2 == 1)
-            {
-                EditorGUI.DrawRect(new Rect(rect.x,                         rowY, halfWidth, rowHeight), AnimationEditorWindow.Styles.RowAltColor);
-                EditorGUI.DrawRect(new Rect(rect.x + halfWidth + middleGap, rowY, halfWidth, rowHeight), AnimationEditorWindow.Styles.RowAltColor);
-            }
+            _footerContainer.Clear();
 
-            GUI.Label(
-                new Rect(rect.x + 4f, rowY, halfWidth - 4f, rowHeight),
-                _cachedParamLabels[rowIndex],
-                AnimationEditorWindow.Styles.FindUsesHeader);
-
-            _renamedParameterNames[rowIndex] = EditorGUI.TextField(
-                new Rect(rect.x + halfWidth + middleGap + 2f, rowY + 1f, halfWidth - 4f, rowHeight - 2f),
-                _renamedParameterNames[rowIndex]);
-        }
-
-        void DrawConfirmFooter()
-        {
             if (_isCreateMode)
             {
-                EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField(L10n.Get("layer_template.template_name"), EditorStyles.centeredGreyMiniLabel);
-                _templateName = EditorGUILayout.TextField(_templateName);
+                AddFooterLabel(L10n.Get("layer_template.template_name"));
+                var nameField = new TextField { value = _templateName };
+                nameField.AddToClassList("ygdr-tpl-name-field");
+                nameField.RegisterValueChangedCallback(evt =>
+                {
+                    _templateName = evt.newValue;
+                    UpdateConfirmButtonState();
+                });
+                _footerContainer.Add(nameField);
             }
             else if (_isBlendTreeMode && _targetControllerForBT != null)
             {
-                EditorGUILayout.Space(4f);
                 string targetDir = System.IO.Path.GetDirectoryName(
                     AssetDatabase.GetAssetPath(_targetControllerForBT)).Replace('\\', '/');
                 if (!string.IsNullOrEmpty(targetDir))
-                    EditorGUILayout.LabelField($"Clips copied to {targetDir}", EditorStyles.centeredGreyMiniLabel);
-                EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField(L10n.Get("layer_template.blend_tree_name"), EditorStyles.centeredGreyMiniLabel);
-                _importedBlendTreeName = EditorGUILayout.TextField(_importedBlendTreeName);
+                    AddFooterLabel($"Clips copied to {targetDir}");
+
+                AddFooterLabel(L10n.Get("layer_template.blend_tree_name"));
+                var nameField = new TextField { value = _importedBlendTreeName };
+                nameField.AddToClassList("ygdr-tpl-name-field");
+                nameField.RegisterValueChangedCallback(evt => _importedBlendTreeName = evt.newValue);
+                _footerContainer.Add(nameField);
             }
             else if (!string.IsNullOrEmpty(_targetControllerPath))
             {
-                EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField(
-                    $"Template clips copied to {System.IO.Path.GetDirectoryName(_targetControllerPath)}",
-                    EditorStyles.centeredGreyMiniLabel);
-                EditorGUILayout.Space(4f);
-                EditorGUILayout.LabelField(L10n.Get("layer_template.layer_name"), EditorStyles.centeredGreyMiniLabel);
-                _importedLayerName = EditorGUILayout.TextField(_importedLayerName);
+                AddFooterLabel($"Template clips copied to {System.IO.Path.GetDirectoryName(_targetControllerPath)}");
+
+                AddFooterLabel(L10n.Get("layer_template.layer_name"));
+                var nameField = new TextField { value = _importedLayerName };
+                nameField.AddToClassList("ygdr-tpl-name-field");
+                nameField.RegisterValueChangedCallback(evt => _importedLayerName = evt.newValue);
+                _footerContainer.Add(nameField);
             }
 
-            EditorGUILayout.Space(6f);
-            bool canConfirm = !_isCreateMode || !string.IsNullOrWhiteSpace(_templateName);
-            var containerRect = EditorGUILayout.GetControlRect(false, 28f);
-            float btnWidth = containerRect.width * 0.8f;
-            var btnRect = new Rect(
-                containerRect.x + (containerRect.width - btnWidth) * 0.5f,
-                containerRect.y,
-                btnWidth,
-                containerRect.height);
-            using (new EditorGUI.DisabledScope(!canConfirm))
+            _confirmButton = new Button(OnConfirmClicked)
             {
-                if (Event.current.type == EventType.Repaint)
-                {
-                    EditorGUI.DrawRect(btnRect, btnRect.Contains(Event.current.mousePosition)
-                        ? GetHoverColor() : AnimationEditorWindow.Styles.AccentColor);
-                    GUI.Label(btnRect, _isCreateMode ? L10n.Get("layer_template.create_template") : L10n.Get("layer_template.confirm"), ConfirmLabelStyle);
-                }
-                if (GUI.Button(btnRect, GUIContent.none, GUIStyle.none))
-                {
-                    if (_isCreateMode) ConfirmCreate();
-                    else               ConfirmImport();
-                    Close();
-                }
-            }
-            EditorGUIUtility.AddCursorRect(btnRect, MouseCursor.Link);
+                text = _isCreateMode ? L10n.Get("layer_template.create_template") : L10n.Get("layer_template.confirm")
+            };
+            _confirmButton.AddToClassList("ygdr-tpl-confirm-button");
+            _confirmButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+            var hoverColor = new Color(
+                SharedWindowStyles.AccentColor.r + 0.1f,
+                SharedWindowStyles.AccentColor.g + 0.1f,
+                SharedWindowStyles.AccentColor.b + 0.1f, 1f);
+            _confirmButton.RegisterCallback<MouseEnterEvent>(_ => _confirmButton.style.backgroundColor = hoverColor);
+            _confirmButton.RegisterCallback<MouseLeaveEvent>(_ => _confirmButton.style.backgroundColor = SharedWindowStyles.AccentColor);
+            _footerContainer.Add(_confirmButton);
+
+            UpdateConfirmButtonState();
+        }
+
+        void AddFooterLabel(string text)
+        {
+            var label = new Label(text);
+            label.AddToClassList("ygdr-tpl-footer-label");
+            _footerContainer.Add(label);
+        }
+
+        void UpdateConfirmButtonState()
+        {
+            bool canConfirm = !_isCreateMode || !string.IsNullOrWhiteSpace(_templateName);
+            _confirmButton.SetEnabled(canConfirm);
+        }
+
+        void OnConfirmClicked()
+        {
+            if (_isCreateMode) ConfirmCreate();
+            else               ConfirmImport();
+            Close();
         }
 
         static string[] BuildParamLabels(AnimatorControllerParameter[] parameters)

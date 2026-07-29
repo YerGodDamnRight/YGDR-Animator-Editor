@@ -18,6 +18,7 @@
 
 
 #if UNITY_EDITOR
+using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -31,6 +32,10 @@ namespace YGDR.Editor.Animation
         static string _languageId;
         static Dictionary<string, string> _dict;
 
+        /* Fired after the active language changes, so live (non-IMGUI) UI can relabel itself.
+           IMGUI callers don't need this — they re-read L10n.Get() every OnGUI frame already. */
+        internal static event Action OnLanguageChanged;
+
         static string LanguageId
         {
             get => _languageId ??= EditorPrefs.GetString(PrefsKey, "en");
@@ -39,6 +44,7 @@ namespace YGDR.Editor.Animation
                 _languageId = value;
                 EditorPrefs.SetString(PrefsKey, value);
                 _dict = null;
+                OnLanguageChanged?.Invoke();
             }
         }
 
@@ -156,6 +162,7 @@ namespace YGDR.Editor.Animation
             ["states.shared_behaviors"]      = "Shared Behaviors",
 
             // ── VRC behaviours — shared ───────────────────────────────────────────
+            ["states.add_behavior"] = "Add Behavior",
             ["vrc.add_to_all"]     = "Add to All",
             ["vrc.remove_all"]     = "Remove All",
             ["vrc.debug_string"]   = "Debug String",
@@ -261,6 +268,7 @@ namespace YGDR.Editor.Animation
             ["controller.subtab.wd"]           = "Write Defaults",
             ["controller.subtab.network_sync"] = "Network Sync",
             ["controller.subtab.sub_assets"]   = "Sub-Assets",
+            ["controller.subtab.menus"]        = "Menus",
             ["controller.no_controller"]       = "No controller selected",
             // Write Defaults
             ["controller.wd.on_col"]    = "Write Defaults On",
@@ -284,6 +292,7 @@ namespace YGDR.Editor.Animation
             ["controller.network.run"]                = "Run Network Sync",
             ["controller.network.no_window"]          = "No animator window open",
             ["controller.network.no_vrcsdk"]          = "Network Sync not available without VRCSDK",
+            ["controller.network.duplicate_name"]     = "Duplicate Name",
             // Clip Remapper
             ["controller.repath.avatar_root"]      = "Avatar",
             ["controller.repath.scan"]             = "Scan",
@@ -311,6 +320,26 @@ namespace YGDR.Editor.Animation
             ["controller.subassets.warn_empty_motion"]      = "Contains empty motion field",
             ["controller.subassets.warn_invalid_transition"] = "Contains invalid transition",
             ["controller.subassets.warn_broken_bindings"]   = "Contains broken bindings",
+            // Menus
+            ["controller.menus.no_vrcsdk"]      = "Expression Menu editing not available without VRCSDK",
+            ["controller.menus.no_menu"]        = "No VRCExpressionsMenu found — select an avatar with one assigned",
+            ["controller.menus.name"]           = "Name",
+            ["controller.menus.type"]           = "Type",
+            ["controller.menus.parameter"]      = "Parameter",
+            ["controller.menus.rotation"]       = "Rotation",
+            ["controller.menus.value"]          = "Value",
+            ["controller.menus.horizontal"]     = "Horizontal",
+            ["controller.menus.vertical"]       = "Vertical",
+            ["controller.menus.up"]             = "Up",
+            ["controller.menus.down"]           = "Down",
+            ["controller.menus.left"]           = "Left",
+            ["controller.menus.right"]          = "Right",
+            ["controller.menus.enter_submenu"]  = "Submenu",
+            ["controller.menus.new_submenu"]    = "New Submenu",
+            ["controller.menus.max_controls"]   = "Menu is full (8 / 8 controls)",
+            ["controller.menus.type_mismatch"]  = "Parameter type mismatch",
+            ["controller.menus.param_not_found"] = "Parameter not found on controller",
+            ["controller.menus.open_submenu"]   = "Open",
 
             // ── Context menu ──────────────────────────────────────────────────────
             ["context_menu.pack_subsm"]           = "Pack into Sub-State Machine",
@@ -440,7 +469,7 @@ namespace YGDR.Editor.Animation
             ["settings.section.transition_overlay"]  = "Transition Overlay",
             ["settings.section.node_colors"]         = "Node Colors",
             ["settings.section.transition_defaults"] = "Transition Defaults",
-            ["settings.section.state_defaults"]      = "State Defaults",
+            ["settings.section.state_defaults"]      = "State",
             ["settings.section.keybindings"]         = "Keybindings",
             ["settings.section.miscellaneous"]       = "Miscellaneous",
             // Shared controls
@@ -532,6 +561,7 @@ namespace YGDR.Editor.Animation
             ["settings.misc.layer_templates"]      = "Layer Templates",
             ["settings.misc.param_add_menu"]       = "Param Add Menu",
             ["settings.misc.frames"]               = "Frames",
+            ["settings.misc.inspector_mode"]       = "Inspector Mode",
             ["settings.misc.compatibility"]        = "Compatibility",
             ["settings.misc.compatibility_desc"]   = "Turn off features that clash with other tools. Changes apply immediately.",
             ["settings.misc.context_menus"]        = "Context Menus",

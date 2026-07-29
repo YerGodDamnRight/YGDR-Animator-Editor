@@ -1,11 +1,11 @@
 {
   "name": "com.ygdr.animator",
   "displayName": "YGDR Animator Editor",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "Powerful Unity Editor tool for advanced animator controller editing. Extends Animator window with multi-transition editing, state property management, VRC-specific features, and graph enhancements.",
   "gitDependencies": {},
   "vpmDependencies": {
-    "com.ygdr.mdv": "^1.0.0"
+    "com.ygdr.mdv": "^1.2.0"
   },
   "author": {
     "name": "YerGodDamnRight",

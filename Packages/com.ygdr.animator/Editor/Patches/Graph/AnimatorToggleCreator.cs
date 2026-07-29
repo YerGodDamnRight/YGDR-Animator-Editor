@@ -25,6 +25,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.IMGUI.Controls;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace YGDR.Editor.Animation
 {
@@ -217,87 +218,42 @@ namespace YGDR.Editor.Animation
 
         AnimatorController _controller;
         GameObject         _avatarRoot;
-        List<ObjectEntry>  _objectEntries         = new();
-        string             _parameterName         = "Toggle";
-        string             _layerName             = "Toggle";
+        List<ObjectEntry>  _objectEntries = new();
+        string             _parameterName = "Toggle";
+        string             _layerName     = "Toggle";
         bool               _layerNameManuallyEdited;
-        bool               _writeDefaults         = false;
-        Vector2            _scrollPosition;
+        bool               _writeDefaults = false;
 
-
-        // ── Styles ───────────────────────────────────────────────────────────────
-
-        static GUIStyle s_titleStyle;
-        static GUIStyle TitleStyle => s_titleStyle ??= new GUIStyle(EditorStyles.boldLabel)
-        {
-            fontSize  = 11,
-            padding   = new RectOffset(4, 4, 0, 0),
-            alignment = TextAnchor.MiddleLeft
-        };
-
-        static GUIStyle s_objectNameStyle;
-        static GUIStyle ObjectNameStyle => s_objectNameStyle ??= new GUIStyle(EditorStyles.label)
-        {
-            fontSize  = 11,
-            padding   = new RectOffset(4, 4, 0, 0),
-            alignment = TextAnchor.MiddleLeft
-        };
-
-        static GUIStyle s_emptyHintStyle;
-        static GUIStyle EmptyHintStyle
-        {
-            get
-            {
-                if (s_emptyHintStyle != null) return s_emptyHintStyle;
-                s_emptyHintStyle = new GUIStyle(EditorStyles.label)
-                {
-                    fontSize  = 11,
-                    alignment = TextAnchor.MiddleCenter
-                };
-                s_emptyHintStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f);
-                return s_emptyHintStyle;
-            }
-        }
-
-        static GUIStyle s_miniLabelStyle;
-        static GUIStyle MiniLabelStyle => s_miniLabelStyle ??= new GUIStyle(GUIStyle.none)
-        {
-            alignment = TextAnchor.MiddleCenter,
-            fontSize  = 10,
-            normal    = { textColor = Color.white }
-        };
-
-        static GUIStyle s_confirmLabelStyle;
-        static GUIStyle ConfirmLabelStyle => s_confirmLabelStyle ??= new GUIStyle(GUIStyle.none)
-        {
-            alignment = TextAnchor.MiddleCenter,
-            fontStyle = FontStyle.Bold,
-            fontSize  = 11,
-            normal    = { textColor = Color.white }
-        };
+        Label       _headerLabel;
+        VisualElement _panel;
+        TextField   _parameterField;
+        TextField   _layerNameField;
+        VisualElement _objectsSection;
+        ScrollView  _rowsScroll;
+        Button      _createButton;
 
         static Color GetHoverColor()
         {
-            var accent = AnimationEditorWindow.Styles.AccentColor;
+            var accent = SharedWindowStyles.AccentColor;
             return new Color(accent.r + 0.1f, accent.g + 0.1f, accent.b + 0.1f, 1f);
         }
 
         // ── Lifecycle ────────────────────────────────────────────────────────────
 
-        void OnEnable() => wantsMouseMove = true;
+        void OnDisable() => SharedWindowStyles.UnregisterPaletteRefresh(RefreshPaletteColors);
 
         internal static void Open(AnimatorController controller)
         {
             var window = GetWindow<AnimatorGameObjectToggleWindow>();
             window.titleContent = new GUIContent(L10n.Get("toggle.title"));
-            window.minSize                   = new Vector2(420f, 360f);
+            window.minSize                  = new Vector2(420f, 360f);
             window._controller              = controller;
             window._avatarRoot              = ResolveAvatarRoot(controller);
             window._objectEntries.Clear();
             window._parameterName           = "Toggle";
             window._layerName               = "Toggle";
-            window._layerNameManuallyEdited  = false;
-            window.wantsMouseMove           = true;
+            window._layerNameManuallyEdited = false;
+            window.RefreshAll();
             window.Show();
         }
 
@@ -320,292 +276,113 @@ namespace YGDR.Editor.Animation
         bool IsValidDropTarget(GameObject go) =>
             _avatarRoot == null || go.transform.IsChildOf(_avatarRoot.transform);
 
-        // ── OnGUI ────────────────────────────────────────────────────────────────
+        // ── Shell ────────────────────────────────────────────────────────────────
 
-        void OnGUI()
+        void CreateGUI()
         {
-            if (Event.current.type == EventType.MouseMove) Repaint();
-            DrawHeader();
+            var root = rootVisualElement;
+            root.style.flexGrow = 1;
+            root.EnableInClassList("ygdr-dark", EditorGUIUtility.isProSkin);
+            root.EnableInClassList("ygdr-light", !EditorGUIUtility.isProSkin);
 
-            GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
-            EditorGUILayout.BeginHorizontal();
-            GUILayout.Space(8f);
-            var outerRect = EditorGUILayout.BeginVertical(AnimationEditorWindow.Styles.SectionPadded);
-            if (Event.current.type == EventType.Repaint && outerRect.height > 0)
-                EditorGUI.DrawRect(outerRect, AnimationEditorWindow.Styles.PrimaryColor);
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Packages/com.ygdr.animator/Editor/UI/SharedWindowStyles.uss");
+            if (styleSheet != null) root.styleSheets.Add(styleSheet);
 
-            DrawForm();
-            DrawObjectsSection();
-            DrawFooter();
+            _headerLabel = new Label();
+            _headerLabel.AddToClassList("ygdr-toggle-header");
+            root.Add(_headerLabel);
 
-            EditorGUILayout.EndVertical();
-            GUILayout.Space(8f);
-            EditorGUILayout.EndHorizontal();
-            GUILayout.Space(8f);
+            _panel = new VisualElement();
+            _panel.AddToClassList("ygdr-toggle-panel");
+            root.Add(_panel);
 
-            HandleObjectDrop();
+            BuildForm();
+            BuildObjectsSection();
+            BuildFooter();
+
+            RegisterObjectDrop();
+
+            SharedWindowStyles.RegisterPaletteRefresh(RefreshPaletteColors);
+            RefreshAll();
         }
 
-        void DrawHeader()
+        void BuildForm()
         {
-            var headerRect = EditorGUILayout.GetControlRect(false, 28f, GUILayout.ExpandWidth(true));
-            if (Event.current.type == EventType.Repaint)
-                EditorGUI.DrawRect(
-                    new Rect(0f, headerRect.y, EditorGUIUtility.currentViewWidth, headerRect.height),
-                    AnimationEditorWindow.Styles.SectionHeaderBg);
-            GUI.Label(
-                new Rect(headerRect.x + 4f, headerRect.y, headerRect.width, headerRect.height),
-                $"{L10n.Get("toggle.header")}  ·  {_objectEntries.Count} {(_objectEntries.Count == 1 ? L10n.Get("toggle.object") : L10n.Get("toggle.objects"))}",
-                TitleStyle);
-        }
+            var form = new VisualElement();
+            form.AddToClassList("ygdr-toggle-form");
+            _panel.Add(form);
 
-        void DrawForm()
-        {
-            EditorGUILayout.Space(6f);
+            _parameterField = new TextField(L10n.Get("toggle.form.parameter"));
+            _parameterField.RegisterValueChangedCallback(evt =>
+            {
+                _parameterName = evt.newValue;
+                if (!_layerNameManuallyEdited)
+                {
+                    _layerName = _parameterName;
+                    _layerNameField.SetValueWithoutNotify(_layerName);
+                }
+                RefreshFooterState();
+            });
+            form.Add(_parameterField);
 
-            EditorGUI.BeginChangeCheck();
-            _parameterName = EditorGUILayout.TextField(L10n.Get("toggle.form.parameter"), _parameterName);
-            if (EditorGUI.EndChangeCheck() && !_layerNameManuallyEdited)
-                _layerName = _parameterName;
-
-            EditorGUI.BeginChangeCheck();
-            _layerName = EditorGUILayout.TextField(L10n.Get("toggle.form.layer_name"), _layerName);
-            if (EditorGUI.EndChangeCheck())
+            _layerNameField = new TextField(L10n.Get("toggle.form.layer_name"));
+            _layerNameField.RegisterValueChangedCallback(evt =>
+            {
+                _layerName = evt.newValue;
                 _layerNameManuallyEdited = true;
+                RefreshFooterState();
+            });
+            form.Add(_layerNameField);
 
-            _writeDefaults = EditorGUILayout.Toggle(L10n.Get("states.write_defaults"), _writeDefaults);
-
-            EditorGUILayout.Space(6f);
+            var writeDefaultsToggle = new Toggle(L10n.Get("states.write_defaults"));
+            writeDefaultsToggle.RegisterValueChangedCallback(evt => _writeDefaults = evt.newValue);
+            form.Add(writeDefaultsToggle);
         }
 
-        void DrawObjectsSection()
+        void BuildObjectsSection()
         {
-            bool dragHovering = Event.current.type == EventType.DragUpdated
-                && DragAndDrop.objectReferences.OfType<GameObject>().Any(IsValidDropTarget);
+            _objectsSection = new VisualElement();
+            _objectsSection.AddToClassList("ygdr-toggle-objects-section");
+            _panel.Add(_objectsSection);
 
-            // Object rows inside secondary background
-            var listRect = EditorGUILayout.BeginVertical(GUILayout.ExpandHeight(true));
-            if (Event.current.type == EventType.Repaint && listRect.height > 0)
+            _rowsScroll = new ScrollView(ScrollViewMode.Vertical);
+            _rowsScroll.AddToClassList("ygdr-toggle-rows-scroll");
+            _objectsSection.Add(_rowsScroll);
+        }
+
+        void BuildFooter()
+        {
+            _createButton = new Button(ExecuteCreate) { text = L10n.Get("toggle.create") };
+            _createButton.AddToClassList("ygdr-toggle-footer-btn");
+            StyleToggleButton(_createButton, false);
+            _panel.Add(_createButton);
+        }
+
+        void RegisterObjectDrop()
+        {
+            _objectsSection.RegisterCallback<DragUpdatedEvent>(_ =>
             {
-                EditorGUI.DrawRect(listRect, AnimationEditorWindow.Styles.SecondaryColor);
-                if (dragHovering)
-                    DrawDropHighlight(listRect);
-            }
-
-            const float rowHeight    = 22f;
-            const float subRowHeight = 22f;
-            const float addRowHeight = 22f;
-
-            GUILayout.Space(-EditorGUIUtility.standardVerticalSpacing);
-            _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
-
-            if (_objectEntries.Count == 0)
+                bool valid = DragAndDrop.objectReferences.OfType<GameObject>().Any(IsValidDropTarget);
+                DragAndDrop.visualMode = valid ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
+                _objectsSection.EnableInClassList("ygdr-toggle-drop-highlight", valid);
+            });
+            _objectsSection.RegisterCallback<DragLeaveEvent>(_ =>
+                _objectsSection.RemoveFromClassList("ygdr-toggle-drop-highlight"));
+            _objectsSection.RegisterCallback<DragPerformEvent>(_ =>
             {
-                var emptyRect = EditorGUILayout.GetControlRect(false, 40f);
-                GUI.Label(emptyRect, L10n.Get("toggle.empty_hint"), EmptyHintStyle);
-            }
-            else
-            {
-                float totalHeight = 0f;
-                foreach (var entry in _objectEntries)
-                    totalHeight += rowHeight + (entry.blendshapeExpanded
-                        ? addRowHeight + entry.blendshapeEntries.Count * subRowHeight
-                        : 0f);
-
-                var   allRowsRect      = EditorGUILayout.GetControlRect(false, totalHeight);
-                float rowY             = allRowsRect.y;
-                float rowWidth         = allRowsRect.width + 3.5f;
-                int   removeIndex      = -1;
-                int   removeShapeOwner = -1;
-                int   removeShapeIndex = -1;
-
-                for (int i = 0; i < _objectEntries.Count; i++)
-                {
-                    var rowRect = new Rect(allRowsRect.x, rowY, rowWidth, rowHeight);
-                    if (Event.current.type == EventType.Repaint && i % 2 == 1)
-                        EditorGUI.DrawRect(
-                            new Rect(0f, rowY, rowRect.xMax, rowHeight),
-                            AnimationEditorWindow.Styles.RowAltColor);
-                    if (DrawObjectRow(i, rowRect))
-                        removeIndex = i;
-                    rowY += rowHeight;
-
-                    var currentEntry = _objectEntries[i];
-                    if (currentEntry.blendshapeExpanded)
-                    {
-                        int removedShape = DrawBlendshapeSubRows(i, allRowsRect.x, rowWidth, rowY, subRowHeight, addRowHeight);
-                        if (removedShape >= 0)
-                        {
-                            removeShapeOwner = i;
-                            removeShapeIndex = removedShape;
-                        }
-                        rowY += addRowHeight + currentEntry.blendshapeEntries.Count * subRowHeight;
-                    }
-                }
-
-                if (removeIndex >= 0)
-                    _objectEntries.RemoveAt(removeIndex);
-                else if (removeShapeOwner >= 0)
-                    _objectEntries[removeShapeOwner].blendshapeEntries.RemoveAt(removeShapeIndex);
-            }
-
-            EditorGUILayout.EndScrollView();
-            EditorGUILayout.EndVertical();
+                _objectsSection.RemoveFromClassList("ygdr-toggle-drop-highlight");
+                var validGameObjects = DragAndDrop.objectReferences.OfType<GameObject>()
+                    .Where(go => go != null && IsValidDropTarget(go))
+                    .ToArray();
+                if (validGameObjects.Length == 0) return;
+                DragAndDrop.AcceptDrag();
+                AddDroppedObjects(validGameObjects);
+            });
         }
 
-        // Returns true if the remove button was clicked.
-        bool DrawObjectRow(int index, Rect rowRect)
+        void AddDroppedObjects(GameObject[] gameObjects)
         {
-            var entry = _objectEntries[index];
-
-            const float removeWidth    = 22f;
-            const float objectBtnW    = 56f;
-            const float rendererBtnW  = 66f;
-            const float particleBtnW  = 56f;
-            const float audioBtnW      = 50f;
-            const float lightBtnW      = 40f;
-            const float physBoneBtnW   = 66f;
-            const float blendshapeBtnW = 76f;
-            const float nameGap        = 2f;
-            const float pad            = 4f;
-
-            float btnsWidth = objectBtnW
-                + (entry.hasRenderer            ? rendererBtnW   : 0f)
-                + (entry.hasParticleSystem      ? particleBtnW   : 0f)
-                + (entry.hasAudioSource         ? audioBtnW      : 0f)
-                + (entry.hasLight               ? lightBtnW      : 0f)
-                + (entry.hasVRCPhysBone         ? physBoneBtnW   : 0f)
-                + (entry.hasSkinnedMeshRenderer ? blendshapeBtnW : 0f);
-
-            float nameWidth  = rowRect.width - removeWidth - btnsWidth - nameGap - pad;
-            var   nameRect   = new Rect(rowRect.x + pad,            rowRect.y, nameWidth,   rowRect.height);
-            var   removRect  = new Rect(rowRect.xMax - removeWidth, rowRect.y, removeWidth, rowRect.height);
-
-            var   objBtnRect = new Rect(nameRect.xMax + nameGap, rowRect.y, objectBtnW, rowRect.height);
-            float nextX      = objBtnRect.xMax;
-
-            var renBtnRect = entry.hasRenderer       ? new Rect(nextX, rowRect.y, rendererBtnW, rowRect.height) : default;
-            if (entry.hasRenderer) nextX = renBtnRect.xMax;
-
-            var parBtnRect = entry.hasParticleSystem ? new Rect(nextX, rowRect.y, particleBtnW, rowRect.height) : default;
-            if (entry.hasParticleSystem) nextX = parBtnRect.xMax;
-
-            var audBtnRect     = entry.hasAudioSource    ? new Rect(nextX, rowRect.y, audioBtnW,    rowRect.height) : default;
-            if (entry.hasAudioSource) nextX = audBtnRect.xMax;
-
-            var lightBtnRect   = entry.hasLight          ? new Rect(nextX, rowRect.y, lightBtnW,    rowRect.height) : default;
-            if (entry.hasLight) nextX = lightBtnRect.xMax;
-
-            var physBoneRect   = entry.hasVRCPhysBone    ? new Rect(nextX, rowRect.y, physBoneBtnW, rowRect.height) : default;
-            if (entry.hasVRCPhysBone) nextX = physBoneRect.xMax;
-
-            var smrBtnRect     = entry.hasSkinnedMeshRenderer ? new Rect(nextX, rowRect.y, blendshapeBtnW, rowRect.height) : default;
-
-            GUI.Label(nameRect, entry.gameObject.name, ObjectNameStyle);
-
-            var  mousePos    = Event.current.mousePosition;
-            var  accent      = AnimationEditorWindow.Styles.AccentColor;
-            var  accentHover = GetHoverColor();
-            var  bindingType = entry.bindingType;
-
-            if (Event.current.type == EventType.Repaint)
-            {
-                DrawModeBtn(objBtnRect, L10n.Get("toggle.bind.object"),   bindingType, ObjectBindingType.GameObject,    mousePos, accent, accentHover);
-                if (entry.hasRenderer)       DrawModeBtn(renBtnRect, L10n.Get("toggle.bind.renderer"), bindingType, ObjectBindingType.Renderer,       mousePos, accent, accentHover);
-                if (entry.hasParticleSystem) DrawModeBtn(parBtnRect, L10n.Get("toggle.bind.particle"), bindingType, ObjectBindingType.ParticleSystem,  mousePos, accent, accentHover);
-                if (entry.hasAudioSource)    DrawModeBtn(audBtnRect,   L10n.Get("toggle.bind.audio"),    bindingType, ObjectBindingType.AudioSource,  mousePos, accent, accentHover);
-                if (entry.hasLight)          DrawModeBtn(lightBtnRect, L10n.Get("toggle.bind.light"),    bindingType, ObjectBindingType.Light,         mousePos, accent, accentHover);
-                if (entry.hasVRCPhysBone)    DrawModeBtn(physBoneRect, L10n.Get("toggle.bind.physbone"), bindingType, ObjectBindingType.VRCPhysBone,   mousePos, accent, accentHover);
-                if (entry.hasSkinnedMeshRenderer)
-                {
-                    EditorGUI.DrawRect(smrBtnRect, (entry.blendshapeExpanded || smrBtnRect.Contains(mousePos)) ? accentHover : accent);
-                    GUI.Label(smrBtnRect, "Blendshape", MiniLabelStyle);
-                }
-
-                EditorGUI.DrawRect(removRect, removRect.Contains(mousePos) ? accentHover : accent);
-                GUI.Label(removRect, "−", MiniLabelStyle);
-            }
-
-            if (ClickableButton(objBtnRect))
-                ToggleBindingFlag(index, ObjectBindingType.GameObject);
-            if (entry.hasRenderer       && ClickableButton(renBtnRect))
-                ToggleBindingFlag(index, ObjectBindingType.Renderer);
-            if (entry.hasParticleSystem && ClickableButton(parBtnRect))
-                ToggleBindingFlag(index, ObjectBindingType.ParticleSystem);
-            if (entry.hasAudioSource    && ClickableButton(audBtnRect))
-                ToggleBindingFlag(index, ObjectBindingType.AudioSource);
-            if (entry.hasLight          && ClickableButton(lightBtnRect))
-                ToggleBindingFlag(index, ObjectBindingType.Light);
-            if (entry.hasVRCPhysBone    && ClickableButton(physBoneRect))
-                ToggleBindingFlag(index, ObjectBindingType.VRCPhysBone);
-            if (entry.hasSkinnedMeshRenderer && ClickableButton(smrBtnRect))
-            {
-                var updatedEntry = _objectEntries[index];
-                updatedEntry.blendshapeExpanded = !updatedEntry.blendshapeExpanded;
-                _objectEntries[index] = updatedEntry;
-            }
-
-            bool remove = ClickableButton(removRect);
-
-            return remove;
-        }
-
-        static bool ClickableButton(Rect rect)
-        {
-            EditorGUIUtility.AddCursorRect(rect, MouseCursor.Link);
-            return GUI.Button(rect, GUIContent.none, GUIStyle.none);
-        }
-
-        void ToggleBindingFlag(int index, ObjectBindingType flag)
-        {
-            var entry = _objectEntries[index];
-            var newType = entry.bindingType ^ flag;
-            entry.bindingType = newType == ObjectBindingType.None ? flag : newType;
-            _objectEntries[index] = entry;
-        }
-
-        static void DrawModeBtn(Rect rect, string label, ObjectBindingType current, ObjectBindingType flag, Vector2 mousePos, Color accent, Color accentHover)
-        {
-            bool selected = (current & flag) != 0;
-            EditorGUI.DrawRect(rect, selected || rect.Contains(mousePos) ? accentHover : accent);
-            GUI.Label(rect, label, MiniLabelStyle);
-        }
-
-        static void DrawDropHighlight(Rect rect)
-        {
-            var borderColor = new Color(0.4f, 0.7f, 1f, 0.6f);
-            const float thickness = 1.5f;
-            EditorGUI.DrawRect(new Rect(rect.x,              rect.y,              rect.width,  thickness),   borderColor);
-            EditorGUI.DrawRect(new Rect(rect.x,              rect.yMax - thickness, rect.width, thickness),  borderColor);
-            EditorGUI.DrawRect(new Rect(rect.x,              rect.y,              thickness,   rect.height), borderColor);
-            EditorGUI.DrawRect(new Rect(rect.xMax - thickness, rect.y,            thickness,   rect.height), borderColor);
-        }
-
-        void HandleObjectDrop()
-        {
-            var currentEvent = Event.current;
-            if (currentEvent.type != EventType.DragUpdated && currentEvent.type != EventType.DragPerform) return;
-
-            var validGameObjects = DragAndDrop.objectReferences.OfType<GameObject>()
-                .Where(go => go != null && IsValidDropTarget(go))
-                .ToArray();
-
-            if (currentEvent.type == EventType.DragUpdated)
-            {
-                DragAndDrop.visualMode = validGameObjects.Length > 0
-                    ? DragAndDropVisualMode.Copy
-                    : DragAndDropVisualMode.Rejected;
-                currentEvent.Use();
-                Repaint();
-                return;
-            }
-
-            if (validGameObjects.Length == 0) return;
-
-            DragAndDrop.AcceptDrag();
-            currentEvent.Use();
-
-            foreach (var gameObject in validGameObjects)
+            foreach (var gameObject in gameObjects)
             {
                 if (_objectEntries.Any(entry => entry.gameObject == gameObject)) continue;
 
@@ -635,82 +412,215 @@ namespace YGDR.Editor.Animation
                 });
             }
 
-            Repaint();
+            RebuildRows();
         }
 
-        int DrawBlendshapeSubRows(int entryIndex, float x, float rowWidth, float startY, float subRowHeight, float addRowHeight)
+        // ── Refresh / rebuild ───────────────────────────────────────────────────
+
+        void RefreshAll()
+        {
+            if (_headerLabel == null) return;
+            _parameterField.SetValueWithoutNotify(_parameterName);
+            _layerNameField.SetValueWithoutNotify(_layerName);
+            RebuildRows();
+        }
+
+        void RefreshPaletteColors()
+        {
+            if (_headerLabel == null) return;
+            _headerLabel.style.backgroundColor = SharedWindowStyles.SectionHeaderBg;
+            _panel.style.backgroundColor        = SharedWindowStyles.PrimaryColor;
+            _rowsScroll.style.backgroundColor   = SharedWindowStyles.SecondaryColor;
+            _createButton.style.backgroundColor = SharedWindowStyles.AccentColor;
+            RebuildRows();
+        }
+
+        void RefreshHeader()
+        {
+            _headerLabel.text = $"{L10n.Get("toggle.header")}  ·  {_objectEntries.Count} {(_objectEntries.Count == 1 ? L10n.Get("toggle.object") : L10n.Get("toggle.objects"))}";
+        }
+
+        void RefreshFooterState()
+        {
+            bool canCreate = !string.IsNullOrWhiteSpace(_parameterName)
+                && !string.IsNullOrWhiteSpace(_layerName)
+                && _objectEntries.Count > 0;
+            _createButton.SetEnabled(canCreate);
+        }
+
+        void RebuildRows()
+        {
+            RefreshHeader();
+            RefreshFooterState();
+
+            _rowsScroll.Clear();
+
+            if (_objectEntries.Count == 0)
+            {
+                var emptyHint = new Label(L10n.Get("toggle.empty_hint"));
+                emptyHint.AddToClassList("ygdr-toggle-empty-hint");
+                _rowsScroll.Add(emptyHint);
+                return;
+            }
+
+            for (int i = 0; i < _objectEntries.Count; i++)
+            {
+                var capturedIndex = i;
+                var row = SharedWindowStyles.MakeStripedRow("ygdr-toggle-row", i);
+                BuildObjectRow(row, capturedIndex);
+                _rowsScroll.Add(row);
+
+                if (_objectEntries[i].blendshapeExpanded)
+                    BuildBlendshapeSubRows(capturedIndex);
+            }
+        }
+
+        void BuildObjectRow(VisualElement row, int index)
+        {
+            var entry = _objectEntries[index];
+
+            var nameLabel = new Label(entry.gameObject.name);
+            nameLabel.AddToClassList("ygdr-toggle-name-label");
+            row.Add(nameLabel);
+
+            AddModeButton(row, index, L10n.Get("toggle.bind.object"), ObjectBindingType.GameObject, "ygdr-toggle-btn-object");
+            if (entry.hasRenderer)       AddModeButton(row, index, L10n.Get("toggle.bind.renderer"), ObjectBindingType.Renderer,       "ygdr-toggle-btn-renderer");
+            if (entry.hasParticleSystem) AddModeButton(row, index, L10n.Get("toggle.bind.particle"), ObjectBindingType.ParticleSystem, "ygdr-toggle-btn-particle");
+            if (entry.hasAudioSource)    AddModeButton(row, index, L10n.Get("toggle.bind.audio"),    ObjectBindingType.AudioSource,    "ygdr-toggle-btn-audio");
+            if (entry.hasLight)          AddModeButton(row, index, L10n.Get("toggle.bind.light"),    ObjectBindingType.Light,          "ygdr-toggle-btn-light");
+            if (entry.hasVRCPhysBone)    AddModeButton(row, index, L10n.Get("toggle.bind.physbone"), ObjectBindingType.VRCPhysBone,    "ygdr-toggle-btn-physbone");
+
+            if (entry.hasSkinnedMeshRenderer)
+            {
+                var blendshapeButton = new Button(() =>
+                {
+                    var updatedEntry = _objectEntries[index];
+                    updatedEntry.blendshapeExpanded = !updatedEntry.blendshapeExpanded;
+                    _objectEntries[index] = updatedEntry;
+                    RebuildRows();
+                }) { text = "Blendshape" };
+                blendshapeButton.AddToClassList("ygdr-toggle-mode-btn");
+                blendshapeButton.AddToClassList("ygdr-toggle-btn-blendshape");
+                StyleToggleButton(blendshapeButton, entry.blendshapeExpanded);
+                row.Add(blendshapeButton);
+            }
+
+            var removeButton = new Button(() =>
+            {
+                _objectEntries.RemoveAt(index);
+                RebuildRows();
+            }) { text = "−" };
+            removeButton.AddToClassList("ygdr-toggle-mode-btn");
+            removeButton.AddToClassList("ygdr-toggle-btn-remove");
+            StyleToggleButton(removeButton, false);
+            row.Add(removeButton);
+        }
+
+        void AddModeButton(VisualElement row, int index, string label, ObjectBindingType flag, string widthClass)
+        {
+            bool selected = (_objectEntries[index].bindingType & flag) != 0;
+            var button = new Button(() => ToggleBindingFlag(index, flag)) { text = label };
+            button.AddToClassList("ygdr-toggle-mode-btn");
+            button.AddToClassList(widthClass);
+            StyleToggleButton(button, selected);
+            row.Add(button);
+        }
+
+        static void StyleToggleButton(VisualElement button, bool selected)
+        {
+            var accent      = SharedWindowStyles.AccentColor;
+            var accentHover = GetHoverColor();
+            button.style.backgroundColor = selected ? accentHover : accent;
+            button.RegisterCallback<MouseEnterEvent>(_ => button.style.backgroundColor = accentHover);
+            button.RegisterCallback<MouseLeaveEvent>(_ => button.style.backgroundColor = selected ? accentHover : accent);
+        }
+
+        void ToggleBindingFlag(int index, ObjectBindingType flag)
+        {
+            var entry = _objectEntries[index];
+            var newType = entry.bindingType ^ flag;
+            entry.bindingType = newType == ObjectBindingType.None ? flag : newType;
+            _objectEntries[index] = entry;
+            RebuildRows();
+        }
+
+        void BuildBlendshapeSubRows(int entryIndex)
         {
             var entry = _objectEntries[entryIndex];
             var smr   = entry.skinnedMeshRenderer;
 
-            var  accent      = AnimationEditorWindow.Styles.AccentColor;
-            var  accentHover = GetHoverColor();
-            var  mousePos    = Event.current.mousePosition;
-
-            float indentX = x + 16f;
-            float indentW = rowWidth - 16f;
-
-            // ── Per-shape rows ───────────────────────────────────────────────────
-            const float removeBtnWidth = 22f;
-            const float fieldLabelW    = 24f;
-            const float fieldW         = 44f;
-            const float fieldPad       = 4f;
-            float fixedRight     = fieldPad + fieldLabelW + fieldW + fieldPad + fieldLabelW + fieldW + removeBtnWidth;
-            float shapeNameWidth = indentW - fieldPad - fixedRight;
-
-            int   removeShapeIndex = -1;
-            float shapeY           = startY;
+            var subRows = new VisualElement();
+            subRows.AddToClassList("ygdr-toggle-blendshape-rows");
+            _rowsScroll.Add(subRows);
 
             for (int k = 0; k < entry.blendshapeEntries.Count; k++)
             {
+                var capturedShapeIndex = k;
                 var blendshapeEntry = entry.blendshapeEntries[k];
 
-                var shapeNameRect = new Rect(indentX + fieldPad, shapeY, shapeNameWidth, subRowHeight);
-                var offLabelRect  = new Rect(shapeNameRect.xMax + fieldPad, shapeY, fieldLabelW, subRowHeight);
-                var offFieldRect  = new Rect(offLabelRect.xMax, shapeY, fieldW, subRowHeight);
-                var onLabelRect   = new Rect(offFieldRect.xMax + fieldPad, shapeY, fieldLabelW, subRowHeight);
-                var onFieldRect   = new Rect(onLabelRect.xMax, shapeY, fieldW, subRowHeight);
-                var removeRect    = new Rect(indentX + indentW - removeBtnWidth, shapeY, removeBtnWidth, subRowHeight);
+                var shapeRow = new VisualElement();
+                shapeRow.AddToClassList("ygdr-toggle-blendshape-row");
+                subRows.Add(shapeRow);
 
-                if (Event.current.type == EventType.Repaint)
+                var nameLabel = new Label(blendshapeEntry.shapeName);
+                nameLabel.AddToClassList("ygdr-toggle-blendshape-name");
+                shapeRow.Add(nameLabel);
+
+                var offLabel = new Label("Off");
+                offLabel.AddToClassList("ygdr-toggle-blendshape-field-label");
+                shapeRow.Add(offLabel);
+
+                var offField = new FloatField { value = blendshapeEntry.offValue };
+                offField.AddToClassList("ygdr-toggle-blendshape-field");
+                offField.RegisterValueChangedCallback(evt =>
                 {
-                    GUI.Label(shapeNameRect, blendshapeEntry.shapeName, ObjectNameStyle);
-                    GUI.Label(offLabelRect,  "Off", MiniLabelStyle);
-                    GUI.Label(onLabelRect,   "On",  MiniLabelStyle);
-                    EditorGUI.DrawRect(removeRect, removeRect.Contains(mousePos) ? accentHover : accent);
-                    GUI.Label(removeRect, "−", MiniLabelStyle);
-                }
+                    var clamped = Mathf.Clamp(evt.newValue, 0f, 100f);
+                    var updated = entry.blendshapeEntries[capturedShapeIndex];
+                    updated.offValue = clamped;
+                    entry.blendshapeEntries[capturedShapeIndex] = updated;
+                    if (!Mathf.Approximately(clamped, evt.newValue)) offField.SetValueWithoutNotify(clamped);
+                });
+                shapeRow.Add(offField);
 
-                EditorGUI.BeginChangeCheck();
-                float newOffValue = EditorGUI.FloatField(offFieldRect, blendshapeEntry.offValue);
-                float newOnValue  = EditorGUI.FloatField(onFieldRect,  blendshapeEntry.onValue);
-                if (EditorGUI.EndChangeCheck())
+                var onLabel = new Label("On");
+                onLabel.AddToClassList("ygdr-toggle-blendshape-field-label");
+                shapeRow.Add(onLabel);
+
+                var onField = new FloatField { value = blendshapeEntry.onValue };
+                onField.AddToClassList("ygdr-toggle-blendshape-field");
+                onField.RegisterValueChangedCallback(evt =>
                 {
-                    blendshapeEntry.offValue   = Mathf.Clamp(newOffValue, 0f, 100f);
-                    blendshapeEntry.onValue    = Mathf.Clamp(newOnValue,  0f, 100f);
-                    entry.blendshapeEntries[k] = blendshapeEntry;
-                }
+                    var clamped = Mathf.Clamp(evt.newValue, 0f, 100f);
+                    var updated = entry.blendshapeEntries[capturedShapeIndex];
+                    updated.onValue = clamped;
+                    entry.blendshapeEntries[capturedShapeIndex] = updated;
+                    if (!Mathf.Approximately(clamped, evt.newValue)) onField.SetValueWithoutNotify(clamped);
+                });
+                shapeRow.Add(onField);
 
-                if (ClickableButton(removeRect))
-                    removeShapeIndex = k;
-
-                shapeY += subRowHeight;
+                var removeButton = new Button(() =>
+                {
+                    entry.blendshapeEntries.RemoveAt(capturedShapeIndex);
+                    RebuildRows();
+                }) { text = "−" };
+                removeButton.AddToClassList("ygdr-toggle-mode-btn");
+                removeButton.AddToClassList("ygdr-toggle-btn-remove");
+                StyleToggleButton(removeButton, false);
+                shapeRow.Add(removeButton);
             }
 
-            // ── Add shape button (bottom) ────────────────────────────────────────
-            const float addBtnPad = 2f;
-            var addBtnRect = new Rect(indentX + addBtnPad, shapeY + addBtnPad, indentW - addBtnPad * 2f, addRowHeight - addBtnPad * 2f);
+            var addRow = new VisualElement();
+            addRow.AddToClassList("ygdr-toggle-blendshape-add-row");
+            subRows.Add(addRow);
 
-            if (Event.current.type == EventType.Repaint)
+            var addButton = new Button { text = "+" };
+            addButton.AddToClassList("ygdr-toggle-blendshape-add-btn");
+            StyleToggleButton(addButton, false);
+            addButton.clicked += () =>
             {
-                EditorGUI.DrawRect(addBtnRect, addBtnRect.Contains(mousePos) ? accentHover : accent);
-                GUI.Label(addBtnRect, "+", MiniLabelStyle);
-            }
-
-            if (ClickableButton(addBtnRect) && smr != null && smr.sharedMesh != null)
-            {
+                if (smr == null || smr.sharedMesh == null) return;
                 var capturedEntries = entry.blendshapeEntries;
-                var existingNames   = new HashSet<string>(capturedEntries.Select(blendshapeEntry => blendshapeEntry.shapeName));
+                var existingNames   = new HashSet<string>(capturedEntries.Select(b => b.shapeName));
                 int shapeCount      = smr.sharedMesh.blendShapeCount;
                 var available       = new List<string>();
                 for (int k = 0; k < shapeCount; k++)
@@ -722,36 +632,10 @@ namespace YGDR.Editor.Animation
                 new BlendshapeDropdown(available.ToArray(), shapeName =>
                 {
                     capturedEntries.Add(new BlendshapeEntry { shapeName = shapeName, offValue = 0f, onValue = 100f });
-                    Repaint();
-                }).Show(addBtnRect);
-            }
-            EditorGUIUtility.AddCursorRect(addBtnRect, MouseCursor.Link);
-
-            return removeShapeIndex;
-        }
-
-        void DrawFooter()
-        {
-            EditorGUILayout.Space(6f);
-
-            bool canCreate = !string.IsNullOrWhiteSpace(_parameterName)
-                && !string.IsNullOrWhiteSpace(_layerName)
-                && _objectEntries.Count > 0;
-
-            var btnRect = EditorGUILayout.GetControlRect(false, 28f);
-            using (new EditorGUI.DisabledGroupScope(!canCreate))
-            {
-                if (Event.current.type == EventType.Repaint)
-                {
-                    EditorGUI.DrawRect(btnRect, btnRect.Contains(Event.current.mousePosition) && canCreate
-                        ? GetHoverColor() : AnimationEditorWindow.Styles.AccentColor);
-                    GUI.Label(btnRect, L10n.Get("toggle.create"), ConfirmLabelStyle);
-                }
-                if (GUI.Button(btnRect, GUIContent.none, GUIStyle.none) && canCreate)
-                    ExecuteCreate();
-            }
-            EditorGUIUtility.AddCursorRect(btnRect, MouseCursor.Link);
-            EditorGUILayout.Space(4f);
+                    RebuildRows();
+                }).ShowCapped(addButton.worldBound);
+            };
+            addRow.Add(addButton);
         }
 
         void ExecuteCreate()
@@ -765,23 +649,19 @@ namespace YGDR.Editor.Animation
             Close();
         }
     }
-    internal class BlendshapeDropdown : AdvancedDropdown
+    internal class BlendshapeDropdown : YgdrAdvancedDropdownBase
     {
-        static readonly System.Reflection.PropertyInfo s_maximumSizeProperty =
-            typeof(AdvancedDropdown).GetProperty("maximumSize",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-
         readonly string[]              _shapeNames;
         readonly System.Action<string> _onSelected;
 
         internal BlendshapeDropdown(string[] shapeNames, System.Action<string> onSelected)
-            : base(new AdvancedDropdownState())
+            : base(new Vector2(200f, 250f))
         {
             _shapeNames = shapeNames;
             _onSelected = onSelected;
-            minimumSize = new Vector2(200f, 250f);
-            s_maximumSizeProperty?.SetValue(this, new Vector2(200f, 350f));
         }
+
+        internal void ShowCapped(Rect rect) => ShowCapped(rect, 350f, 200f);
 
         protected override AdvancedDropdownItem BuildRoot()
         {

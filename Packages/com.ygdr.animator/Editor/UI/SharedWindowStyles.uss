@@ -1,0 +1,1822 @@
+/*
+    YGDR Animator Editor - A custom editor for managing complex animator controllers
+    Copyright (C) 2026  YerGodDamnRight
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/* ── Utility classes ── bolt-on shared traits (Bootstrap/Material style). Combine with a
+   semantic class (e.g. "ygdr-menu-property-field u-flex-fill") instead of repeating the
+   same properties on every semantic class that happens to need them. */
+
+.u-flex-fill {
+    flex-grow: 1;
+    flex-basis: 0;
+}
+
+.u-mr-4 {
+    margin-right: 4px;
+}
+
+.u-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.u-mb-2 {
+    margin-bottom: 2px;
+}
+
+.u-flat-btn-sm {
+    height: 20px;
+    margin: 0;
+    border-radius: 0;
+    font-size: 11px;
+}
+
+.u-col-header-label {
+    -unity-text-align: middle-left;
+    padding-left: 4px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: rgb(255, 255, 255);
+}
+
+.ygdr-layer-bar {
+    flex-direction: row;
+    align-items: center;
+    height: 28px;
+    padding-left: 8px;
+    flex-shrink: 0;
+}
+
+.ygdr-breadcrumb-segment {
+    -unity-text-align: middle-left;
+    color: rgb(135, 135, 135);
+    -unity-font-style: normal;
+}
+
+.ygdr-breadcrumb-segment.ygdr-breadcrumb-leaf {
+    color: rgb(255, 255, 255);
+    -unity-font-style: bold;
+}
+
+.ygdr-breadcrumb-separator {
+    -unity-text-align: middle-left;
+    color: rgb(135, 135, 135);
+}
+
+.ygdr-footer {
+    flex-shrink: 0;
+}
+
+.ygdr-footer-separator {
+    height: 1px;
+    background-color: rgba(0, 0, 0, 0.6);
+    flex-shrink: 0;
+}
+
+.ygdr-footer-bar {
+    flex-direction: row;
+    align-items: center;
+    height: 28px;
+    padding-left: 6px;
+    padding-right: 6px;
+    flex-shrink: 0;
+}
+
+.ygdr-footer-text {
+    -unity-text-align: middle-left;
+    font-size: 10px;
+    color: rgb(191, 191, 191);
+    padding-left: 6px;
+}
+
+.ygdr-footer-spacer {
+    flex-grow: 1;
+}
+
+/* Shared base for transparent scale-to-fit icon buttons (footer icons, accordion help) —
+   apply alongside the specific class for size/margin. */
+.ygdr-icon-btn-base {
+    padding: 0;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-background-scale-mode: scale-to-fit;
+    cursor: link;
+}
+
+.ygdr-footer-icon-button {
+    width: 16px;
+    height: 16px;
+    margin-left: 8px;
+    margin-right: 0;
+}
+
+.ygdr-footer-icon-button:hover,
+.ygdr-accordion-help-button:hover {
+    opacity: 0.75;
+}
+
+.ygdr-light .ygdr-footer-icon-button,
+.ygdr-light .ygdr-accordion-help-button {
+    -unity-background-image-tint-color: rgb(0, 0, 0);
+}
+
+.ygdr-dark .ygdr-footer-icon-button,
+.ygdr-dark .ygdr-accordion-help-button {
+    -unity-background-image-tint-color: rgb(255, 255, 255);
+}
+
+.ygdr-footer-docs-button {
+    -unity-text-align: middle-center;
+    -unity-font-style: bold;
+    font-size: 10px;
+    color: rgb(191, 191, 191);
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+    margin-left: 8px;
+    padding: 0;
+    cursor: link;
+}
+
+.ygdr-footer-docs-button:hover {
+    color: rgb(255, 255, 255);
+}
+
+/* ── Tab strip (Phase 2) — compact quick-toggle row, mirrors old DrawTabs() ── */
+
+.ygdr-tab-strip {
+    flex-direction: row;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.ygdr-tab-strip-button {
+    flex-grow: 1;
+    flex-basis: 0;
+    height: 24px;
+    margin: 0;
+    border-radius: 0;
+    font-size: 12px;
+    -unity-font-style: normal;
+    transition-property: background-color;
+    transition-duration: 260ms;
+    transition-timing-function: ease-out;
+}
+
+.ygdr-tab-strip-button-active {
+    -unity-font-style: bold;
+}
+
+.ygdr-light .ygdr-tab-strip-button {
+    background-color: rgb(200, 200, 200);
+}
+
+.ygdr-light .ygdr-tab-strip-button-active {
+    background-color: rgb(160, 160, 160);
+}
+
+.ygdr-dark .ygdr-tab-strip-button {
+    background-color: rgb(56, 56, 56);
+}
+
+.ygdr-dark .ygdr-tab-strip-button-active {
+    background-color: rgb(90, 90, 90);
+}
+
+/* ── AnimatorFindUsageWindow (Phase 1B, native) — shared with satellites ── */
+
+.ygdr-fu-header {
+    height: 28px;
+    padding-left: 8px;
+    -unity-text-align: middle-left;
+    font-size: 12px;
+    -unity-font-style: bold;
+    color: rgb(255, 255, 255);
+    flex-shrink: 0;
+}
+
+.ygdr-fu-body {
+    flex-grow: 1;
+    padding: 12px;
+}
+
+.ygdr-fu-col-header-row,
+.ygdr-tpl-col-header-row {
+    flex-direction: row;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.ygdr-fu-col-header-row {
+    margin-top: 8px;
+}
+
+
+.ygdr-fu-rows-scroll {
+    flex-grow: 0;
+    max-height: 220px;
+}
+
+.ygdr-fu-row {
+    flex-direction: row;
+    min-height: 18px;
+}
+
+.ygdr-fu-cell {
+    flex-grow: 1;
+    flex-basis: 0;
+    -unity-text-align: middle-left;
+    font-size: 11px;
+    padding-left: 4px;
+    padding-right: 4px;
+    margin: 0;
+    border-width: 0;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-font-style: normal;
+}
+
+.ygdr-fu-cell-clickable {
+    cursor: link;
+}
+
+.ygdr-fu-cell-clickable:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+}
+
+.ygdr-fu-empty {
+    flex-grow: 1;
+    -unity-text-align: upper-center;
+    color: rgb(150, 150, 150);
+    padding-top: 20px;
+}
+
+/* ── AnimatorTemplateParameterWindow (Phase 1B, native satellite #2) ──────── */
+
+.ygdr-tpl-body {
+    flex-grow: 1;
+    padding: 8px;
+}
+
+.ygdr-tpl-panel {
+    flex-grow: 1;
+    padding: 4px;
+}
+
+.ygdr-tpl-rows-scroll {
+    flex-grow: 1;
+}
+
+.ygdr-tpl-row {
+    flex-direction: row;
+    min-height: 20px;
+}
+
+.ygdr-tpl-cell-label {
+    flex-grow: 1;
+    flex-basis: 0;
+    -unity-text-align: middle-left;
+    font-size: 11px;
+    padding-left: 4px;
+}
+
+.ygdr-tpl-cell-field {
+    flex-grow: 1;
+    flex-basis: 0;
+    margin: 1px 2px;
+}
+
+.ygdr-tpl-footer-label {
+    -unity-text-align: upper-center;
+    color: rgb(150, 150, 150);
+    margin-top: 4px;
+}
+
+.ygdr-tpl-name-field {
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+.ygdr-tpl-confirm-button {
+    margin: 6px 40px 2px 40px;
+    height: 22px;
+    border-radius: 3px;
+    -unity-font-style: bold;
+    font-size: 12px;
+    color: rgb(255, 255, 255);
+    cursor: link;
+}
+
+.ygdr-tpl-confirm-button:hover {
+    opacity: 0.9;
+}
+
+.ygdr-tpl-confirm-button:disabled {
+    opacity: 0.4;
+}
+
+/* ── Settings tab (Phase 5, native) ────────────────────────────────────── */
+
+.ygdr-settings-root {
+    padding: 4px 0;
+}
+
+.ygdr-settings-section-header {
+    cursor: link;
+}
+
+.ygdr-settings-section-body,
+.ygdr-transitions-panel,
+.ygdr-states-panel,
+.ygdr-controller-panel {
+    padding: 12px;
+    margin-left: 8px;
+    margin-right: 8px;
+}
+
+.ygdr-settings-section-body {
+    flex-direction: column;
+}
+
+.ygdr-settings-bold-label {
+    -unity-font-style: bold;
+    margin-top: 4px;
+    margin-bottom: 2px;
+}
+
+.ygdr-settings-row {
+    flex-direction: row;
+    align-items: center;
+    min-height: 20px;
+    margin-bottom: 2px;
+    width: 100%;
+}
+
+.ygdr-settings-row Slider,
+.ygdr-settings-row SliderInt,
+.ygdr-settings-row ObjectField,
+.ygdr-settings-row FloatField,
+.ygdr-settings-row IntegerField,
+.ygdr-settings-row TextField,
+.ygdr-settings-row DoubleField,
+.ygdr-settings-row .unity-base-slider__drag-container {
+    min-width: 0;
+    flex-shrink: 1;
+}
+
+.ygdr-settings-toggle-grid {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    width: 100%;
+}
+
+.ygdr-settings-row .unity-base-field__label,
+.ygdr-settings-toggle-grid .unity-base-field__label {
+    min-width: 0;
+    flex-shrink: 1;
+}
+
+.ygdr-settings-row .unity-base-popup-field,
+.ygdr-settings-row .unity-base-field__input {
+    min-width: 0;
+    flex-shrink: 1;
+}
+
+/* Toggle grid: the checkbox lives in the base-field input container, which Unity's default
+   stylesheet gives flex-grow:1 (it's meant to fill the space right of the label). After
+   PutCheckboxBeforeLabel reorders it to the front, that grow makes it eat the whole cell and
+   shove the label to the far right. Pin it to its intrinsic (checkmark) size so the label sits
+   immediately to its right, left-aligned. */
+.ygdr-settings-toggle-grid .unity-base-field__input {
+    flex-grow: 0;
+    flex-shrink: 0;
+    flex-basis: auto;
+    min-width: 0;
+}
+
+.ygdr-settings-accent-btn {
+    height: 20px;
+    border-radius: 0;
+    -unity-font-style: bold;
+    font-size: 11px;
+    color: rgb(255, 255, 255);
+    cursor: link;
+    margin: 0 0 0 4px;
+}
+
+.ygdr-settings-reset-btn {
+    width: 24px;
+    flex-shrink: 0;
+}
+
+.ygdr-settings-delimiter-btn {
+    -unity-font-style: bold;
+    font-size: 11px;
+    color: rgb(255, 255, 255);
+    border-radius: 0;
+    cursor: link;
+}
+
+.ygdr-settings-clip-group-border {
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.15);
+    padding: 2px;
+}
+
+.ygdr-settings-palette-swatch {
+    flex-direction: row;
+    flex-grow: 1;
+    height: 20px;
+    cursor: link;
+    margin: 0 4px;
+}
+
+.ygdr-settings-swatch-cell {
+    flex-grow: 1;
+    flex-basis: 0;
+    cursor: link;
+}
+
+.ygdr-settings-desc-label {
+    white-space: normal;
+    font-size: 10px;
+    color: rgb(180, 180, 180);
+    margin-bottom: 4px;
+}
+
+/* ── Accordion sections (Phase 2) — matches old DrawSectionHeader look ──── */
+
+.ygdr-section-scroll {
+    flex-grow: 1;
+}
+
+/* Shrinks the reserved vertical scroller track to match the 8px left inset added to the
+   accordion body panels, so the section background reads evenly framed on both sides. */
+.ygdr-section-scroll .unity-scroller--vertical {
+    width: 0px;
+}
+
+.ygdr-accordion-header {
+    flex-direction: row;
+    align-items: center;
+    height: 28px;
+    padding-left: 8px;
+    padding-right: 4px;
+    cursor: link;
+}
+
+.ygdr-accordion-title {
+    -unity-text-align: middle-left;
+    font-size: 13px;
+    -unity-font-style: bold;
+    color: rgb(255, 255, 255);
+    flex-grow: 1;
+}
+
+.ygdr-accordion-right-label {
+    -unity-text-align: middle-right;
+    font-size: 10px;
+    color: rgb(128, 128, 128);
+    padding-right: 8px;
+}
+
+.ygdr-accordion-help-button {
+    width: 20px;
+    height: 20px;
+}
+
+/* ── Transitions tab (Phase 3) — tags + properties native; conditions grid still IMGUI-bridged ── */
+
+
+.ygdr-empty-label {
+    -unity-text-align: middle-center;
+    font-size: 11px;
+    color: rgb(140, 140, 140);
+    height: 30px;
+}
+
+.ygdr-transitions-tags-wrapper {
+    position: relative;
+    margin-bottom: 8px;
+}
+
+.ygdr-transitions-tags-scroll {
+}
+
+.ygdr-transitions-tags-container {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 4px;
+}
+
+.ygdr-transitions-tags-resize-grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+}
+
+.ygdr-transition-tag-chip {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    max-width: 100%;
+    margin: 2px;
+    padding-left: 4px;
+    padding-right: 8px;
+    border-radius: 3px;
+}
+
+.ygdr-transition-tag-remove {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    font-size: 10px;
+    color: rgb(191, 191, 191);
+    -unity-text-align: middle-center;
+    cursor: link;
+}
+
+.ygdr-transition-tag-remove:hover {
+    color: rgb(255, 255, 255);
+}
+
+.ygdr-transition-tag-label {
+    font-size: 10px;
+    -unity-text-align: middle-left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ygdr-transitions-properties {
+    margin-bottom: 4px;
+}
+
+.ygdr-transitions-property-field-wide {
+    flex-grow: 1;
+}
+
+.ygdr-transitions-property-row .unity-base-field__label {
+    min-width: 130px;
+}
+
+.ygdr-cond-section {
+    margin-top: 4px;
+}
+
+.ygdr-cond-header {
+    flex-direction: row;
+    align-items: center;
+    height: 22px;
+    background-color: rgb(64, 64, 64);
+}
+
+.ygdr-cond-mode-btn {
+    width: 40%;
+    flex-grow: 0;
+    flex-shrink: 0;
+    height: 22px;
+    margin: 0;
+    border-radius: 0;
+    -unity-text-align: middle-left;
+    padding-left: 6px;
+    font-size: 11px;
+}
+
+.ygdr-cond-header-icon-btn {
+    flex-grow: 1;
+    flex-basis: 0;
+    height: 22px;
+    margin: 0;
+    border-radius: 0;
+    -unity-text-align: middle-center;
+    font-size: 12px;
+    background-size: 14px 14px;
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+.ygdr-cond-body {
+    padding: 6px;
+}
+
+.ygdr-cond-row {
+    flex-direction: row;
+    align-items: center;
+    height: 18px;
+    margin-bottom: 1px;
+}
+
+.ygdr-cond-row-alt,
+.ygdr-wd-row-alt,
+.ygdr-menu-control-row-alt {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.ygdr-cond-row-group-gap {
+    margin-top: 6px;
+}
+
+.ygdr-cond-param-label {
+    flex-grow: 1;
+    font-size: 11px;
+    -unity-text-align: middle-left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ygdr-cond-param-label-missing {
+    color: rgb(219, 38, 38);
+}
+
+.ygdr-cond-param-cell {
+    flex-grow: 0;
+    flex-shrink: 0;
+    flex-basis: 46%;
+    min-width: 0;
+    height: 100%;
+    position: relative;
+}
+
+.ygdr-cond-param-dropdown {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    margin: 0;
+    padding-left: 4px;
+    padding-right: 74px;
+    border-radius: 0;
+    font-size: 11px;
+    -unity-text-align: middle-left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Type label / duplicate warning / filter icon overlay on top of the dropdown button, stacked from the
+   cell's right edge — same layering the old IMGUI version drew at fixed offsets from the rect's right edge. */
+.ygdr-cond-type-label {
+    position: absolute;
+    right: 36px;
+    top: 0;
+    bottom: 0;
+    font-size: 9px;
+    color: rgb(150, 150, 150);
+    -unity-text-align: middle-right;
+}
+
+.ygdr-cond-duplicate-icon {
+    position: absolute;
+    right: 36px;
+    top: 4px;
+    width: 14px;
+    height: 14px;
+}
+
+.ygdr-cond-filter-btn {
+    position: absolute;
+    right: 18px;
+    top: 3px;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-background-scale-mode: scale-to-fit;
+    cursor: link;
+}
+
+.ygdr-cond-dropdown-arrow {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+/* Shared 18px-tall, flex-filling, borderless condition-row field base. */
+.ygdr-cond-mode-dropdown,
+.ygdr-cond-value-field,
+.ygdr-cond-bool-btn {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    margin: 0;
+    padding: 0;
+    border-width: 0;
+    border-radius: 0;
+    overflow: hidden;
+}
+
+.ygdr-cond-mode-dropdown,
+.ygdr-cond-bool-btn {
+    margin-left: 4px;
+}
+
+/* Unity's built-in FloatField/IntegerField wrap an inner input container that carries its
+   own padding/margin — without zeroing it the field renders taller than the 18px box above,
+   which is why it looked mismatched against the param/mode dropdown buttons. */
+.ygdr-cond-value-field .unity-base-field__input,
+.ygdr-cond-value-field .unity-base-text-field__input {
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    margin: 0;
+    padding: 0 2px;
+    border-width: 0;
+    border-radius: 0;
+}
+
+.ygdr-cond-mode-dropdown,
+.ygdr-cond-bool-btn {
+    font-size: 11px;
+}
+
+.ygdr-cond-mode-dropdown {
+    position: relative;
+    padding-right: 14px;
+}
+
+.ygdr-cond-bool-btn {
+    -unity-text-align: middle-center;
+}
+
+.ygdr-cond-bool-btn-true {
+    color: rgb(51, 204, 51);
+}
+
+.ygdr-cond-bool-btn-false {
+    color: rgb(204, 51, 51);
+}
+
+/* Shared 24x18 bold-center row-action button base (remove/add, condition + driver-param rows). */
+.ygdr-cond-remove-btn,
+.ygdr-cond-add-btn,
+.ygdr-driver-param-add-btn {
+    width: 24px;
+    height: 18px;
+    margin: 0;
+    border-radius: 0;
+    font-size: 13px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+}
+
+/* Shared right-aligned "add" row footer (condition rows, driver-param rows, audio-clip rows). */
+.ygdr-cond-add-row,
+.ygdr-driver-param-add-row {
+    flex-direction: row;
+    justify-content: flex-end;
+    height: 18px;
+}
+
+.ygdr-cond-add-btn,
+.ygdr-driver-param-add-btn {
+    margin-right: 16px;
+}
+
+/* ── States tab (Phase 4) — rows/align/properties native; VRC behavior sections still IMGUI-bridged ── */
+
+
+.ygdr-states-rows-wrapper {
+    position: relative;
+    margin-bottom: 8px;
+}
+
+.ygdr-states-rows-scroll {
+}
+
+.ygdr-states-rows-container {
+    padding: 4px;
+}
+
+.ygdr-states-rows-resize-grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 12px;
+    height: 12px;
+}
+
+.ygdr-state-row {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    height: 20px;
+    margin-bottom: 4px;
+}
+
+.ygdr-state-row-btn {
+    width: 44px;
+    height: 20px;
+    margin-left: 2px;
+    margin-right: 2px;
+    font-size: 11px;
+    border-radius: 0;
+}
+
+.ygdr-state-row-name {
+    width: 140px;
+    height: 20px;
+    -unity-text-align: middle-center;
+    -unity-font-style: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ygdr-states-align-container {
+    margin-bottom: 4px;
+}
+
+.ygdr-states-button-row {
+    flex-direction: row;
+    margin-bottom: 0;
+}
+
+.ygdr-states-properties {
+    margin-top: 8px;
+}
+
+.ygdr-states-property-field-full {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+}
+
+.ygdr-states-property-label {
+    width: 110px;
+    -unity-text-align: middle-left;
+}
+
+.ygdr-states-property-row .unity-base-field__label {
+    width: 110px;
+    min-width: 110px;
+    margin: 0;
+    padding: 0;
+    -unity-text-align: middle-left;
+}
+
+.ygdr-states-active-toggle .unity-base-field__label {
+    width: auto;
+    min-width: 0;
+}
+
+.ygdr-states-param-dropdown {
+    position: relative;
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    margin: 0 4px 0 0;
+    border-width: 0;
+    padding-right: 18px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+}
+
+.ygdr-states-active-toggle {
+    width: 90px;
+    margin-left: auto;
+    flex-shrink: 0;
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+}
+
+.ygdr-states-active-toggle .unity-base-field__label {
+    margin-left: 4px;
+}
+
+.ygdr-states-behaviors-container {
+    margin-top: 8px;
+}
+
+/* ── State-behavior sections (native): shared foldout/section scaffolding used by LayerControl so far;
+   Driver/Audio/Other still draw through .ygdr-states-behaviors-container above. ── */
+
+.ygdr-states-shared-behaviors-label {
+    margin-top: 12px;
+    margin-bottom: 4px;
+    -unity-font-style: bold;
+    font-size: 12px;
+}
+
+.ygdr-behavior-group {
+    margin-top: 0;
+}
+
+.ygdr-behavior-section {
+    margin-bottom: 8px;
+}
+
+.ygdr-behavior-section-header {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    padding-left: 8px;
+}
+
+.ygdr-behavior-section-label {
+    flex-grow: 1;
+    -unity-font-style: bold;
+    font-size: 11px;
+}
+
+.ygdr-add-behavior-btn {
+    margin: 0 0 8px 0;
+    height: 24px;
+    border-radius: 0;
+    font-size: 11px;
+    -unity-font-style: bold;
+}
+
+.ygdr-behavior-header-btn {
+    width: 125px;
+    height: 18px;
+    margin: 3px 4px;
+    border-radius: 0;
+    font-size: 10px;
+}
+
+.ygdr-behavior-section-rows {
+    flex-grow: 1;
+}
+
+.ygdr-behavior-instance-container {
+    margin-bottom: 2px;
+}
+
+.ygdr-behavior-foldout-header {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+}
+
+.ygdr-behavior-foldout-arrow {
+    width: 16px;
+    -unity-text-align: middle-center;
+    font-size: 10px;
+    cursor: link;
+}
+
+.ygdr-behavior-foldout-arrow-icon {
+    width: 14px;
+    height: 14px;
+    margin-right: 2px;
+    flex-shrink: 0;
+    -unity-background-scale-mode: scale-to-fit;
+    cursor: link;
+}
+
+.ygdr-behavior-foldout-name {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+    height: 24px;
+    margin: 0;
+}
+
+.ygdr-behavior-icon-btn {
+    width: 18px;
+    height: 24px;
+    margin: 0;
+    border-radius: 0;
+    -unity-text-align: middle-center;
+    font-size: 11px;
+}
+
+.ygdr-behavior-instance-body {
+    padding: 6px;
+}
+
+.ygdr-behavior-field-row {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    margin-bottom: 2px;
+}
+
+.ygdr-behavior-field-label {
+    width: 110px;
+    font-size: 11px;
+}
+
+.ygdr-bool-toggle-row {
+    flex-direction: row;
+    flex-grow: 1;
+}
+
+.ygdr-bool-toggle-btn {
+    width: 60px;
+    height: 18px;
+    margin: 0 2px 0 0;
+    border-radius: 0;
+    font-size: 10px;
+}
+
+.ygdr-tracking-row {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    margin-bottom: 1px;
+}
+
+.ygdr-tracking-col {
+    width: 70px;
+    -unity-text-align: middle-center;
+    font-size: 10px;
+}
+
+.ygdr-audio-apply-btn {
+    width: 130px;
+    height: 18px;
+    margin-left: auto;
+    border-radius: 0;
+    font-size: 10px;
+}
+
+.ygdr-audio-col-label {
+    width: 40px;
+    -unity-text-align: middle-center;
+    font-size: 10px;
+}
+
+.ygdr-audio-col-toggle {
+    width: 40px;
+    -unity-text-align: middle-center;
+}
+
+.ygdr-audio-clips-section {
+    margin-bottom: 4px;
+    padding: 4px;
+}
+
+.ygdr-audio-clips-header {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+}
+
+.ygdr-audio-clips-title {
+    flex-grow: 1;
+    font-size: 11px;
+}
+
+.ygdr-audio-clips-size-field {
+    width: 40px;
+}
+
+.ygdr-audio-clips-rows {
+    margin-top: 2px;
+}
+
+.ygdr-audio-clip-row {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    margin-bottom: 1px;
+    padding-right: 22px;
+    position: relative;
+}
+
+.ygdr-audio-clip-remove-btn {
+    position: absolute;
+    right: 0;
+    top: 0;
+}
+
+.ygdr-audio-minmax-field {
+    width: 50px;
+    flex-grow: 0;
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
+.ygdr-audio-clip-add-row {
+    flex-direction: row;
+    justify-content: flex-end;
+    height: 18px;
+    margin-top: 2px;
+}
+
+.ygdr-audio-delay-row .ygdr-behavior-field-label {
+    width: 170px;
+    min-width: 170px;
+    white-space: normal;
+}
+
+.ygdr-driver-params-rows {
+    margin-top: 2px;
+}
+
+.ygdr-driver-param-row {
+    padding: 4px;
+    margin-bottom: 2px;
+}
+
+.ygdr-driver-param-row .ygdr-behavior-field-row {
+    padding-right: 22px;
+    position: relative;
+}
+
+.ygdr-driver-param-row .ygdr-behavior-icon-btn {
+    position: absolute;
+    right: 0;
+    top: 0;
+}
+
+.ygdr-driver-minmax-label {
+    font-size: 9px;
+    color: rgb(140, 140, 140);
+    margin-right: 2px;
+    flex-shrink: 0;
+    -unity-text-align: middle-left;
+}
+
+.ygdr-driver-minmax-field {
+    width: 60px;
+    margin-right: 2px;
+}
+
+.ygdr-driver-hint {
+    white-space: normal;
+    font-size: 10px;
+    color: rgb(200, 180, 120);
+    margin: 2px 0 2px 110px;
+}
+
+/* ── Controller tab (Phase 4) — sub-tab shell + Write Defaults native; Network Sync/Sub-Assets/Menus still IMGUI-bridged ── */
+
+.ygdr-controller-subtab-strip {
+    margin-bottom: 8px;
+}
+
+.ygdr-wd-panel {
+    flex-grow: 1;
+}
+
+.ygdr-wd-buttons-row {
+    flex-direction: row;
+    margin-bottom: 8px;
+}
+
+.ygdr-wd-set-all-btn {
+    flex-grow: 1;
+    flex-basis: 0;
+    height: 24px;
+    margin: 1px;
+    border-radius: 0;
+    font-size: 11px;
+}
+
+.ygdr-wd-columns-row {
+    flex-direction: row;
+}
+
+.ygdr-wd-column {
+    flex-grow: 1;
+    flex-basis: 0;
+    margin: 1px;
+}
+
+.ygdr-wd-column-header,
+.ygdr-wd-mixed-header {
+    height: 24px;
+    -unity-text-align: middle-center;
+    -unity-font-style: bold;
+    font-size: 11px;
+    background-color: rgb(64, 64, 64);
+    color: rgb(230, 230, 230);
+}
+
+.ygdr-wd-column-scroll {
+    max-height: 200px;
+}
+
+.ygdr-wd-row {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+}
+
+.ygdr-wd-row-btn {
+    width: 24px;
+    height: 20px;
+    margin: 0;
+    border-radius: 0;
+    font-size: 11px;
+}
+
+.ygdr-wd-row-name {
+    flex-grow: 1;
+    -unity-text-align: middle-center;
+    font-size: 11px;
+}
+
+.ygdr-wd-mixed-section {
+    margin-top: 4px;
+}
+
+.ygdr-wd-mixed-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    height: 20px;
+}
+
+.ygdr-wd-mixed-btn {
+    width: 48px;
+    height: 20px;
+    margin: 0 8px;
+    border-radius: 0;
+    font-size: 11px;
+}
+
+.ygdr-wd-mixed-name {
+    -unity-text-align: middle-center;
+    font-size: 11px;
+}
+
+.ygdr-network-panel {
+    flex-grow: 1;
+}
+
+.ygdr-network-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.ygdr-network-toggle-btn {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.ygdr-network-label-wide {
+    width: 164px;
+    -unity-text-align: middle-left;
+    font-size: 11px;
+}
+
+.ygdr-network-dropdown-field,
+.ygdr-menu-param-dropdown-btn {
+    position: relative;
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    margin: 0;
+    border-width: 0;
+    padding-right: 18px;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+}
+
+.ygdr-menu-param-dropdown-btn {
+    border-radius: 0;
+    padding-right: 76px;
+}
+
+.ygdr-network-warning-icon {
+    width: 16px;
+    height: 16px;
+    margin-left: 4px;
+}
+
+.ygdr-network-inline-toggle {
+    flex-direction: row;
+    align-items: center;
+    margin-right: 6px;
+}
+
+.ygdr-network-inline-label {
+    font-size: 11px;
+    margin-right: 2px;
+}
+
+.ygdr-network-run-btn,
+.ygdr-clipremap-confirm-btn {
+    height: 28px;
+    border-radius: 0;
+    font-size: 12px;
+    -unity-font-style: bold;
+}
+
+.ygdr-network-run-btn {
+    margin-top: 6px;
+}
+
+/* ── Sub-Assets + Clip Remapper (Phase 4) ── */
+
+.ygdr-subassets-panel {
+    flex-grow: 1;
+}
+
+.ygdr-subassets-filter-bar {
+    flex-direction: row;
+    height: 24px;
+    margin-bottom: 4px;
+}
+
+.ygdr-subassets-filter-btn {
+    flex-grow: 1;
+    flex-basis: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    margin: 0;
+    border-radius: 0;
+    font-size: 10px;
+    transition-property: background-color;
+    transition-duration: 260ms;
+    transition-timing-function: ease-out;
+}
+
+.ygdr-subassets-filter-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+
+.ygdr-subassets-filter-label {
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ygdr-light .ygdr-subassets-filter-btn-active {
+    background-color: rgb(160, 160, 160);
+}
+
+.ygdr-dark .ygdr-subassets-filter-btn-active {
+    background-color: rgb(90, 90, 90);
+}
+
+.ygdr-clipremap-section {
+    margin-bottom: 4px;
+    padding: 4px;
+}
+
+.ygdr-clipremap-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.ygdr-clipremap-label-narrow {
+    width: 60px;
+    font-size: 11px;
+}
+
+.ygdr-clipremap-field {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.ygdr-clipremap-go-field {
+    width: 160px;
+    margin-left: 4px;
+}
+
+.ygdr-clipremap-scan-btn {
+    width: 160px;
+    height: 20px;
+    margin: 0;
+    margin-left: 4px;
+    border-radius: 0;
+    font-size: 11px;
+}
+
+.ygdr-clipremap-warning {
+    white-space: normal;
+    color: rgb(219, 166, 38);
+    font-size: 11px;
+    margin-bottom: 4px;
+}
+
+.ygdr-clipremap-auto-btn {
+    height: 24px;
+    margin-bottom: 4px;
+    border-radius: 0;
+    font-size: 11px;
+}
+
+.ygdr-clipremap-broken-list {
+    margin-bottom: 4px;
+}
+
+.ygdr-clipremap-segment-btn {
+    height: 20px;
+    margin-bottom: 1px;
+    border-radius: 0;
+    -unity-text-align: middle-left;
+    font-size: 11px;
+}
+
+.ygdr-clipremap-confirm-btn {
+    margin-top: 4px;
+}
+
+.ygdr-subassets-search-row {
+    position: relative;
+    margin-bottom: 4px;
+}
+
+.ygdr-subassets-search-field {
+    height: 20px;
+}
+
+.ygdr-subassets-search-hint {
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    font-size: 11px;
+    color: rgb(140, 140, 140);
+    -unity-text-align: middle-left;
+}
+
+.ygdr-subassets-list-scroll {
+    max-height: 220px;
+}
+
+.ygdr-subassets-row {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+}
+
+.ygdr-subassets-row-chip {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+    height: 100%;
+    margin: 0;
+    border-radius: 0;
+    overflow: hidden;
+}
+
+.ygdr-subassets-row-selected {
+    background-color: rgba(46, 158, 46, 0.85);
+}
+
+.ygdr-subassets-row-btn {
+    flex-grow: 1;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+    padding-left: 8px;
+    font-size: 11px;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.ygdr-subassets-row-warning {
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    flex-shrink: 0;
+}
+
+/* ── Controller: Menus (VRC expressions menu editor) ───────────────────── */
+
+.ygdr-menu-panel {
+    flex-grow: 1;
+}
+
+.ygdr-menu-breadcrumb-row {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.ygdr-menu-breadcrumb-btn {
+    -unity-text-align: middle-left;
+    padding: 0 2px;
+    margin: 0;
+    border-width: 0;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    background-image: none;
+    font-size: 11px;
+    cursor: link;
+}
+
+.ygdr-menu-breadcrumb-btn:hover,
+.ygdr-menu-breadcrumb-btn:active,
+.ygdr-menu-breadcrumb-btn:focus {
+    background-color: rgba(0, 0, 0, 0);
+    background-image: none;
+}
+
+.ygdr-menu-breadcrumb-leaf {
+    -unity-font-style: bold;
+    font-size: 11px;
+    padding: 0 2px;
+}
+
+.ygdr-menu-breadcrumb-sep {
+    font-size: 11px;
+    color: rgb(140, 140, 140);
+    padding: 0 2px;
+}
+
+.ygdr-menu-controls-panel {
+    margin-bottom: 8px;
+}
+
+.ygdr-menu-count-row {
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    margin-bottom: 0;
+}
+
+.ygdr-menu-count-frame {
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 4px 0 4px;
+    border-radius: 2px;
+}
+
+.ygdr-menu-count-field {
+    width: 40px;
+}
+
+.ygdr-menu-count-suffix {
+    font-size: 10px;
+    color: rgb(140, 140, 140);
+    margin-left: 2px;
+}
+
+.ygdr-menu-controls-scroll {
+    max-height: 200px;
+}
+
+.ygdr-menu-controls-rows {
+    flex-grow: 1;
+}
+
+.ygdr-menu-control-row {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    padding-left: 2px;
+    cursor: link;
+}
+
+
+.ygdr-menu-control-icon {
+    width: 18px;
+    height: 18px;
+    margin-right: 4px;
+}
+
+.ygdr-menu-control-name {
+    flex-grow: 1;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ygdr-menu-control-type {
+    width: 90px;
+    font-size: 11px;
+    color: rgb(140, 140, 140);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ygdr-menu-controls-footer-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    height: 20px;
+    margin-top: 0;
+    padding-right: 28px;
+}
+
+.ygdr-menu-add-btn, .ygdr-menu-remove-btn {
+    width: 24px;
+    height: 20px;
+    margin: 0;
+    border-radius: 0;
+}
+
+.ygdr-menu-inspector-panel {
+    padding: 4px;
+}
+
+.ygdr-menu-property-row {
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+    margin-bottom: 2px;
+}
+
+.ygdr-menu-property-label {
+    width: 100px;
+    font-size: 11px;
+}
+
+.ygdr-menu-icon-field {
+    width: 70px;
+    margin-left: 4px;
+}
+
+.ygdr-menu-warning-icon {
+    width: 16px;
+    height: 16px;
+    margin-left: 2px;
+}
+
+/* Overlaid on the parameter dropdown button's right edge (see ygdr-menu-param-dropdown-btn's
+   padding-right) instead of sitting beside it as a row sibling, so showing/hiding never shifts
+   the row's flex layout. */
+.ygdr-menu-param-overlay-icon {
+    position: absolute;
+    right: 18px;
+    top: 1px;
+    margin-left: 0;
+}
+
+.ygdr-menu-param-type-label {
+    position: absolute;
+    right: 36px;
+    top: 0;
+    bottom: 0;
+    font-size: 10px;
+    color: rgb(140, 140, 140);
+    -unity-text-align: middle-right;
+}
+
+.ygdr-menu-value-slider {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 4px;
+}
+
+.ygdr-menu-value-field {
+    width: 50px;
+    flex-shrink: 0;
+}
+
+.ygdr-menu-submenu-btn {
+    margin-left: 4px;
+    border-radius: 0;
+}
+
+/* ── Toggle creator window ── */
+
+.ygdr-toggle-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    padding-left: 4px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+}
+
+.ygdr-toggle-panel {
+    flex-grow: 1;
+    padding: 12px;
+}
+
+.ygdr-toggle-form {
+    margin-bottom: 6px;
+}
+
+.ygdr-toggle-objects-section {
+    flex-grow: 1;
+    position: relative;
+    border-width: 2px;
+    border-color: rgba(0, 0, 0, 0);
+}
+
+.ygdr-toggle-objects-section.ygdr-toggle-drop-highlight {
+    border-color: rgba(102, 178, 255, 0.8);
+}
+
+.ygdr-toggle-rows-scroll {
+    flex-grow: 1;
+}
+
+.ygdr-toggle-empty-hint {
+    height: 40px;
+    font-size: 11px;
+    color: rgb(128, 128, 128);
+    -unity-text-align: middle-center;
+}
+
+.ygdr-toggle-row,
+.ygdr-toggle-blendshape-row {
+    flex-direction: row;
+    align-items: center;
+    height: 22px;
+}
+
+.ygdr-toggle-name-label,
+.ygdr-toggle-blendshape-name {
+    flex-grow: 1;
+    padding-left: 4px;
+    font-size: 11px;
+    -unity-text-align: middle-left;
+}
+
+.ygdr-toggle-mode-btn {
+    height: 22px;
+    margin: 0;
+    border-radius: 0;
+    font-size: 10px;
+    color: rgb(255, 255, 255);
+    -unity-text-align: middle-center;
+}
+
+.ygdr-toggle-btn-object     { width: 56px; }
+.ygdr-toggle-btn-renderer   { width: 66px; }
+.ygdr-toggle-btn-particle   { width: 56px; }
+.ygdr-toggle-btn-audio      { width: 50px; }
+.ygdr-toggle-btn-light      { width: 40px; }
+.ygdr-toggle-btn-physbone   { width: 66px; }
+.ygdr-toggle-btn-blendshape { width: 76px; }
+.ygdr-toggle-btn-remove     { width: 22px; }
+
+.ygdr-toggle-blendshape-rows {
+    margin-left: 16px;
+}
+
+.ygdr-toggle-blendshape-field-label {
+    width: 24px;
+    font-size: 10px;
+    color: rgb(255, 255, 255);
+    -unity-text-align: middle-center;
+}
+
+.ygdr-toggle-blendshape-field {
+    width: 44px;
+}
+
+.ygdr-toggle-blendshape-add-row {
+    height: 22px;
+    margin: 2px 0 2px 16px;
+}
+
+.ygdr-toggle-blendshape-add-btn {
+    flex-grow: 1;
+    margin: 0;
+    border-radius: 0;
+    font-size: 11px;
+    color: rgb(255, 255, 255);
+    -unity-text-align: middle-center;
+}
+
+.ygdr-toggle-footer-btn {
+    height: 28px;
+    margin-top: 6px;
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: rgb(255, 255, 255);
+}
