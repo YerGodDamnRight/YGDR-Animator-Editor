@@ -188,6 +188,7 @@ namespace YGDR.Editor.Animation
         {
             bool mixed = multi && statesWithAudio.Any(state => resolver(state).ParameterName != first.ParameterName);
             var button = new Button { text = mixed ? "—" : (string.IsNullOrEmpty(first.ParameterName) ? "[None]" : first.ParameterName) };
+            StyleAccentButton(button);
             button.clicked += () =>
             {
                 if (_controller == null || _controller.parameters.Length == 0) return;
@@ -357,7 +358,7 @@ namespace YGDR.Editor.Animation
             return row;
         }
 
-        // ── Clips list (native: rows with ObjectField + ↑/↓/remove, replacing the old ReorderableList) ──
+        // ── Clips list (native ListView with built-in drag reorder, mirrors the old IMGUI ReorderableList) ──
 
         VisualElement BuildAudioClipsSection(string name, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver)
         {
@@ -389,112 +390,73 @@ namespace YGDR.Editor.Animation
             headerRow.Add(sizeField);
             section.Add(headerRow);
 
-            var rowsContainer = new VisualElement();
-            rowsContainer.AddToClassList("ygdr-audio-clips-rows");
-            rowsContainer.style.display = expanded ? DisplayStyle.Flex : DisplayStyle.None;
-            section.Add(rowsContainer);
+            var clipsListView = new ListView
+            {
+                reorderable = true,
+                reorderMode = ListViewReorderMode.Animated,
+                showBorder = false,
+                showAddRemoveFooter = false,
+                selectionType = SelectionType.None,
+                fixedItemHeight = 20,
+                virtualizationMethod = CollectionVirtualizationMethod.FixedHeight,
+                makeItem = () => new VisualElement()
+            };
+            clipsListView.AddToClassList("ygdr-audio-clips-rows");
+            clipsListView.style.display = expanded ? DisplayStyle.Flex : DisplayStyle.None;
+            section.Add(clipsListView);
 
+            var clipsEmptyLabel = new Label(L10n.Get("vrc.list_empty"));
+            clipsEmptyLabel.AddToClassList("ygdr-empty-label");
+            clipsEmptyLabel.style.display = DisplayStyle.None;
+            section.Add(clipsEmptyLabel);
+
+            var addRow = new VisualElement();
+            addRow.AddToClassList("ygdr-audio-clip-add-row");
+            section.Add(addRow);
+
+            /* itemsSource is a throwaway index list (see RebuildMenuControlRows in Menus.cs for why) — the real
+               data is the per-state Clips array, moved/edited via bindItem's closures reading `index` fresh each call. */
             void RebuildRows()
             {
-                rowsContainer.Clear();
                 var currentStatesWithAudio = statesWithName.Where(state => resolver(state) != null).ToArray();
-                if (currentStatesWithAudio.Length == 0) return;
-                var currentFirst = resolver(currentStatesWithAudio[0]);
-                bool currentMulti = currentStatesWithAudio.Length > 1;
-                var currentClips = currentFirst.Clips ?? Array.Empty<AudioClip>();
+                var currentClips = currentStatesWithAudio.Length > 0
+                    ? resolver(currentStatesWithAudio[0]).Clips ?? Array.Empty<AudioClip>()
+                    : Array.Empty<AudioClip>();
 
-                if (currentClips.Length == 0)
-                {
-                    var emptyLabel = new Label(L10n.Get("vrc.list_empty"));
-                    emptyLabel.AddToClassList("ygdr-empty-label");
-                    rowsContainer.Add(emptyLabel);
-                }
+                clipsEmptyLabel.style.display = currentClips.Length == 0 ? DisplayStyle.Flex : DisplayStyle.None;
 
-                for (int i = 0; i < currentClips.Length; i++)
-                {
-                    int capturedIndex = i;
-                    var row = new VisualElement();
-                    row.AddToClassList("ygdr-audio-clip-row");
-
-                    var currentClip = currentClips[capturedIndex];
-                    var clipField = new ObjectField
-                    {
-                        objectType = typeof(AudioClip),
-                        value = currentClip,
-                        showMixedValue = currentMulti && currentStatesWithAudio.Any(state =>
-                        {
-                            var stateClips = resolver(state).Clips;
-                            var clip = stateClips != null && capturedIndex < stateClips.Length ? stateClips[capturedIndex] : null;
-                            return clip != currentClip;
-                        })
-                    };
-                    clipField.AddToClassList("ygdr-audio-clip-field");
-                    clipField.RegisterValueChangedCallback(evt =>
-                    {
-                        foreach (var state in statesWithName)
-                        {
-                            var audio = GetOrCreateAudio(state, resolver);
-                            if (audio.Clips == null || capturedIndex >= audio.Clips.Length)
-                            {
-                                var expandedArray = new AudioClip[capturedIndex + 1];
-                                audio.Clips?.CopyTo(expandedArray, 0);
-                                audio.Clips = expandedArray;
-                            }
-                            Undo.RecordObject(audio, "Edit Audio Clip");
-                            audio.Clips[capturedIndex] = evt.newValue as AudioClip;
-                            EditorUtility.SetDirty(audio);
-                        }
-                    });
-                    row.Add(clipField);
-
-                    var upButton = new Button(() => { MoveAudioClip(statesWithName, resolver, capturedIndex, -1); RebuildRows(); }) { text = "↑" };
-                    upButton.SetEnabled(capturedIndex > 0);
-                    upButton.AddToClassList("ygdr-behavior-icon-btn");
-                    row.Add(upButton);
-
-                    var downButton = new Button(() => { MoveAudioClip(statesWithName, resolver, capturedIndex, 1); RebuildRows(); }) { text = "↓" };
-                    downButton.SetEnabled(capturedIndex < currentClips.Length - 1);
-                    downButton.AddToClassList("ygdr-behavior-icon-btn");
-                    row.Add(downButton);
-
-                    var removeButton = new Button(() => { RemoveAudioClip(statesWithName, resolver, capturedIndex); RebuildRows(); }) { text = "−" };
-                    removeButton.AddToClassList("ygdr-behavior-icon-btn");
-                    removeButton.AddToClassList("ygdr-audio-clip-remove-btn");
-                    StyleSecondaryButton(removeButton);
-                    row.Add(removeButton);
-
-                    rowsContainer.Add(row);
-                }
-
-                var addRow = new VisualElement();
-                addRow.AddToClassList("ygdr-audio-clip-add-row");
-                var addButton = new Button(() =>
-                {
-                    foreach (var state in statesWithName)
-                    {
-                        var audio = GetOrCreateAudio(state, resolver);
-                        Undo.RecordObject(audio, "Add Audio Clip");
-                        var expandedArray = new AudioClip[(audio.Clips?.Length ?? 0) + 1];
-                        audio.Clips?.CopyTo(expandedArray, 0);
-                        audio.Clips = expandedArray;
-                        EditorUtility.SetDirty(audio);
-                    }
-                    RebuildRows();
-                }) { text = "+" };
-                addButton.AddToClassList("ygdr-behavior-icon-btn");
-                StyleSecondaryButton(addButton);
-                addRow.Add(addButton);
-                rowsContainer.Add(addRow);
+                var indices = new List<int>(currentClips.Length);
+                for (int i = 0; i < currentClips.Length; i++) indices.Add(i);
+                clipsListView.itemsSource = indices;
+                clipsListView.bindItem = (element, index) => BindAudioClipRow(element, statesWithName, resolver, currentStatesWithAudio, currentClips, index, RebuildRows);
+                clipsListView.Rebuild();
             }
+
+            WireListViewReorder(clipsListView, (oldIndex, newIndex) => MoveAudioClipToIndex(statesWithName, resolver, oldIndex, newIndex), RebuildRows);
+
+            var addButton = new Button(() =>
+            {
+                foreach (var state in statesWithName)
+                {
+                    var audio = GetOrCreateAudio(state, resolver);
+                    Undo.RecordObject(audio, "Add Audio Clip");
+                    Array.Resize(ref audio.Clips, (audio.Clips?.Length ?? 0) + 1);
+                    EditorUtility.SetDirty(audio);
+                }
+                RebuildRows();
+            }) { text = "+" };
+            addButton.AddToClassList("ygdr-behavior-icon-btn");
+            StyleSecondaryButton(addButton);
+            addRow.Add(addButton);
 
             RebuildRows();
 
             foldoutArrow.RegisterCallback<ClickEvent>(_ =>
             {
-                bool nowExpanded = rowsContainer.style.display == DisplayStyle.None;
+                bool nowExpanded = clipsListView.style.display == DisplayStyle.None;
                 _audioClipsExpandedByKey[expandKey] = nowExpanded;
                 foldoutArrow.text = nowExpanded ? "▾" : "▸";
-                rowsContainer.style.display = nowExpanded ? DisplayStyle.Flex : DisplayStyle.None;
+                clipsListView.style.display = nowExpanded ? DisplayStyle.Flex : DisplayStyle.None;
             });
 
             sizeField.RegisterValueChangedCallback(evt =>
@@ -504,9 +466,7 @@ namespace YGDR.Editor.Animation
                 {
                     var audio = GetOrCreateAudio(state, resolver);
                     Undo.RecordObject(audio, "Resize Clips");
-                    var resized = new AudioClip[newSize];
-                    if (audio.Clips != null) Array.Copy(audio.Clips, resized, Mathf.Min(audio.Clips.Length, newSize));
-                    audio.Clips = resized;
+                    Array.Resize(ref audio.Clips, newSize);
                     EditorUtility.SetDirty(audio);
                 }
                 RebuildRows();
@@ -515,16 +475,60 @@ namespace YGDR.Editor.Animation
             return section;
         }
 
-        static void MoveAudioClip(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, int index, int direction)
+        /* statesWithAudio/clips come pre-resolved from RebuildRows's own pass over statesWithName — resolving them
+           again per row (there can be many) would repeat the same filter/lookup for every visible clip. */
+        static void BindAudioClipRow(VisualElement element, AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver,
+            AnimatorState[] statesWithAudio, AudioClip[] clips, int index, Action refresh)
         {
-            int targetIndex = index + direction;
+            element.Clear();
+            element.ClearClassList();
+            element.AddToClassList("ygdr-audio-clip-row");
+            StyleHoverTint(element, () => false, () => SecondaryButtonHoverColor, () => new StyleColor(StyleKeyword.Null));
+
+            if (statesWithAudio.Length == 0 || index >= clips.Length) return;
+            bool multi = statesWithAudio.Length > 1;
+            var currentClip = clips[index];
+
+            var clipField = new ObjectField
+            {
+                objectType = typeof(AudioClip),
+                value = currentClip,
+                showMixedValue = multi && statesWithAudio.Any(state =>
+                {
+                    var stateClips = resolver(state).Clips;
+                    var clip = stateClips != null && index < stateClips.Length ? stateClips[index] : null;
+                    return clip != currentClip;
+                })
+            };
+            clipField.AddToClassList("ygdr-audio-clip-field");
+            clipField.RegisterValueChangedCallback(evt =>
+            {
+                foreach (var state in statesWithName)
+                {
+                    var audio = GetOrCreateAudio(state, resolver);
+                    if (audio.Clips == null || index >= audio.Clips.Length)
+                        Array.Resize(ref audio.Clips, index + 1);
+                    Undo.RecordObject(audio, "Edit Audio Clip");
+                    audio.Clips[index] = evt.newValue as AudioClip;
+                    EditorUtility.SetDirty(audio);
+                }
+            });
+            element.Add(clipField);
+
+            var removeButton = new Button(() => { RemoveAudioClip(statesWithName, resolver, index); refresh(); }) { text = "−" };
+            removeButton.AddToClassList("ygdr-behavior-icon-btn");
+            StyleSecondaryButton(removeButton);
+            element.Add(removeButton);
+        }
+
+        static void MoveAudioClipToIndex(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorPlayAudio> resolver, int oldIndex, int newIndex)
+        {
             foreach (var state in statesWithName)
             {
                 var audio = GetOrCreateAudio(state, resolver);
-                if (audio.Clips == null || audio.Clips.Length < 2) continue;
-                if (index >= audio.Clips.Length || targetIndex < 0 || targetIndex >= audio.Clips.Length) continue;
+                if (audio.Clips == null || oldIndex >= audio.Clips.Length || newIndex >= audio.Clips.Length) continue;
                 Undo.RecordObject(audio, "Reorder Clips");
-                (audio.Clips[index], audio.Clips[targetIndex]) = (audio.Clips[targetIndex], audio.Clips[index]);
+                MoveArrayElement(audio.Clips, oldIndex, newIndex);
                 EditorUtility.SetDirty(audio);
             }
         }
@@ -552,18 +556,9 @@ namespace YGDR.Editor.Animation
             return AddInstance<VRCAnimatorPlayAudio>(state, "Play Audio");
         }
 
-        /* Rescoped Remove All: destroys every audio instance (all names) on every selected state. */
         void RemoveAudioFromAll()
         {
-            foreach (var state in _selectedStates)
-            {
-                var audios = Instances<VRCAnimatorPlayAudio>(state);
-                if (audios.Count == 0) continue;
-                Undo.RegisterCompleteObjectUndo(state, "Remove VRC Play Audio");
-                state.behaviours = state.behaviours.Where(b => !(b is VRCAnimatorPlayAudio)).ToArray();
-                foreach (var audio in audios) Undo.DestroyObjectImmediate(audio);
-                EditorUtility.SetDirty(state);
-            }
+            RemoveAllInstancesOfType<VRCAnimatorPlayAudio>(_selectedStates, "Remove VRC Play Audio");
             _audioClipsExpandedByKey.Clear();
             _audioFoldoutExpanded.Clear();
         }

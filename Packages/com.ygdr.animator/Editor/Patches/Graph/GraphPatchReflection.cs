@@ -20,12 +20,18 @@
 #if UNITY_EDITOR
 using System.Reflection;
 using HarmonyLib;
+using UnityEditor.Animations;
 using UnityEngine;
 
 namespace YGDR.Editor.Animation
 {
     internal static class GraphPatchReflection
     {
+        // Controller for the currently-drawing graph, refreshed each repaint by AnimatorTransitionPathPatch
+        // (which resolves it from the active state machine) before per-edge draws run — lets edge-level code
+        // resolve a controller without an AnimatorState to anchor an asset-path lookup off of (e.g. AnyState -> Exit).
+        internal static AnimatorController LastActiveController;
+
         static GraphPatchReflection()
         {
             WarnIfNull(GraphGUIType, "AnimationStateMachine.GraphGUI");
@@ -78,8 +84,20 @@ namespace YGDR.Editor.Animation
         internal static readonly MethodInfo GetEdgePointsMethod =
             AccessTools.Method(EdgeGUIType, "GetEdgePoints",
                 new[] { EdgeType, typeof(Vector3).MakeByRefType() });
+        internal static readonly MethodInfo FindClosestEdgeMethod =
+            AccessTools.Method(EdgeGUIType, "FindClosestEdge");
         internal static readonly MethodInfo EdgeSizeMultiplierGetter =
             AccessTools.PropertyGetter(EdgeGUIType, "edgeSizeMultiplier");
+
+        // ── Shared math ──────────────────────────────────────────────────────
+        internal static float DistancePointToSegment(Vector2 point, Vector2 segA, Vector2 segB)
+        {
+            var ab = segB - segA;
+            float sqrLen = ab.sqrMagnitude;
+            if (sqrLen < 0.0001f) return (point - segA).magnitude;
+            float t = Mathf.Clamp01(Vector2.Dot(point - segA, ab) / sqrLen);
+            return (point - (segA + t * ab)).magnitude;
+        }
 
         // ── AnimatorControllerTool methods ───────────────────────────────────
         internal static readonly MethodInfo RebuildGraphMethod =

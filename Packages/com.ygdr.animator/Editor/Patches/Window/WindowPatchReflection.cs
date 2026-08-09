@@ -19,6 +19,7 @@
 
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
@@ -81,6 +82,10 @@ namespace YGDR.Editor.Animation
             AccessTools.PropertyGetter(
                 AccessTools.TypeByName("UnityEditor.Graphs.AnimatorControllerTool"),
                 "animatorController");
+        internal static readonly PropertyInfo AnimatorControllerProperty =
+            AccessTools.Property(AnimatorEditorInit.AnimatorControllerToolType, "animatorController");
+        internal static readonly MethodInfo AnimatorControllerToolLiveLinkGetter =
+            AccessTools.PropertyGetter(AnimatorEditorInit.AnimatorControllerToolType, "liveLink");
         internal static readonly MethodInfo AddNewLayerMethod =
             AccessTools.Method(AnimatorEditorInit.AnimatorControllerToolType, "AddNewLayer");
         internal static readonly PropertyInfo SelectedLayerIndexProperty =
@@ -139,6 +144,31 @@ namespace YGDR.Editor.Animation
             AccessTools.Property(AnimationWindowStateType, "activeAnimationClip");
         internal static readonly PropertyInfo ActiveRootGameObjectProperty =
             AccessTools.Property(AnimationWindowStateType, "activeRootGameObject");
+        internal static readonly PropertyInfo SelectionProperty =
+            AccessTools.Property(AnimationWindowStateType, "selection");
+        internal static readonly PropertyInfo CanChangeAnimationClipProperty =
+            AccessTools.Property(AccessTools.TypeByName("UnityEditorInternal.AnimationWindowSelectionItem"), "canChangeAnimationClip");
+        internal static readonly PropertyInfo CurrentTimeProperty =
+            AccessTools.Property(AnimationWindowStateType, "currentTime");
+
+        // AnimationWindowHierarchyGUI / AnimationWindowHierarchyNode / AnimationWindowCurve
+        // internals (shared) — the dopesheet's row hierarchy panel and its per-row curve list.
+        internal static readonly Type AnimationWindowHierarchyGUIType =
+            AccessTools.TypeByName("UnityEditorInternal.AnimationWindowHierarchyGUI");
+        internal static readonly PropertyInfo AnimationWindowHierarchyGUIStateProperty =
+            AccessTools.Property(AnimationWindowHierarchyGUIType, "state");
+        internal static readonly Type AnimationWindowHierarchyNodeType =
+            AccessTools.TypeByName("UnityEditorInternal.AnimationWindowHierarchyNode");
+        internal static readonly Type AnimationWindowHierarchyNodeListType =
+            AnimationWindowHierarchyNodeType != null ? typeof(List<>).MakeGenericType(AnimationWindowHierarchyNodeType) : null;
+        internal static readonly FieldInfo AnimationWindowHierarchyNodeCurvesField =
+            AccessTools.Field(AnimationWindowHierarchyNodeType, "curves");
+        internal static readonly Type AnimationWindowCurveType =
+            AccessTools.TypeByName("UnityEditorInternal.AnimationWindowCurve");
+        internal static readonly PropertyInfo AnimationWindowCurveClipProperty =
+            AccessTools.Property(AnimationWindowCurveType, "clip");
+        internal static readonly PropertyInfo AnimationWindowCurveBindingProperty =
+            AccessTools.Property(AnimationWindowCurveType, "binding");
 
         // The popup doesn't reference its owning AnimationWindow directly, only the shared state object.
         internal static readonly FieldInfo AnimationWindowClipPopupStateField =
@@ -241,6 +271,17 @@ namespace YGDR.Editor.Animation
 
             internal GameObject ActiveRootGameObject =>
                 ActiveRootGameObjectProperty?.GetValue(_state) as GameObject;
+
+            // The activeAnimationClip setter silently no-ops unless the current selection item owns a
+            // root GameObject (AnimationClipSelectionItem hardcodes this to false).
+            internal bool CanChangeAnimationClip
+            {
+                get
+                {
+                    var selection = SelectionProperty?.GetValue(_state);
+                    return selection != null && CanChangeAnimationClipProperty?.GetValue(selection) is true;
+                }
+            }
         }
 
         static FieldInfo FindReorderableListField(Type type) => FindFieldOfType(type, typeof(ReorderableList));
@@ -254,12 +295,31 @@ namespace YGDR.Editor.Animation
         }
 
 
+        // Cached window ref - Resources.FindObjectsOfTypeAll is a full-heap scan and this getter runs on
+        // every OnGUI of the clip popup (PatchClipMenuAdvancedDropdown), so re-scanning every call caused
+        // visible lag while scrolling/searching that dropdown.
+        static UnityEngine.Object _cachedToolWindow;
+
         internal static UnityEditor.Animations.AnimatorController GetOpenController()
         {
-            var windows = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType);
-            if (windows.Length == 0) return null;
-            return AnimatorControllerGetter?.Invoke(windows[0], null)
-                as UnityEditor.Animations.AnimatorController;
+            if (_cachedToolWindow != null)
+            {
+                var cachedController = AnimatorControllerGetter?.Invoke(_cachedToolWindow, null)
+                    as UnityEditor.Animations.AnimatorController;
+                if (cachedController != null) return cachedController;
+            }
+
+            // FindObjectsOfTypeAll also returns tool windows that were never shown and so never resolved
+            // a controller, so pick one that actually has it rather than whichever comes back first.
+            foreach (var window in Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType))
+            {
+                var controller = AnimatorControllerGetter?.Invoke(window, null)
+                    as UnityEditor.Animations.AnimatorController;
+                if (controller == null) continue;
+                _cachedToolWindow = window;
+                return controller;
+            }
+            return null;
         }
     }
 }

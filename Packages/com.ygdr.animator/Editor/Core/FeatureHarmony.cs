@@ -55,6 +55,7 @@ namespace YGDR.Editor.Animation
                 typeof(PatchStateMachineNodeMenu),
                 typeof(PatchTransitionContextMenu),
                 typeof(PatchClipMenuAdvancedDropdown),
+                typeof(PatchKeyframeTimingMenu),
             },
             [NodeOverlayId] = new[]
             {
@@ -73,6 +74,9 @@ namespace YGDR.Editor.Animation
             {
                 typeof(PatchDrawEdge),
                 typeof(PatchDrawArrows),
+                typeof(PatchFindClosestEdge),
+                typeof(AnimatorTransitionPathPatch),
+                typeof(PatchTransitionExpandedBoxFlush),
             },
             [GraphInteractId] = new[]
             {
@@ -89,6 +93,8 @@ namespace YGDR.Editor.Animation
                 typeof(PatchTransitionCopyPaste),
                 typeof(PatchCopySelectionToPasteboard),
                 typeof(PatchDuplicateSmartNaming),
+                typeof(PatchStateSpeedParameterToggle),
+                typeof(PatchStateOverrideParameterToggle),
             },
             [GridBgId] = new[]
             {
@@ -114,6 +120,7 @@ namespace YGDR.Editor.Animation
             {
                 typeof(PatchParameterRenameUndo),
                 typeof(PatchParameterF2Rename),
+                typeof(PatchParameterDeleteInactiveLinkedState),
                 typeof(PatchNewParameterScroll),
                 typeof(PatchParameterRow),
                 typeof(PatchParameterAddMenu),

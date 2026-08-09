@@ -361,7 +361,7 @@ namespace YGDR.Editor.Animation
             });
         }
 
-        static void PasteLayerProperties(AnimatorControllerLayer destinationLayer, AnimatorControllerLayer sourceLayer)
+        internal static void PasteLayerProperties(AnimatorControllerLayer destinationLayer, AnimatorControllerLayer sourceLayer)
         {
             destinationLayer.avatarMask               = sourceLayer.avatarMask;
             destinationLayer.blendingMode             = sourceLayer.blendingMode;
@@ -518,9 +518,13 @@ namespace YGDR.Editor.Animation
         static GUIStyle _labelStyle;
         internal static GUIStyle LabelStyle => _labelStyle ??= new GUIStyle(EditorStyles.boldLabel) { fontSize = 9, alignment = TextAnchor.MiddleRight };
 
+        static GUIStyle _layerIndexStyle;
+        static GUIStyle LayerIndexStyle => _layerIndexStyle ??= new GUIStyle(LabelStyle) { alignment = TextAnchor.MiddleLeft };
+
         internal static readonly GUIContent WdContent = new GUIContent("WD");
         internal static readonly GUIContent EmptyContent = new GUIContent("empty");
         internal static readonly Color EmptyColor = new Color(0.6f, 0.6f, 0.6f, 0.6f);
+        internal static readonly Color DimColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
         static GUIContent _frameIcon;
         internal static GUIContent FrameIcon => _frameIcon ??= EditorGUIUtility.IconContent("animationdopesheetkeyframe");
 
@@ -587,7 +591,9 @@ namespace YGDR.Editor.Animation
         static void Prefix(object __instance, Rect rect, int index, bool selected, bool focused)
         {
             if (EditorApplication.isPlaying) return;
-            if (Event.current.type != EventType.Repaint) return;
+            bool isRepaint = Event.current.type == EventType.Repaint;
+            bool isMouseDown = Event.current.type == EventType.MouseDown;
+            if (!isRepaint && !isMouseDown) return;
 
             var settings = AnimatorDefaultSettings.Load();
             if (!settings.showLayerWDIndicator) return;
@@ -612,17 +618,36 @@ namespace YGDR.Editor.Animation
                 int writeDefaultsOnCount = 0, writeDefaultsOffCount = 0;
                 if (!isEmpty)
                     (writeDefaultsOnCount, writeDefaultsOffCount) = GetOrComputeWD(stateMachine, settings.wdIncludeBlendTreeStates);
-                bool showWD = !isEmpty && writeDefaultsOnCount > 0;
+                bool showWD = !isEmpty && (writeDefaultsOnCount > 0 || writeDefaultsOffCount > 0);
 
                 if (showWD)
                 {
                     if (_cachedWdWidth < 0f) _cachedWdWidth = LabelStyle.CalcSize(WdContent).x;
                     float wdWidth = _cachedWdWidth;
                     var wdRect = new Rect(cursorX - wdWidth, rect.yMin + 5f, wdWidth, 16f);
-                    LabelStyle.normal.textColor = writeDefaultsOffCount == 0 ? settings.layerWDColor : Color.cyan;
-                    EditorGUI.LabelField(wdRect, "WD", LabelStyle);
+
+                    if (isMouseDown && wdRect.Contains(Event.current.mousePosition))
+                    {
+                        bool newValue = writeDefaultsOffCount > 0;
+                        Undo.SetCurrentGroupName("Toggle Layer Write Defaults");
+                        int undoGroup = Undo.GetCurrentGroup();
+                        SetWDOnAll(stateMachine, newValue, settings.wdIncludeBlendTreeStates);
+                        Undo.CollapseUndoOperations(undoGroup);
+                        _wdCache.Remove((stateMachine, settings.wdIncludeBlendTreeStates));
+                        Event.current.Use();
+                    }
+
+                    if (isRepaint)
+                    {
+                        LabelStyle.normal.textColor = writeDefaultsOnCount == 0 ? DimColor
+                            : writeDefaultsOffCount == 0 ? settings.layerWDColor : Color.cyan;
+                        EditorGUI.LabelField(wdRect, "WD", LabelStyle);
+                        EditorGUIUtility.AddCursorRect(wdRect, MouseCursor.Link);
+                    }
                     cursorX = wdRect.x - 2f;
                 }
+
+                if (!isRepaint) return;
 
                 if (hasFrameData)
                 {
@@ -642,9 +667,8 @@ namespace YGDR.Editor.Animation
 
                 var layerIndexString = index.ToString();
                 var layerIndexRect = new Rect(rect.x - 15f, rect.yMax - 22f, 20f, 12f);
-                var layerIndexStyle = new GUIStyle(LabelStyle) { alignment = TextAnchor.MiddleLeft };
-                layerIndexStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f, 0.7f);
-                EditorGUI.LabelField(layerIndexRect, layerIndexString, layerIndexStyle);
+                LayerIndexStyle.normal.textColor = DimColor;
+                EditorGUI.LabelField(layerIndexRect, layerIndexString, LayerIndexStyle);
             }
             catch (Exception e)
             {
@@ -662,6 +686,20 @@ namespace YGDR.Editor.Animation
             }
             foreach (var childStateMachine in sm.stateMachines)
                 CountWD(childStateMachine.stateMachine, ref writeDefaultsOnCount, ref writeDefaultsOffCount, includeBlendTrees);
+        }
+
+        internal static void SetWDOnAll(AnimatorStateMachine sm, bool value, bool includeBlendTrees)
+        {
+            foreach (var childState in sm.states)
+            {
+                if (!includeBlendTrees && childState.state.motion is BlendTree) continue;
+                if (childState.state.writeDefaultValues == value) continue;
+                Undo.RecordObject(childState.state, "Toggle Layer Write Defaults");
+                childState.state.writeDefaultValues = value;
+                EditorUtility.SetDirty(childState.state);
+            }
+            foreach (var childStateMachine in sm.stateMachines)
+                SetWDOnAll(childStateMachine.stateMachine, value, includeBlendTrees);
         }
     }
 

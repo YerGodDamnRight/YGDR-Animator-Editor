@@ -164,6 +164,9 @@ namespace YGDR.Editor.Animation
             else if (_controllerSubTab == 1) RefreshNetworkSyncBody();
             else if (_controllerSubTab == 2) RefreshSubAssetsBody();
             else if (_controllerSubTab == 3) RefreshMenusBody();
+
+            if (_subAssetsByType == null || _subAssetCachedController != _controller)
+                RebuildSubAssetCache();
             RefreshControllerCleanButton();
             if (_controllerRightLabel != null) _controllerRightLabel.text = ControllerSectionCountLabel ?? string.Empty;
         }
@@ -248,11 +251,11 @@ namespace YGDR.Editor.Animation
             RefreshMenusPaletteColors();
         }
 
-        /* No-op when VRC SDK isn't present — _menuControlsRowsContainer only exists under VRC_SDK_VRCSDK3. */
+        /* No-op when VRC SDK isn't present — _menuControlsListView only exists under VRC_SDK_VRCSDK3. */
         void RefreshMenusPaletteColors()
         {
 #if VRC_SDK_VRCSDK3
-            if (_menuControlsRowsContainer != null) _menuControlsRowsContainer.style.backgroundColor = SharedWindowStyles.SecondaryColor;
+            if (_menuControlsListView != null) _menuControlsListView.style.backgroundColor = SharedWindowStyles.SecondaryColor;
             if (_menuInspectorPanel != null) _menuInspectorPanel.style.backgroundColor = SharedWindowStyles.SecondaryColor;
             if (_menuCountFrame != null) _menuCountFrame.style.backgroundColor = SharedWindowStyles.SecondaryColor;
             if (_menuAddControlButton != null) _menuAddControlButton.style.backgroundColor = SharedWindowStyles.SecondaryColor;
@@ -444,8 +447,12 @@ namespace YGDR.Editor.Animation
         bool   _networkRemoveTracking;
         bool   _networkAnyStateTransitions;
         bool   _networkPackIntoSubSM;
-        bool   _networkPreserveTransitionProperties;
+        bool   _networkPreserveExitTime;
+        bool   _networkPreserveDuration;
+        bool   _networkPreserveOffset;
         bool   _networkUseOwnInstance;
+        bool   _networkMergeTaggedDuplicates;
+        bool   _networkCreateBackup;
         int    _networkLayerIndex;
 #endif
 
@@ -458,13 +465,15 @@ namespace YGDR.Editor.Animation
         Button _networkLayerButton;
         Button _networkParamTypeIntButton, _networkParamTypeBoolButton;
         Button _networkTransitionsAllButton, _networkTransitionsAnyButton;
-        Toggle _networkPreserveToggle;
+        Toggle _networkPreserveExitTimeToggle, _networkPreserveDurationToggle, _networkPreserveOffsetToggle;
         TextField _networkParamNameField;
         Image _networkDuplicateWarningIcon;
         TextField _networkStatesPrefixField;
         Toggle _networkRemoveParamDriversToggle, _networkRemoveAudioToggle, _networkRemoveTrackingToggle;
         Toggle _networkPackIntoSubSMToggle;
         Toggle _networkUseOwnInstanceToggle;
+        Toggle _networkMergeTaggedDuplicatesToggle;
+        Toggle _networkCreateBackupToggle;
         Button _networkRunButton;
 #endif
 
@@ -483,12 +492,7 @@ namespace YGDR.Editor.Animation
             _networkContent = new VisualElement();
             container.Add(_networkContent);
 
-            var layerRow = new VisualElement();
-            layerRow.AddToClassList("ygdr-network-row");
-            var layerLabel = new Label(L10n.Get("controller.network.target_layer"));
-            _controllerRelabelActions.Add(() => layerLabel.text = L10n.Get("controller.network.target_layer"));
-            layerLabel.AddToClassList("ygdr-network-label-wide");
-            layerRow.Add(layerLabel);
+            BuildLabeledRow("controller.network.target_layer", out var layerRowContent);
             _networkLayerButton = new Button(() =>
             {
                 var activeController = GetNetworkActiveController();
@@ -503,8 +507,7 @@ namespace YGDR.Editor.Animation
             RegisterDropdownLabelResize(_networkLayerButton, 18f);
             StyleAccentButton(_networkLayerButton);
             _networkLayerButton.Add(BuildDropdownArrow());
-            layerRow.Add(_networkLayerButton);
-            _networkContent.Add(layerRow);
+            layerRowContent.Add(_networkLayerButton);
 
             var paramTypeRow = BuildNetworkToggleRow("controller.network.sync_param_type", "Int", "Bool",
                 out _networkParamTypeIntButton, out _networkParamTypeBoolButton,
@@ -522,78 +525,42 @@ namespace YGDR.Editor.Animation
             StyleConditionHeaderButton(_networkTransitionsAnyButton, () => _networkAnyStateTransitions);
             _networkContent.Add(transitionsRow);
 
-            var preserveRow = new VisualElement();
-            preserveRow.AddToClassList("ygdr-network-row");
-            var preserveLabel = new Label(L10n.Get("controller.network.preserve_props"));
-            _controllerRelabelActions.Add(() => preserveLabel.text = L10n.Get("controller.network.preserve_props"));
-            preserveLabel.AddToClassList("ygdr-network-label-wide");
-            preserveRow.Add(preserveLabel);
-            _networkPreserveToggle = new Toggle();
-            _networkPreserveToggle.RegisterValueChangedCallback(evt => _networkPreserveTransitionProperties = evt.newValue);
-            preserveRow.Add(_networkPreserveToggle);
-            _networkContent.Add(preserveRow);
+            BuildLabeledRow("controller.network.preserve_props", out var preserveRowContent);
+            preserveRowContent.Add(BuildNetworkInlineToggle("controller.network.preserve_exit_time", out _networkPreserveExitTimeToggle, value => _networkPreserveExitTime = value));
+            preserveRowContent.Add(BuildNetworkInlineToggle("controller.network.preserve_duration", out _networkPreserveDurationToggle, value => _networkPreserveDuration = value));
+            preserveRowContent.Add(BuildNetworkInlineToggle("controller.network.preserve_offset", out _networkPreserveOffsetToggle, value => _networkPreserveOffset = value));
 
-            var paramNameRow = new VisualElement();
-            paramNameRow.AddToClassList("ygdr-network-row");
-            var paramNameLabel = new Label(L10n.Get("controller.network.sync_param_name"));
-            _controllerRelabelActions.Add(() => paramNameLabel.text = L10n.Get("controller.network.sync_param_name"));
-            paramNameLabel.AddToClassList("ygdr-network-label-wide");
-            paramNameRow.Add(paramNameLabel);
+            BuildLabeledRow("controller.network.remove_behaviours", out var removeRowContent, "controller.network.remove_behaviours_tooltip");
+            removeRowContent.Add(BuildNetworkInlineToggle("controller.network.params", out _networkRemoveParamDriversToggle, value => _networkRemoveParamDrivers = value));
+            removeRowContent.Add(BuildNetworkInlineToggle("controller.network.audio", out _networkRemoveAudioToggle, value => _networkRemoveAudioPlay = value));
+            removeRowContent.Add(BuildNetworkInlineToggle("controller.network.tracking", out _networkRemoveTrackingToggle, value => _networkRemoveTracking = value));
+
+            BuildLabeledRow("controller.network.sync_param_name", out var paramNameRowContent);
             _networkParamNameField = new TextField { value = _networkParamName };
             _networkParamNameField.AddToClassList("ygdr-network-field");
             _networkParamNameField.AddToClassList("u-flex-fill");
             _networkParamNameField.RegisterValueChangedCallback(evt => { _networkParamName = evt.newValue; RefreshNetworkValidity(); });
-            paramNameRow.Add(_networkParamNameField);
+            paramNameRowContent.Add(_networkParamNameField);
             _networkDuplicateWarningIcon = BuildWarningIcon(EditorGUIUtility.IconContent("warning@2x").image, L10n.Get("controller.network.duplicate_name"), "ygdr-network-warning-icon");
             _controllerRelabelActions.Add(() => _networkDuplicateWarningIcon.tooltip = L10n.Get("controller.network.duplicate_name"));
-            paramNameRow.Add(_networkDuplicateWarningIcon);
-            _networkContent.Add(paramNameRow);
+            paramNameRowContent.Add(_networkDuplicateWarningIcon);
 
-            var prefixRow = new VisualElement();
-            prefixRow.AddToClassList("ygdr-network-row");
-            var prefixLabel = new Label(L10n.Get("controller.network.states_prefix"));
-            _controllerRelabelActions.Add(() => prefixLabel.text = L10n.Get("controller.network.states_prefix"));
-            prefixLabel.AddToClassList("ygdr-network-label-wide");
-            prefixRow.Add(prefixLabel);
+            BuildLabeledRow("controller.network.states_prefix", out var prefixRowContent);
             _networkStatesPrefixField = new TextField { value = _networkStatesPrefix };
             _networkStatesPrefixField.AddToClassList("ygdr-network-field");
             _networkStatesPrefixField.AddToClassList("u-flex-fill");
             _networkStatesPrefixField.RegisterValueChangedCallback(evt => { _networkStatesPrefix = evt.newValue; RefreshNetworkValidity(); });
-            prefixRow.Add(_networkStatesPrefixField);
-            _networkContent.Add(prefixRow);
+            prefixRowContent.Add(_networkStatesPrefixField);
 
-            var removeRow = new VisualElement();
-            removeRow.AddToClassList("ygdr-network-row");
-            var removeLabel = new Label(L10n.Get("controller.network.remove_behaviours"));
-            _controllerRelabelActions.Add(() => removeLabel.text = L10n.Get("controller.network.remove_behaviours"));
-            removeLabel.AddToClassList("ygdr-network-label-wide");
-            removeRow.Add(removeLabel);
-            removeRow.Add(BuildNetworkInlineToggle("controller.network.params", out _networkRemoveParamDriversToggle, value => _networkRemoveParamDrivers = value));
-            removeRow.Add(BuildNetworkInlineToggle("controller.network.audio", out _networkRemoveAudioToggle, value => _networkRemoveAudioPlay = value));
-            removeRow.Add(BuildNetworkInlineToggle("controller.network.tracking", out _networkRemoveTrackingToggle, value => _networkRemoveTracking = value));
-            _networkContent.Add(removeRow);
-
-            var packRow = new VisualElement();
-            packRow.AddToClassList("ygdr-network-row");
-            var packLabel = new Label(L10n.Get("controller.network.pack_subsm"));
-            _controllerRelabelActions.Add(() => packLabel.text = L10n.Get("controller.network.pack_subsm"));
-            packLabel.AddToClassList("ygdr-network-label-wide");
-            packRow.Add(packLabel);
-            _networkPackIntoSubSMToggle = new Toggle();
-            _networkPackIntoSubSMToggle.RegisterValueChangedCallback(evt => _networkPackIntoSubSM = evt.newValue);
-            packRow.Add(_networkPackIntoSubSMToggle);
-            _networkContent.Add(packRow);
-
-            var ownInstanceRow = new VisualElement();
-            ownInstanceRow.AddToClassList("ygdr-network-row");
-            var ownInstanceLabel = new Label(L10n.Get("controller.network.own_instance"));
-            _controllerRelabelActions.Add(() => ownInstanceLabel.text = L10n.Get("controller.network.own_instance"));
-            ownInstanceLabel.AddToClassList("ygdr-network-label-wide");
-            ownInstanceRow.Add(ownInstanceLabel);
-            _networkUseOwnInstanceToggle = new Toggle();
-            _networkUseOwnInstanceToggle.RegisterValueChangedCallback(evt => _networkUseOwnInstance = evt.newValue);
-            ownInstanceRow.Add(_networkUseOwnInstanceToggle);
-            _networkContent.Add(ownInstanceRow);
+            BuildLabeledRow("controller.network.layer_options", out var optionsRowContent);
+            optionsRowContent.Add(BuildNetworkInlineToggleWithTooltip("controller.network.pack_subsm", "controller.network.pack_subsm_tooltip", out _networkPackIntoSubSMToggle, value => _networkPackIntoSubSM = value));
+            optionsRowContent.Add(BuildNetworkInlineToggleWithTooltip("controller.network.own_instance", "controller.network.own_instance_tooltip", out _networkUseOwnInstanceToggle, value => _networkUseOwnInstance = value));
+            optionsRowContent.Add(BuildNetworkInlineToggleWithTooltip("controller.network.merge_tagged", "controller.network.merge_tagged_tooltip", out _networkMergeTaggedDuplicatesToggle, value =>
+            {
+                _networkMergeTaggedDuplicates = value;
+                if (value) EnsureMergeTagColor();
+            }));
+            optionsRowContent.Add(BuildNetworkInlineToggleWithTooltip("controller.network.create_backup", "controller.network.create_backup_tooltip", out _networkCreateBackupToggle, value => _networkCreateBackup = value));
 
             _networkRunButton = new Button(RunNetworkSync) { text = L10n.Get("controller.network.run") };
             _controllerRelabelActions.Add(() => _networkRunButton.text = L10n.Get("controller.network.run"));
@@ -610,6 +577,28 @@ namespace YGDR.Editor.Animation
         }
 
 #if VRC_SDK_VRCSDK3
+        /* Builds a "label | content" row (25%/75% split via ygdr-network-label-wide / ygdr-network-row-content) and appends it to _networkContent. */
+        VisualElement BuildLabeledRow(string labelKey, out VisualElement rowContent, string tooltipKey = null)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-network-row");
+            var label = new Label(L10n.Get(labelKey)) { tooltip = tooltipKey != null ? L10n.Get(tooltipKey) : null };
+            _controllerRelabelActions.Add(() =>
+            {
+                label.text = L10n.Get(labelKey);
+                if (tooltipKey != null) label.tooltip = L10n.Get(tooltipKey);
+            });
+            label.AddToClassList("ygdr-network-label-wide");
+            row.Add(label);
+
+            rowContent = new VisualElement();
+            rowContent.AddToClassList("ygdr-network-row-content");
+            row.Add(rowContent);
+
+            _networkContent.Add(row);
+            return row;
+        }
+
         /* Caller styles/refreshes the active state (see StyleConditionHeaderButton/RefreshNetworkToggleButtons in Transitions.cs). */
         VisualElement BuildNetworkToggleRow(string labelKey, string falseLabel, string trueLabel, out Button falseButton, out Button trueButton, Action onFalse, Action onTrue)
         {
@@ -620,12 +609,16 @@ namespace YGDR.Editor.Animation
             labelElement.AddToClassList("ygdr-network-label-wide");
             row.Add(labelElement);
 
+            var rowContent = new VisualElement();
+            rowContent.AddToClassList("ygdr-network-row-content");
+            row.Add(rowContent);
+
             var falseBtn = new Button(onFalse) { text = falseLabel };
             falseBtn.AddToClassList("ygdr-network-toggle-btn");
-            row.Add(falseBtn);
+            rowContent.Add(falseBtn);
             var trueBtn = new Button(onTrue) { text = trueLabel };
             trueBtn.AddToClassList("ygdr-network-toggle-btn");
-            row.Add(trueBtn);
+            rowContent.Add(trueBtn);
 
             falseButton = falseBtn;
             trueButton = trueBtn;
@@ -636,14 +629,22 @@ namespace YGDR.Editor.Animation
         {
             var container = new VisualElement();
             container.AddToClassList("ygdr-network-inline-toggle");
+            var toggleElement = new Toggle();
+            toggleElement.RegisterValueChangedCallback(evt => onChanged(evt.newValue));
+            container.Add(toggleElement);
             var labelElement = new Label(L10n.Get(labelKey));
             _controllerRelabelActions.Add(() => labelElement.text = L10n.Get(labelKey));
             labelElement.AddToClassList("ygdr-network-inline-label");
             container.Add(labelElement);
-            var toggleElement = new Toggle();
-            toggleElement.RegisterValueChangedCallback(evt => onChanged(evt.newValue));
-            container.Add(toggleElement);
             toggle = toggleElement;
+            return container;
+        }
+
+        VisualElement BuildNetworkInlineToggleWithTooltip(string labelKey, string tooltipKey, out Toggle toggle, Action<bool> onChanged)
+        {
+            var container = BuildNetworkInlineToggle(labelKey, out toggle, onChanged);
+            container.tooltip = L10n.Get(tooltipKey);
+            _controllerRelabelActions.Add(() => container.tooltip = L10n.Get(tooltipKey));
             return container;
         }
 
@@ -667,7 +668,9 @@ namespace YGDR.Editor.Animation
 
             RefreshNetworkToggleButtons();
 
-            _networkPreserveToggle.SetValueWithoutNotify(_networkPreserveTransitionProperties);
+            _networkPreserveExitTimeToggle.SetValueWithoutNotify(_networkPreserveExitTime);
+            _networkPreserveDurationToggle.SetValueWithoutNotify(_networkPreserveDuration);
+            _networkPreserveOffsetToggle.SetValueWithoutNotify(_networkPreserveOffset);
             _networkParamNameField.SetValueWithoutNotify(_networkParamName);
             _networkStatesPrefixField.SetValueWithoutNotify(_networkStatesPrefix);
             _networkRemoveParamDriversToggle.SetValueWithoutNotify(_networkRemoveParamDrivers);
@@ -675,6 +678,8 @@ namespace YGDR.Editor.Animation
             _networkRemoveTrackingToggle.SetValueWithoutNotify(_networkRemoveTracking);
             _networkPackIntoSubSMToggle.SetValueWithoutNotify(_networkPackIntoSubSM);
             _networkUseOwnInstanceToggle.SetValueWithoutNotify(_networkUseOwnInstance);
+            _networkMergeTaggedDuplicatesToggle.SetValueWithoutNotify(_networkMergeTaggedDuplicates);
+            _networkCreateBackupToggle.SetValueWithoutNotify(_networkCreateBackup);
 
             RefreshNetworkValidity();
 #endif
@@ -724,6 +729,18 @@ namespace YGDR.Editor.Animation
             return (activeController == null || layers.Length == 0) ? _activeStateMachine : activeController.layers[_networkLayerIndex].stateMachine;
         }
 
+        /* Adds a default color-tag entry for AnimatorNetworkSync.MergeTag if one doesn't already exist,
+           so tagged states light up on the graph without the user needing to configure it manually.
+           Never overwrites an existing entry (respects a color the user already chose). */
+        void EnsureMergeTagColor()
+        {
+            var settings = AnimatorDefaultSettings.Load();
+            if (settings.colorTags.Any(colorTag => colorTag.tagName == AnimatorNetworkSync.MergeTag)) return;
+            settings.colorTags.Add(new AnimatorColorTag { tagName = AnimatorNetworkSync.MergeTag, color = new Color(0.35f, 0.75f, 1.00f, 1f) });
+            settings.Save();
+            if (_colorTagsListContainer != null) RebuildColorTagsList(settings);
+        }
+
         void RunNetworkSync()
         {
             var targetSM = GetNetworkTargetSM();
@@ -737,8 +754,12 @@ namespace YGDR.Editor.Animation
                 removeTracking               = _networkRemoveTracking,
                 anyStateTransitions          = _networkAnyStateTransitions,
                 packIntoSubSM                = _networkPackIntoSubSM,
-                preserveTransitionProperties = _networkPreserveTransitionProperties,
-                useOwnNetworkInstance        = _networkUseOwnInstance
+                preserveExitTime             = _networkPreserveExitTime,
+                preserveDuration             = _networkPreserveDuration,
+                preserveOffset               = _networkPreserveOffset,
+                useOwnNetworkInstance        = _networkUseOwnInstance,
+                mergeTaggedDuplicates        = _networkMergeTaggedDuplicates,
+                createBackup                 = _networkCreateBackup
             });
         }
 #endif
@@ -1395,7 +1416,7 @@ namespace YGDR.Editor.Animation
 
                 if (!referencedIDs.Contains(asset.GetInstanceID()))
                 {
-                    if (asset is FrameLayoutData) continue;
+                    if (asset is FrameLayoutData or TransitionPathData) continue;
                     orphans.Add(asset);
                     continue;
                 }
@@ -1512,7 +1533,11 @@ namespace YGDR.Editor.Animation
                 CollectBlendTreeReferences(state.motion as BlendTree, ids);
             }
             foreach (var childStateMachine in sm.stateMachines)
+            {
+                foreach (var transition in sm.GetStateMachineTransitions(childStateMachine.stateMachine))
+                    if (transition != null) ids.Add(transition.GetInstanceID());
                 CollectSMReferences(childStateMachine.stateMachine, ids);
+            }
         }
 
         /* Recursively adds instance IDs of blendTree and all its child blend tree nodes to ids. */
@@ -1596,20 +1621,6 @@ namespace YGDR.Editor.Animation
                 Selection.activeObject = capturedAsset;
                 EditorApplication.delayCall += () => capturedMethod?.Invoke(capturedTool, null);
             };
-        }
-
-        /* Returns the index of the first layer whose state machine hierarchy contains asset, or -1 if not found. */
-        int FindLayerIndex(UnityEngine.Object asset)
-        {
-            var layers = _controller.layers;
-            for (int i = 0; i < layers.Length; i++)
-            {
-                var sm = layers[i].stateMachine;
-                if (asset is AnimatorState state        && SMContainsState(sm, state))         return i;
-                if (asset is AnimatorStateMachine subSM && SMContainsOrIs(sm, subSM))          return i;
-                if (asset is BlendTree blendTree        && SMContainsBlendTree(sm, blendTree)) return i;
-            }
-            return -1;
         }
 
         /* Calls AnimatorControllerTool.AddBreadCrumb for each SM along the path from rootSM to targetSM, updating the graph only on the final entry so the window navigates in one step. */

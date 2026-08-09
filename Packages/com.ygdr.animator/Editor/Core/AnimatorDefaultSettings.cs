@@ -146,14 +146,21 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool  transitionIndicatorArrowsEnabled  = true;
         [SerializeField] internal Color transitionOverlayColor            = new Color(1.0f, 1.0f, 1.0f, 1.0f);
         [SerializeField] internal bool  transitionSelectionColorEnabled    = true;
-        [SerializeField] internal Color transitionIncomingColor           = new Color(0.2f, 0.9f, 0.3f, 1.0f);
-        [SerializeField] internal Color transitionOutgoingColor           = new Color(1.0f, 0.45f, 0.1f, 1.0f);
+        [SerializeField] internal Color transitionIncomingColor           = new Color(0.0f, 1.0f, 1.0f, 1.0f);
+        [SerializeField] internal Color transitionOutgoingColor           = new Color(1.0f, 0.0f, 1.0f, 1.0f);
         [SerializeField] internal Color transitionOverlayArrowColor       = new Color(0.6f, 0.6f, 0.6f, 1.0f);
         [SerializeField] internal Color transitionArrowNoConditionColor   = new Color(1.0f, 0.28f, 0.0f, 1.0f);
         [SerializeField] internal Color transitionArrowInstantColor       = new Color(0.0f, 0.25f, 0.66f, 1.0f);
         [SerializeField] internal float transitionOverlayWidth            = 3f;
         [SerializeField] internal bool  transitionShowLabel               = true;
         [SerializeField] internal bool  transitionAnimateSelected         = true;
+        [SerializeField] internal bool  transitionGradientEnabled         = false;
+        [SerializeField] internal Color transitionGradientInColorA        = new Color(0.0f, 1.0f, 1.0f, 1.0f);
+        [SerializeField] internal Color transitionGradientInColorB        = new Color(0.45f, 0.0f, 1.0f, 1.0f);
+        [SerializeField] internal float transitionGradientInSpeed         = 0.15f;
+        [SerializeField] internal Color transitionGradientOutColorA       = new Color(1.0f, 0.0f, 1.0f, 1.0f);
+        [SerializeField] internal Color transitionGradientOutColorB       = new Color(1.0f, 0.0f, 0.0f, 1.0f);
+        [SerializeField] internal float transitionGradientOutSpeed        = 0.15f;
 
         // Graph background + grid
         [SerializeField] internal bool   graphGridOverride        = false;

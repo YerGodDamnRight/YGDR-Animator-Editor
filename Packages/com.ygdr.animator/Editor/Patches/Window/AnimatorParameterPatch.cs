@@ -780,7 +780,11 @@ namespace YGDR.Editor.Animation
             var ineligibleNames = PatchParameterRow.GetSyncIneligibleNames(
                 controller.parameters.Select(parameter => parameter.name));
             var (toAdd, toRemove) = AnimatorParameterOps.PreviewVrcParameterSync(expressionParameters, controller, ineligibleNames);
-            if (toAdd.Count == 0 && toRemove.Count == 0) return;
+            if (toAdd.Count == 0 && toRemove.Count == 0)
+            {
+                AnimatorParameterOps.SyncVrcParameters(expressionParameters, controller, ineligibleNames);
+                return;
+            }
 
             string body = string.Format(L10n.Get("params_menu.sync_vrc_asset_body"),
                 toAdd.Count == 0 ? L10n.Get("params_menu.sync_vrc_asset_none") : string.Join("\n", toAdd),
@@ -1017,18 +1021,8 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
             if (hasVrcParams)
             {
-                VRCExpressionParameters.Parameter vrcParam = null;
-                foreach (var expressionParameter in expressionParameters.parameters)
-                    if (expressionParameter.name == parameter.name) { vrcParam = expressionParameter; break; }
-
                 var capturedExpressionParameters = expressionParameters;
-                var capturedParamName = parameter.name;
-                var capturedParamType = parameter.type;
                 menu.AddSeparator("");
-
-                if (vrcParam == null)
-                    menu.AddItem(new GUIContent(L10n.Get("params_menu.add_to_vrc")), false,
-                        () => AnimatorParameterOps.AddToVrcParameters(capturedExpressionParameters, capturedParamName, capturedParamType));
 
                 var capturedController = controller;
                 menu.AddItem(new GUIContent(L10n.Get("params_menu.sync_vrc_asset")), false,
@@ -1077,6 +1071,7 @@ namespace YGDR.Editor.Animation
             {
                 var (deleteController, deleteParamName) = ((AnimatorController, string))data;
                 AnimatorParameterOps.DeleteParameterAndClean(deleteController, deleteParamName);
+                AnimationEditorWindow.RefreshOpenWindowsStatesTab();
                 EditorApplication.delayCall += UnityEditorInternal.InternalEditorUtility.RepaintAllViews;
             }, (capturedFindController, capturedFindParameter.name));
             menu.AddItem(new GUIContent(L10n.Get("params_menu.remove_unused")), false, static data =>

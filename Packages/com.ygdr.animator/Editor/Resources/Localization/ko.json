@@ -179,6 +179,12 @@
     { "key": "controller.network.tracking",                   "value": "추적" },
     { "key": "controller.network.pack_subsm",                 "value": "Sub-State Machine으로 묶기" },
     { "key": "controller.network.own_instance",               "value": "전용 드라이버 인스턴스" },
+    { "key": "controller.network.pack_subsm_tooltip",         "value": "서브 스테이트 머신으로 패킹" },
+    { "key": "controller.network.own_instance_tooltip",       "value": "전용 드라이버 인스턴스" },
+    { "key": "controller.network.merge_tagged",                "value": "중복 병합" },
+    { "key": "controller.network.merge_tagged_tooltip",       "value": "\"network merge\" 태그가 지정되고 동일한 클립을 가진 상태는 하나의 동기화 값을 공유합니다." },
+    { "key": "controller.network.create_backup",               "value": "백업 생성" },
+    { "key": "controller.network.create_backup_tooltip",     "value": "적용 전 백업 레이어(가중치 0) 생성" },
     { "key": "controller.network.run",                        "value": "네트워크 동기화 실행" },
     { "key": "controller.network.no_window",                  "value": "열린 Animator 창 없음" },
     { "key": "controller.network.no_vrcsdk",                  "value": "VRCSDK 없이 네트워크 동기화 불가" },
@@ -275,7 +281,6 @@
     { "key": "params_menu.convert_to",                        "value": "변환" },
     { "key": "params_menu.convert_controller",                "value": "컨트롤러" },
     { "key": "params_menu.convert_vrc_params",                "value": "VRC 파라미터" },
-    { "key": "params_menu.add_to_vrc",                        "value": "VRC 파라미터에 추가" },
     { "key": "params_menu.sync_vrc_asset",                    "value": "VRC 파라미터 애셋 동기화" },
     { "key": "params_menu.sync_vrc_asset_title",              "value": "VRC 파라미터 애셋 동기화" },
     { "key": "params_menu.sync_vrc_asset_body",               "value": "추가:\n{0}\n\n제거:\n{1}" },
@@ -517,6 +522,16 @@
     { "key": "find_usage.behavior.play_audio",                "value": "오디오 재생" },
     { "key": "find_usage.behavior.clip_select",                "value": "클립 선택" },
     { "key": "find_usage.behavior.blend_x",                    "value": "블렌드 X" },
-    { "key": "find_usage.behavior.blend_y",                    "value": "블렌드 Y" }
+    { "key": "find_usage.behavior.blend_y",                    "value": "블렌드 Y" },
+
+    { "key": "keyframe_menu.double_time",                     "value": "두 배 속도" },
+    { "key": "keyframe_menu.half_time_floor",                 "value": "절반 속도 (내림)" },
+    { "key": "keyframe_menu.half_time_ceiling",               "value": "절반 속도 (올림)" },
+    { "key": "keyframe_menu.reverse",                         "value": "키프레임 반전" },
+    { "key": "keyframe_menu.ping_pong",                       "value": "핑퐁 키프레임" },
+    { "key": "keyframe_menu.compress_to_playhead",            "value": "재생 헤드까지 압축" },
+    { "key": "keyframe_menu.cascade_bindings",                "value": "바인딩 캐스케이드" },
+    { "key": "keyframe_menu.cascade_by_component_index",      "value": "컴포넌트 인덱스순" },
+    { "key": "keyframe_menu.cascade_by_selection_order",      "value": "선택 순서순" }
   ]
 }

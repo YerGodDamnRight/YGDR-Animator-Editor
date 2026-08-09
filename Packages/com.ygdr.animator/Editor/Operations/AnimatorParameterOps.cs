@@ -270,7 +270,7 @@ namespace YGDR.Editor.Animation
                 CollectVrcBehaviourNames(childStateMachine.stateMachine, result);
         }
 
-        static void CollectBehaviourNames(StateMachineBehaviour[] behaviours, HashSet<string> result)
+        internal static void CollectBehaviourNames(StateMachineBehaviour[] behaviours, HashSet<string> result)
         {
             foreach (var driver in behaviours.OfType<VRCAvatarParameterDriver>())
                 foreach (var driverParameter in driver.parameters)
@@ -291,7 +291,12 @@ namespace YGDR.Editor.Animation
             Undo.RegisterCompleteObjectUndo(controller, "Delete and Clean Parameter");
 
             foreach (var layer in controller.layers)
+            {
                 DeleteTransitionsReferencingParam(layer.stateMachine, paramName);
+#if VRC_SDK_VRCSDK3
+                CleanBehavioursReferencingParam(layer.stateMachine, paramName);
+#endif
+            }
 
             int paramIndex = Array.FindIndex(controller.parameters, parameter => parameter.name == paramName);
             if (paramIndex >= 0)
@@ -300,6 +305,50 @@ namespace YGDR.Editor.Animation
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
         }
+
+#if VRC_SDK_VRCSDK3
+        static void CleanBehavioursReferencingParam(AnimatorStateMachine stateMachine, string paramName)
+        {
+            foreach (var childState in stateMachine.states)
+                CleanStateBehavioursForParam(childState.state, paramName);
+            foreach (var childStateMachine in stateMachine.stateMachines)
+                CleanBehavioursReferencingParam(childStateMachine.stateMachine, paramName);
+        }
+
+        /* Driver: removes the matching Parameter row (destination or Copy source); destroys the driver instance
+           entirely if that empties its list — same rule the Driver UI's own RemoveDriverParam already applies.
+           Audio: a deleted parameter can't drive playback order anymore, so PlaybackOrder reverts to Random. */
+        static void CleanStateBehavioursForParam(AnimatorState state, string paramName)
+        {
+            var driversToDestroy = new List<VRCAvatarParameterDriver>();
+            foreach (var driver in state.behaviours.OfType<VRCAvatarParameterDriver>())
+            {
+                int removedCount = driver.parameters.RemoveAll(parameter =>
+                    parameter.name == paramName ||
+                    (parameter.type == VRC_AvatarParameterDriver.ChangeType.Copy && parameter.source == paramName));
+                if (removedCount == 0) continue;
+
+                Undo.RecordObject(driver, "Delete and Clean Parameter");
+                if (driver.parameters.Count == 0) driversToDestroy.Add(driver);
+                else EditorUtility.SetDirty(driver);
+            }
+
+            foreach (var playAudio in state.behaviours.OfType<VRCAnimatorPlayAudio>())
+            {
+                if (playAudio.ParameterName != paramName) continue;
+                Undo.RecordObject(playAudio, "Delete and Clean Parameter");
+                playAudio.PlaybackOrder = VRCAnimatorPlayAudio.Order.Random;
+                playAudio.ParameterName = "";
+                EditorUtility.SetDirty(playAudio);
+            }
+
+            if (driversToDestroy.Count == 0) return;
+            Undo.RegisterCompleteObjectUndo(state, "Delete and Clean Parameter");
+            state.behaviours = state.behaviours.Where(behaviour => !driversToDestroy.Contains(behaviour)).ToArray();
+            foreach (var driver in driversToDestroy) Undo.DestroyObjectImmediate(driver);
+            EditorUtility.SetDirty(state);
+        }
+#endif
 
         static void DeleteTransitionsReferencingParam(AnimatorStateMachine stateMachine, string paramName)
         {
@@ -380,7 +429,7 @@ namespace YGDR.Editor.Animation
         }
 
 #if VRC_SDK_VRCSDK3
-        static void RemapBehaviours(StateMachineBehaviour[] behaviours, string fromParamName, string toParamName)
+        internal static void RemapBehaviours(StateMachineBehaviour[] behaviours, string fromParamName, string toParamName)
         {
             foreach (var driver in behaviours.OfType<VRCAvatarParameterDriver>())
             {
@@ -468,24 +517,6 @@ namespace YGDR.Editor.Animation
                 });
             }
 
-            expressionParameters.parameters = paramsList.ToArray();
-            EditorUtility.SetDirty(expressionParameters);
-        }
-
-        internal static void AddToVrcParameters(VRCExpressionParameters expressionParameters,
-            string paramName, AnimatorControllerParameterType paramType)
-        {
-            Undo.RecordObject(expressionParameters, "Add VRC Parameter");
-            var newParam = new VRCExpressionParameters.Parameter
-            {
-                name          = paramName,
-                valueType     = MapToVrcValueType(paramType),
-                networkSynced = true,
-                saved         = false,
-                defaultValue  = 0f
-            };
-            var paramsList = expressionParameters.parameters.ToList();
-            paramsList.Add(newParam);
             expressionParameters.parameters = paramsList.ToArray();
             EditorUtility.SetDirty(expressionParameters);
         }

@@ -26,6 +26,7 @@ Open via **YGDR → Animator Editor → Open**.
 - [Frames](#frames)
 - [Graph Node Analysis](#graph-node-analysis)
 - [Constraint Converter](#constraint-converter)
+- [Animation Window Keyframe Ops](#animation-window-keyframe-ops)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Bug Fixes & Compatibility](#bug-fixes--compatibility)
 - [Undo Safety](#undo-safety)
@@ -66,22 +67,24 @@ Edit multiple transitions at once. Select one or more transitions in Animator gr
 
 **Transition Details** — Edit timing (exit time, duration), interruption settings, atomic flags. Changes sync to Animator graph in real time.
 
-**Condition Rows** — Each row displays parameter name, comparison mode, threshold value. Filter icon on a row selects every transition on the current layer whose conditions match that row under the active **N / M / V** criteria (see below), replacing current selection.
+Below Transition Details, the condition toolbar (left to right):
 
-**All Conditions Mode** — Displays all conditions for all selected transitions, grouped by source. Tab between fields to enter values quickly.
+- **Mode Toggle** — Switches the condition list below between two modes:
+  - **All Conditions Mode** — Displays all conditions for all selected transitions, grouped by source. Tab between fields to enter values quickly.
+  - **Shared Conditions Mode** — `+` adds shared condition (parameter, mode, threshold) to every selected transition. Supports all condition types:
+    - Bool: `If` / `IfNot`
+    - Int: `Equals` / `NotEqual` / `Greater` / `Less`
+    - Float: `Greater` / `Less`
+    
+    Tool detects duplicate parameters across transitions and shows warning in either mode.
+- **Matching Strictness (N / M / V)** — Toggles controlling which condition fields count as a match: **N**ame, **M**ode, **V**alue. At least one stays active. Value matching compares bool conditions against other bool conditions by mode (`If` / `IfNot`), and numeric (Int/Float) conditions against other numeric conditions by threshold — a bool condition never matches an Int/Float condition under Value matching, since bool has no comparable threshold. Used by Shared Conditions Mode and by **Select Matching Transitions** below.
+- **Reverse** — `⇄` swaps all transition conditions (`Equals` → `NotEqual`, `Greater` → `Less`).
+- **Merge** — Merges multi-transitions (same source and destination) into one.
+- **Separate** — Breaks a merged transition back apart into individual transitions, one per condition.
 
-**Shared Conditions Mode** — `+` adds shared condition (parameter, mode, threshold) to every selected transition. Supports all condition types:
-- Bool: `If` / `IfNot`
-- Int: `Equals` / `NotEqual` / `Greater` / `Less`
-- Float: `Greater` / `Less`
+**Condition Rows** — Each row displays parameter name, comparison mode, threshold value, and a filter icon.
 
-Tool detects duplicate parameters across transitions and shows warning in either mode.
-
-**Matching Strictness (N / M / V)** — Toggles controlling which condition fields count as a match, used by Shared Conditions Mode and the row filter icon: **N**ame, **M**ode, **V**alue. At least one stays active. Value matching compares bool conditions against other bool conditions by mode (`If` / `IfNot`), and numeric (Int/Float) conditions against other numeric conditions by threshold — a bool condition never matches an Int/Float condition under Value matching, since bool has no comparable threshold.
-
-**Reverse** — `⇄` swaps all transition conditions (`Equals` → `NotEqual`, `Greater` → `Less`).
-
-**Merge & Separate** — Tab detects multi-transitions (same source and destination). Offers options to merge or break apart.
+**Select Matching Transitions** — Click a row's filter icon to select every transition on the current layer whose conditions match that row, using the active **N / M / V** criteria above. Replaces current selection.
 
 ---
 
@@ -157,6 +160,8 @@ One-click network syncing for chosen layer. Options:
 - Toggle to remove state behaviors for network states
 - Pack into sub-state machine node for clean layers
 - **Own Driver Instance** — When on, Network Sync writes to its own dedicated Parameter Driver (named "Network") instead of sharing an existing driver already on the state, so it never touches driver rows you've set up for other purposes.
+- **Merge Tagged Duplicates** — When on, states tagged `network merge` (via the transition/state Tag menu) that share the same motion are collapsed into a single mirror state and sync value instead of getting separate sync entries.
+- **Create Backup** — Duplicates the target layer (weight 0) before applying Network Sync, leaving an untouched fallback copy.
 
 #### Menus
 
@@ -233,6 +238,7 @@ Overlay icons for nodes. Available: empty node, looping animation, WD on/off, co
 - **Selection Colors** — Color pickers for default, incoming, outgoing transition lines when single node selected.
 - **Indicator Arrows** — Arrow cap color for default, invalid, instant (0 duration) transitions.
 - **Animate** — Animated arrow caps for selected transitions, or transitions referenced by selected nodes.
+- **Gradient** — Replaces the flat incoming/outgoing selection colors with a two-color gradient that ping-pongs over time (independent color A/B + speed per direction). Each edge gets a stable phase offset so lines drift out of sync instead of pulsing together.
 
 #### Transition Defaults
 
@@ -256,8 +262,7 @@ See [Rebindable Shortcuts](#rebindable-shortcuts-defaults) for the full action l
   - Convert to Float / Int / Bool / Trigger → submenu with two independent actions:
     - **Controller** — converts type and auto-updates all references in the controller (transitions, behaviours, AAP clips)
     - **VRC Params** — converts the matching VRC expression parameter type independently (use for type mismatches without touching controller references)
-  - Add to VRC Parameters → adds parameter to VRC expression parameters asset (only shown when missing)
-  - Sync VRC Parameters Asset → aligns the VRC expression parameters asset to the controller's parameter list/order — adds missing, removes anything not in the controller (including VRC builtins), confirm dialog previews the add/remove diff
+  - Sync VRC Parameters Asset → aligns the VRC expression parameters asset to the controller's parameter list/order — adds missing, removes anything not in the controller (including VRC builtins). Confirm dialog previews the add/remove diff when there is one; if the asset already matches, runs silently and just reorders the asset to match the controller's parameter order.
   - Find parameter uses → opens window showing where parameter is used (transitions, behaviors, AAP clips, affecting GameObjects) + threshold conditions
   - Find AAP Uses → opens window listing all states/clips controlling parameter
   - Create AAP → creates an AAP animation clip that drives the parameter
@@ -635,6 +640,24 @@ Copies sources, weights, and locked/active state to the new component. Removes t
 
 > [!IMPORTANT]
 > VRC constraint conversions require VRChat SDK installed.
+
+---
+
+## Animation Window Keyframe Ops
+
+Right-click a binding name in the Animation window's hierarchy list (same menu as native **Remove Property**). Gated behind the **Context Menus** compatibility toggle. Operates on whichever bindings are selected (1 or many); ops that span multiple bindings treat them as one shared time range so selections stay aligned relative to each other.
+
+- **Double Time** — Doubles spacing between keyframes.
+- **Half Time (Floor)** / **Half Time (Ceiling)** — Halves spacing, rounding the new keyframe times down or up to the nearest frame.
+- **Reverse Keyframes** — Mirrors keyframe order/time across the selected bindings' shared time range.
+- **Ping-Pong Keyframes** — Appends a mirrored copy of the keyframes after the last key, so the clip plays forward then back (A→B→A).
+- **Compress to Playhead** — Rescales keyframe spacing so the last key lands under the current scrub position.
+- **Cascade Bindings** — Triangular crossfade across 2+ selected bindings: each peaks at 1 in its own time slot, ramping to/from 0 at its neighbors. Two ordering variants:
+  - **By Component Index** — Orders by the trailing index in each binding's property path (e.g. constraint `Sources[0..3].Weight`).
+  - **By Selection Order** — Orders by the literal sequence the rows were clicked/shift-selected in, for manual control.
+
+> [!TIP]
+> Useful for VRC parent/rotation constraint source weights — cascade or reverse the crossfade across multiple sources in one pass instead of hand-editing each curve.
 
 ---
 

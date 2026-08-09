@@ -40,6 +40,7 @@ namespace YGDR.Editor.Animation
 
 
         static FastInvokeHandler _drawArrowInvoker;
+        static FastInvokeHandler _drawArrowsInvoker;
 
         internal static Vector3 GetAnimatedArrowPosition(Vector3 source, Vector3 midpoint, Vector3 destination)
         {
@@ -56,11 +57,8 @@ namespace YGDR.Editor.Animation
         static FieldInfo         _labelTransitionContextField;
         static EditorWindow      _cachedAnimatorWindow;
         static Func<Rect>        _getVisibleRect;
-        static bool              _showExpandedBox;
+        static bool              _wasAltHeld;
         static (object info, Vector2 midPoint, Vector2 direction)? _pendingExpandedBox;
-
-        internal static void DrawExpandedBox()  => _showExpandedBox = true;
-        internal static void ClearExpandedBox() => _showExpandedBox = false;
 
         internal static void FlushExpandedBox()
         {
@@ -73,9 +71,20 @@ namespace YGDR.Editor.Animation
         [HarmonyTargetMethod]
         static MethodBase TargetMethod() => GraphPatchReflection.DrawEdgeMethod;
 
-        // __state: 0 = overlay disabled (skip postfix), 1 = selected, 2 = normal
+        // __state: 0 = overlay disabled (skip postfix), 1 = selected, 2 = normal; bit 4 = gradient color applied this edge; bit 8 = manual path edge
+        const int GradientAppliedFlag = 4;
+        const int ManualPathFlag = 8;
+
+        static TransitionPathData _pathDataCache;
+        static int _pathDataCacheFrame = -1;
+        static TransitionPathEntry _pendingManualEntry;
+        static Vector3 _pendingSourceCenter;
+        static Vector3 _pendingDestCenter;
+        static Vector3[] _scratchPoints = new Vector3[8];
+        static readonly Color HoveredHandleColor = new Color(0.239f, 0.502f, 0.878f); // Unity accent blue
+
         [HarmonyPrefix]
-        static void Prefix(object edge, ref Color color, object info, ref int __state)
+        static bool Prefix(object edge, ref Color color, object info, ref int __state)
         {
             __state = 0;
             try
@@ -83,20 +92,132 @@ namespace YGDR.Editor.Animation
                 if (AnimatorGraphAnalyzer.HighlightedTransitions.Count > 0 && IsEdgeHighlightedForAnalysis(info))
                 {
                     color = AnimatorGraphAnalyzer.HighlightColor;
-                    return;
+                    return TryApplyManualPath(edge, ref __state);
                 }
                 var settings = AnimatorDefaultSettings.Load();
-                if (!settings.transitionOverlayEnabled) return;
-                if (IsEntryEdge(edge)) { __state = color.b > color.r + 0.15f ? 1 : 2; return; }
+                if (!settings.transitionOverlayEnabled) return TryApplyManualPath(edge, ref __state);
+                if (IsEntryEdge(edge)) { __state = color.b > color.r + 0.15f ? 1 : 2; return TryApplyManualPath(edge, ref __state); }
                 bool selected = color.b > color.r + 0.15f;
                 __state = selected ? 1 : 2;
                 if (!selected)
                 {
-                    var inOutColor = ResolveInOutColor(edge, settings);
-                    color = inOutColor ?? GetTagColorFromInfo(info, settings) ?? settings.transitionOverlayColor;
+                    var direction = ResolveInOutDirection(edge, settings);
+                    color = direction switch
+                    {
+                        InOutDirection.Outgoing => settings.transitionGradientEnabled
+                            ? ResolveGradientColor(edge, settings.transitionGradientOutColorA, settings.transitionGradientOutColorB, settings.transitionGradientOutSpeed)
+                            : settings.transitionOutgoingColor,
+                        InOutDirection.Incoming => settings.transitionGradientEnabled
+                            ? ResolveGradientColor(edge, settings.transitionGradientInColorA, settings.transitionGradientInColorB, settings.transitionGradientInSpeed)
+                            : settings.transitionIncomingColor,
+                        _ => GetTagColorFromInfo(info, settings) ?? settings.transitionOverlayColor
+                    };
+                    if (settings.transitionGradientEnabled && direction != InOutDirection.None)
+                        __state |= GradientAppliedFlag;
                 }
+                return TryApplyManualPath(edge, ref __state);
             }
             catch (Exception e) { Debug.LogError($"[YGDR] DrawEdge prefix error: {e}"); }
+            return true;
+        }
+
+        /* Used by PatchFindClosestEdge to discard native's click-selection pick for a manual-path edge — native's
+           FindClosestEdge hit-tests distance to the (now invisible) straight source-dest line via GetEdgePoints,
+           so it can never see our bent geometry and must not be trusted for these edges. */
+        internal static bool IsManualPathEdge(object edge)
+        {
+            var (fromState, fromSpecial, toState, toSpecial, _, _) = ResolveEdgeStates(edge);
+            var pathData = GetPathDataForFrame(fromState ?? toState);
+            return pathData != null && pathData.TryGetEntry(fromState, toState, fromSpecial, toSpecial) != null;
+        }
+
+        /* Resolves the edge's (fromState, toState) pair and, if a manual path entry exists for it, sets
+           ManualPathFlag on __state, stashes the entry for the immediately-following Postfix (draws are
+           sequential/non-reentrant within one repaint), and returns false to skip the native line draw. */
+        static bool TryApplyManualPath(object edge, ref int __state)
+        {
+            var (fromState, fromSpecial, toState, toSpecial, fromCenter, toCenter) = ResolveEdgeStates(edge);
+            var pathData = GetPathDataForFrame(fromState ?? toState);
+            if (pathData == null || pathData.entries.Count == 0) { _pendingManualEntry = null; return true; }
+            var entry = pathData.TryGetEntry(fromState, toState, fromSpecial, toSpecial);
+            if (entry == null) { _pendingManualEntry = null; return true; }
+            __state |= ManualPathFlag;
+            _pendingManualEntry = entry;
+            _pendingSourceCenter = fromCenter;
+            _pendingDestCenter = toCenter;
+            return false;
+        }
+
+        /* Resolves the AnimatorState (and, for AnyState/Entry/Exit, the SpecialNode kind) on each side of edge via
+           fromSlot/toSlot -> node -> state field reflection, plus each side's node-box center in graph space — used
+           instead of the native angled boundary anchor so a manual path's endpoints can sit at the node's exact
+           center (needed to get a perfectly straight horizontal run). */
+        static (AnimatorState fromState, SpecialNode fromSpecial, AnimatorState toState, SpecialNode toSpecial, Vector3 fromCenter, Vector3 toCenter) ResolveEdgeStates(object edge)
+        {
+            if (_fromSlotInvoker == null)
+                _fromSlotInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(GraphPatchReflection.EdgeType, "fromSlot") ?? AccessTools.Method(GraphPatchReflection.EdgeType, "get_fromSlot"));
+            if (_toSlotInvoker == null)
+                _toSlotInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(GraphPatchReflection.EdgeType, "toSlot") ?? AccessTools.Method(GraphPatchReflection.EdgeType, "get_toSlot"));
+
+            var fromSlot = _fromSlotInvoker?.Invoke(edge);
+            var toSlot   = _toSlotInvoker?.Invoke(edge);
+            if (fromSlot == null || toSlot == null) return (null, SpecialNode.None, null, SpecialNode.None, default, default);
+
+            if (_slotNodeInvoker == null)
+                _slotNodeInvoker = MethodInvoker.GetHandler(
+                    AccessTools.PropertyGetter(fromSlot.GetType(), "node") ?? AccessTools.Method(fromSlot.GetType(), "get_node"));
+
+            var fromNode = _slotNodeInvoker?.Invoke(fromSlot);
+            var toNode   = _slotNodeInvoker?.Invoke(toSlot);
+
+            var fromState = AnimatorEditorInit.StateNodeType.IsInstanceOfType(fromNode)
+                ? GraphPatchReflection.StateNodeStateField?.GetValue(fromNode) as AnimatorState : null;
+            var toState = AnimatorEditorInit.StateNodeType.IsInstanceOfType(toNode)
+                ? GraphPatchReflection.StateNodeStateField?.GetValue(toNode) as AnimatorState : null;
+
+            var fromSpecial = AnimatorEditorInit.AnyStateNodeType.IsInstanceOfType(fromNode) ? SpecialNode.AnyState
+                : AnimatorEditorInit.EntryNodeType.IsInstanceOfType(fromNode) ? SpecialNode.Entry
+                : SpecialNode.None;
+            var toSpecial = AnimatorEditorInit.ExitNodeType.IsInstanceOfType(toNode) ? SpecialNode.Exit
+                : SpecialNode.None;
+
+            var fromCenter = NodeCenter(fromNode);
+            var toCenter = NodeCenter(toNode);
+            // Special nodes render shorter than state nodes — match AnimatorTransitionPathPatch's node-center
+            // calc so the drawn line and the drag/click hit-test agree on where the endpoint actually sits.
+            if (fromSpecial != SpecialNode.None) fromCenter.y += AnimatorTransitionPathPatch.SpecialVerticalOffset;
+            if (toSpecial != SpecialNode.None) toCenter.y += AnimatorTransitionPathPatch.SpecialVerticalOffset;
+            return (fromState, fromSpecial, toState, toSpecial, fromCenter, toCenter);
+        }
+
+        static Vector3 NodeCenter(object node)
+        {
+            if (node == null || GraphPatchReflection.NodePositionField == null) return default;
+            if (GraphPatchReflection.NodePositionField.GetValue(node) is not Rect rect) return default;
+            return new Vector3(rect.center.x, rect.center.y, 0f);
+        }
+
+        /* Frame-memoized TransitionPathData resolution — resolved once per repaint pass via the first edge's
+           state, not once per edge (that would be hundreds of AssetDatabase.LoadAllAssetsAtPath calls/repaint). */
+        static TransitionPathData GetPathDataForFrame(AnimatorState anyState)
+        {
+            int frame = Time.frameCount;
+            if (_pathDataCacheFrame == frame) return _pathDataCache;
+            // Stateless edges (e.g. AnyState -> Exit) have no AnimatorState to resolve a controller path from —
+            // fall back to the controller AnimatorTransitionPathPatch resolved for the graph this repaint.
+            AnimatorController controller = null;
+            if (anyState != null)
+            {
+                var path = AssetDatabase.GetAssetPath(anyState);
+                controller = string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+            }
+            controller ??= GraphPatchReflection.LastActiveController;
+            if (controller == null) return null; // retry on the next edge this repaint rather than caching a miss
+            _pathDataCache = TransitionPathData.Get(controller);
+            _pathDataCacheFrame = frame;
+            return _pathDataCache;
         }
 
         static bool IsEdgeHighlightedForAnalysis(object info)
@@ -116,12 +237,33 @@ namespace YGDR.Editor.Animation
             return false;
         }
 
-        /* Returns the incoming or outgoing highlight color when exactly one state node matching the current selection is on either end of edge, or null to use the default line color. */
-        static Color? ResolveInOutColor(object edge, AnimatorDefaultSettings settings)
+        /* True if any currently-selected object is one of this edge's transitions — used to gate the Alt-held expanded conditions box on the actual selected transition(s) rather than a color heuristic. */
+        static bool IsEdgeInSelection(object info)
         {
-            if (!settings.transitionSelectionColorEnabled) return null;
+            if (info == null) return false;
             var selectedObjects = Selection.objects;
-            if (selectedObjects == null || selectedObjects.Length != 1) return null;
+            if (selectedObjects == null || selectedObjects.Length == 0) return false;
+            _labelTransitionsField ??= AccessTools.Field(info.GetType(), "transitions");
+            var transitions = _labelTransitionsField?.GetValue(info) as System.Collections.IList;
+            if (transitions == null || transitions.Count == 0) return false;
+            foreach (var transitionContext in transitions)
+            {
+                if (transitionContext == null) continue;
+                _labelTransitionContextField ??= AccessTools.Field(transitionContext.GetType(), "transition");
+                var transObj = _labelTransitionContextField?.GetValue(transitionContext) as UnityEngine.Object;
+                if (transObj != null && System.Array.IndexOf(selectedObjects, transObj) >= 0) return true;
+            }
+            return false;
+        }
+
+        enum InOutDirection { None, Outgoing, Incoming }
+
+        /* Returns whether edge leaves (Outgoing) or enters (Incoming) the single currently selected node, or None to use the default line color. */
+        static InOutDirection ResolveInOutDirection(object edge, AnimatorDefaultSettings settings)
+        {
+            if (!settings.transitionSelectionColorEnabled) return InOutDirection.None;
+            var selectedObjects = Selection.objects;
+            if (selectedObjects == null || selectedObjects.Length != 1) return InOutDirection.None;
 
             if (_fromSlotInvoker == null)
                 _fromSlotInvoker = MethodInvoker.GetHandler(
@@ -132,7 +274,7 @@ namespace YGDR.Editor.Animation
 
             var fromSlot = _fromSlotInvoker?.Invoke(edge);
             var toSlot   = _toSlotInvoker?.Invoke(edge);
-            if (fromSlot == null || toSlot == null) return null;
+            if (fromSlot == null || toSlot == null) return InOutDirection.None;
 
             if (_slotNodeInvoker == null)
                 _slotNodeInvoker = MethodInvoker.GetHandler(
@@ -141,12 +283,19 @@ namespace YGDR.Editor.Animation
             var fromNode = _slotNodeInvoker?.Invoke(fromSlot);
             var toNode   = _slotNodeInvoker?.Invoke(toSlot);
 
-            if (IsNodeMatchingSelection(fromNode, selectedObjects)) return settings.transitionOutgoingColor;
-            if (IsNodeMatchingSelection(toNode, selectedObjects))   return settings.transitionIncomingColor;
-            return null;
+            if (IsNodeMatchingSelection(fromNode, selectedObjects)) return InOutDirection.Outgoing;
+            if (IsNodeMatchingSelection(toNode, selectedObjects))   return InOutDirection.Incoming;
+            return InOutDirection.None;
         }
 
-        /* Returns true if node is a StateNode or StateMachineNode whose underlying asset is present in selectedObjects. */
+        /* Lerps between the two given gradient colors over time (ping-pong). Each edge gets a stable phase offset from its hash so lines drift out of sync instead of pulsing together. */
+        static Color ResolveGradientColor(object edge, Color colorA, Color colorB, float speed)
+        {
+            float phaseOffset = ((edge?.GetHashCode() ?? 0) & 0x3FF) / 1024f;
+            float t = Mathf.PingPong((float)(EditorApplication.timeSinceStartup * speed) + phaseOffset, 1f);
+            return Color.Lerp(colorA, colorB, t);
+        }
+
         static bool IsNodeMatchingSelection(object node, UnityEngine.Object[] selectedObjects)
         {
             if (node == null) return false;
@@ -167,14 +316,15 @@ namespace YGDR.Editor.Animation
         }
 
         [HarmonyPostfix]
-        static void Postfix(object __instance, object edge, object info, int __state)
+        static void Postfix(object __instance, object edge, ref Color color, object info, int __state)
         {
             if (__state == 0) return;
             try
             {
                 var settings = AnimatorDefaultSettings.Load();
-                bool animate = settings.transitionAnimateSelected && (__state == 1 || IsNodeSelected(edge));
-                if (!settings.transitionShowLabel && !animate && !_showExpandedBox) return;
+                if ((__state & GradientAppliedFlag) != 0) RequestRepaint();
+                bool isManualPath = (__state & ManualPathFlag) != 0;
+                bool animate = settings.transitionAnimateSelected && ((__state & 1) != 0 || IsNodeSelected(edge));
 
                 var args = new object[] { edge, Vector3.zero };
                 var points = GraphPatchReflection.GetEdgePointsMethod?.Invoke(__instance, args) as Vector3[];
@@ -183,10 +333,110 @@ namespace YGDR.Editor.Animation
 
                 var sourcePoint      = points[0];
                 var destinationPoint = points[points.Length - 1];
-                var midPoint         = Vector3.Lerp(sourcePoint, destinationPoint, 0.5f);
-                var direction        = (destinationPoint - sourcePoint).normalized;
+                Vector3 midPoint;
+                Vector3 direction;
 
-                if (__state == 1 && _showExpandedBox)
+                if (isManualPath)
+                {
+                    var entry = _pendingManualEntry;
+                    if (entry == null) return;
+
+                    int pointCount = entry.points.Count + 2;
+                    EnsureScratchCapacity(pointCount);
+                    _scratchPoints[0] = _pendingSourceCenter + new Vector3(entry.sourceOffset.x, entry.sourceOffset.y, 0f);
+                    for (int i = 0; i < entry.points.Count; i++)
+                    {
+                        var waypoint = entry.points[i];
+                        _scratchPoints[i + 1] = new Vector3(waypoint.x, waypoint.y, 0f);
+                    }
+                    _scratchPoints[pointCount - 1] = _pendingDestCenter + new Vector3(entry.destOffset.x, entry.destOffset.y, 0f);
+
+                    if (Event.current.type == EventType.Repaint && ChainIntersectsRect(_scratchPoints, pointCount, VisibleRect()))
+                    {
+                        var previousColor  = Handles.color;
+                        var previousMatrix = Handles.matrix;
+                        try
+                        {
+                            _edgeSizeMultiplierInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.EdgeSizeMultiplierGetter);
+                            float manualMult = _edgeSizeMultiplierInvoker != null ? (float)_edgeSizeMultiplierInvoker(__instance) : 1f;
+
+                            // 0.8 alpha + 4f*mult width matches PatchEdgeGUIDoEdges's chain-preview AA polyline —
+                            // a full-alpha AA line reads brighter/thinner than native at the same nominal width.
+                            var lineColor = color;
+                            lineColor.a *= 0.8f;
+                            Handles.color = lineColor;
+                            Handles.DrawAAPolyLine(4f * manualMult, pointCount, _scratchPoints);
+
+                            float handleRadius = 3f * manualMult;
+                            for (int i = 0; i < pointCount; i++)
+                            {
+                                int waypointIndex = i - 1; // source/dest anchors (i == 0 / pointCount-1) aren't interactive waypoints
+                                bool isHovered = waypointIndex >= 0 && entry == AnimatorTransitionPathPatch.HoveredEntry &&
+                                    waypointIndex == AnimatorTransitionPathPatch.HoveredPointIndex;
+                                Handles.color = isHovered ? HoveredHandleColor : Color.white;
+                                Handles.DrawSolidDisc(_scratchPoints[i], Vector3.forward, handleRadius);
+                            }
+
+                            if (settings.transitionIndicatorArrowsEnabled)
+                            {
+                                var manualArrowColor = PatchDrawArrows.GetOrResolveArrowColor(info, settings) ?? settings.transitionOverlayArrowColor;
+                                _drawArrowsInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.DrawArrowsMethod);
+
+                                bool isSelfTransition = entry.fromState == entry.toState && entry.fromSpecial == entry.toSpecial;
+                                float arrowLength = 13f * manualMult;
+
+                                // one arrow per bent segment, not just the segment the overall midpoint falls on
+                                for (int segmentIndex = 0; segmentIndex < pointCount - 1; segmentIndex++)
+                                {
+                                    var segmentStart = _scratchPoints[segmentIndex];
+                                    var segmentEnd = _scratchPoints[segmentIndex + 1];
+                                    var segmentDirection = (segmentEnd - segmentStart).normalized;
+                                    var segmentPerpendicular = new Vector3(-segmentDirection.y, segmentDirection.x, 0f);
+
+                                    // Pull the node-touching end out to the box boundary so DrawArrows' own midpoint
+                                    // calc centers within the visible line, not the hidden half inside the node.
+                                    if (pointCount > 2)
+                                    {
+                                        if (segmentIndex == 0) segmentStart = PullToNodeBoundary(segmentStart, segmentEnd, entry.fromSpecial);
+                                        if (segmentIndex == pointCount - 2) segmentEnd = PullToNodeBoundary(segmentEnd, segmentStart, entry.toSpecial);
+                                    }
+
+                                    var segmentPoints = new[] { segmentStart, segmentEnd };
+                                    _drawArrowsInvoker?.Invoke(null, manualArrowColor, segmentPerpendicular, segmentPoints, info, isSelfTransition, 5f * manualMult, 2f * manualMult, arrowLength);
+                                }
+
+                                if (animate)
+                                {
+                                    _drawArrowInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.DrawArrowMethod);
+                                    var (manualAnimatedPosition, animatedDirection) = GetAnimatedArrowPositionMultiSegment(_scratchPoints, pointCount);
+                                    var animatedPerpendicular = new Vector3(-animatedDirection.y, animatedDirection.x, 0f);
+                                    _drawArrowInvoker?.Invoke(null, manualArrowColor, animatedPerpendicular, animatedDirection, manualAnimatedPosition, 5f * manualMult, 2f * manualMult);
+                                    RequestRepaint();
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            Handles.color  = previousColor;
+                            Handles.matrix = previousMatrix;
+                        }
+                    }
+
+                    (midPoint, direction) = GetMiddleSegmentCenter(_scratchPoints, pointCount);
+                }
+                else
+                {
+                    midPoint  = Vector3.Lerp(sourcePoint, destinationPoint, 0.5f);
+                    direction = (destinationPoint - sourcePoint).normalized;
+                }
+
+                bool altHeld = Event.current.alt;
+                if (altHeld != _wasAltHeld) { _wasAltHeld = altHeld; RequestRepaint(); }
+                bool showExpandedBox = altHeld && IsEdgeInSelection(info);
+
+                if (!settings.transitionShowLabel && !animate && !showExpandedBox) return;
+
+                if (showExpandedBox)
                     _pendingExpandedBox = (info, (Vector2)midPoint, (Vector2)direction);
                 else if (settings.transitionShowLabel)
                 {
@@ -194,29 +444,119 @@ namespace YGDR.Editor.Animation
                     if (label != null) DrawLabel((Vector2)midPoint, (Vector2)direction, label);
                 }
 
-                if (!animate) return;
+                if (!animate || isManualPath) return; // manual edges already drew their arrow above
 
-                 _edgeSizeMultiplierInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.EdgeSizeMultiplierGetter);
-                 float mult         = _edgeSizeMultiplierInvoker != null ? (float)_edgeSizeMultiplierInvoker(__instance) : 1f;
-                 float arrowSize    = 5f * mult;
-                 float outlineWidth = 2f * mult;
+                _edgeSizeMultiplierInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.EdgeSizeMultiplierGetter);
+                float mult         = _edgeSizeMultiplierInvoker != null ? (float)_edgeSizeMultiplierInvoker(__instance) : 1f;
+                float arrowSize    = 5f * mult;
+                float outlineWidth = 2f * mult;
 
-                 var arrowColor = settings.transitionIndicatorArrowsEnabled
-                     ? PatchDrawArrows.GetOrResolveArrowColor(info, settings) ?? settings.transitionOverlayColor
-                     : settings.transitionOverlayColor;
+                var arrowColor = settings.transitionIndicatorArrowsEnabled
+                    ? PatchDrawArrows.GetOrResolveArrowColor(info, settings) ?? settings.transitionOverlayColor
+                    : settings.transitionOverlayColor;
 
-                 var animatedPosition = GetAnimatedArrowPosition(sourcePoint, midPoint, destinationPoint);
+                var animatedPosition = GetAnimatedArrowPosition(sourcePoint, midPoint, destinationPoint);
 
-                 _drawArrowInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.DrawArrowMethod);
-                 _drawArrowInvoker?.Invoke(null, arrowColor, cross, direction, animatedPosition, arrowSize, outlineWidth);
+                _drawArrowInvoker ??= MethodInvoker.GetHandler(GraphPatchReflection.DrawArrowMethod);
+                _drawArrowInvoker?.Invoke(null, arrowColor, cross, direction, animatedPosition, arrowSize, outlineWidth);
 
-                 if (_cachedAnimatorWindow == null)
-                     _cachedAnimatorWindow = Resources
-                         .FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType)
-                         .FirstOrDefault() as EditorWindow;
-                 _cachedAnimatorWindow?.Repaint();
+                RequestRepaint();
             }
             catch (Exception e) { Debug.LogError($"[YGDR] DrawEdge postfix error: {e}"); }
+        }
+
+        static void EnsureScratchCapacity(int required)
+        {
+            if (_scratchPoints.Length >= required) return;
+            int newSize = _scratchPoints.Length;
+            while (newSize < required) newSize *= 2;
+            _scratchPoints = new Vector3[newSize];
+        }
+
+        /* Bounding-box overlap test — cheap whole-chain cull before any per-segment draw work. */
+        static bool ChainIntersectsRect(Vector3[] chain, int count, Rect rect)
+        {
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            for (int i = 0; i < count; i++)
+            {
+                if (chain[i].x < minX) minX = chain[i].x;
+                if (chain[i].x > maxX) maxX = chain[i].x;
+                if (chain[i].y < minY) minY = chain[i].y;
+                if (chain[i].y > maxY) maxY = chain[i].y;
+            }
+            return maxX >= rect.xMin && minX <= rect.xMax && maxY >= rect.yMin && minY <= rect.yMax;
+        }
+
+        static Vector3 SegmentMidpoint(Vector3[] chain, int segmentIndex) =>
+            Vector3.Lerp(chain[segmentIndex], chain[segmentIndex + 1], 0.5f);
+
+        // Ray/box exit distance from a node center toward `to`, capped at half the segment length — box size
+        // depends on whether `from` is a state node or an AnyState/Entry/Exit special node (smaller box).
+        static Vector3 PullToNodeBoundary(Vector3 from, Vector3 to, SpecialNode special)
+        {
+            var full = to - from;
+            float length = full.magnitude;
+            if (length <= 0.0001f) return from;
+            var direction = full / length;
+            float halfWidth  = special != SpecialNode.None ? AnimatorTransitionPathPatch.SpecialWidth * 0.5f : AnimatorTransitionPathPatch.NodeWidth * 0.5f;
+            float halfHeight = special != SpecialNode.None ? AnimatorTransitionPathPatch.SpecialHeight * 0.5f : AnimatorTransitionPathPatch.NodeHeight * 0.5f;
+            float exitX = direction.x != 0f ? halfWidth / Mathf.Abs(direction.x) : float.MaxValue;
+            float exitY = direction.y != 0f ? halfHeight / Mathf.Abs(direction.y) : float.MaxValue;
+            float clearance = Mathf.Min(Mathf.Min(exitX, exitY), length * 0.5f);
+
+            return from + direction * clearance;
+        }
+
+        // Label anchor: center of the middle segment by index, not the length-weighted midpoint of the whole chain.
+        static (Vector3 position, Vector3 direction) GetMiddleSegmentCenter(Vector3[] chain, int count)
+        {
+            int segmentCount = count - 1;
+            int segmentIndex = Mathf.Clamp(segmentCount / 2, 0, segmentCount - 1);
+            var direction = (chain[segmentIndex + 1] - chain[segmentIndex]).normalized;
+            return (SegmentMidpoint(chain, segmentIndex), direction);
+        }
+
+        /* Walks cumulative segment lengths and lerps within the segment containing t * totalLength (t in [0,1]). */
+        static (Vector3 position, Vector3 direction, int segmentIndex) GetPositionAlongChain(Vector3[] chain, int count, float t)
+        {
+            if (count < 2) return (chain[0], Vector3.zero, 0);
+            float totalLength = 0f;
+            for (int i = 0; i < count - 1; i++) totalLength += Vector3.Distance(chain[i], chain[i + 1]);
+            if (totalLength <= 0.0001f) return (chain[0], Vector3.zero, 0);
+
+            float target = Mathf.Clamp01(t) * totalLength;
+            float accumulated = 0f;
+            for (int i = 0; i < count - 1; i++)
+            {
+                float segmentLength = Vector3.Distance(chain[i], chain[i + 1]);
+                if (accumulated + segmentLength >= target || i == count - 2)
+                {
+                    float segmentT = segmentLength > 0.0001f ? Mathf.Clamp01((target - accumulated) / segmentLength) : 0f;
+                    var segmentDirection = segmentLength > 0.0001f ? (chain[i + 1] - chain[i]).normalized : Vector3.zero;
+                    return (Vector3.Lerp(chain[i], chain[i + 1], segmentT), segmentDirection, i);
+                }
+                accumulated += segmentLength;
+            }
+            return (chain[count - 1], Vector3.zero, count - 2);
+        }
+
+        internal static (Vector3 position, Vector3 direction) GetAnimatedArrowPositionMultiSegment(Vector3[] chain, int count)
+        {
+            float progress = (float)(EditorApplication.timeSinceStartup * 0.5 % 1.0);
+            // Match native GetAnimatedArrowPosition's phase: it runs midpoint->dest then source->midpoint
+            // (a 0.5 phase shift from a plain source->dest sweep), so manual arrows stay in sync with it.
+            float chainT = (progress + 0.5f) % 1f;
+            var (position, direction, _) = GetPositionAlongChain(chain, count, chainT);
+            return (position, direction);
+        }
+
+        static void RequestRepaint()
+        {
+            if (_cachedAnimatorWindow == null)
+                _cachedAnimatorWindow = Resources
+                    .FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType)
+                    .FirstOrDefault() as EditorWindow;
+            _cachedAnimatorWindow?.Repaint();
         }
 
         /* Reads the transitions list from the edge info object and returns a one-line label: condition summary, "N Conditions", "Invalid", or null to show nothing. */
@@ -452,6 +792,45 @@ namespace YGDR.Editor.Animation
                     return AnimatorDefaultSettings.GetTagColor(stateTransition.name, settings);
             }
             return null;
+        }
+    }
+
+    /* Draws the Alt-held expanded conditions box after the whole graph frame (nodes+edges) has drawn —
+       edges draw before nodes in Unity's native pipeline, so anything queued in PatchDrawEdge's postfix
+       must be flushed from a hook that fires after OnGraphGUI's full body returns, or the box renders
+       underneath the node boxes. Kept in this file/feature so the whole box feature is self-contained. */
+    [HarmonyPatch]
+    internal static class PatchTransitionExpandedBoxFlush
+    {
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => GraphPatchReflection.OnGraphGUIMethod;
+
+        [HarmonyPostfix]
+        static void Postfix() => PatchDrawEdge.FlushExpandedBox();
+    }
+
+    /* ── Edge click-selection override ───────────────────────────────────────
+       EdgeGUI.FindClosestEdge hit-tests distance to GetEdgePoints' straight source-dest line — it has no idea
+       our manual-path edges are bent, so it keeps "finding" the invisible straight line and letting native
+       selection (GraphGUI.DragSelection) pick a transition the user never actually clicked on. Discarding its
+       result for manual-path edges here forces that click through as a miss, so AnimatorTransitionPathPatch's
+       own bent-geometry hit test (which runs earlier, as a Prefix on OnGraphGUI) is the only thing that can
+       select these edges. */
+    [HarmonyPatch]
+    internal static class PatchFindClosestEdge
+    {
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => GraphPatchReflection.FindClosestEdgeMethod;
+
+        [HarmonyPostfix]
+        static void Postfix(ref object __result)
+        {
+            try
+            {
+                if (__result != null && PatchDrawEdge.IsManualPathEdge(__result))
+                    __result = null;
+            }
+            catch (Exception e) { Debug.LogError($"[YGDR] FindClosestEdge postfix error: {e}"); }
         }
     }
 

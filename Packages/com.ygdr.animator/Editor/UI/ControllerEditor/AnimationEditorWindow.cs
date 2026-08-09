@@ -77,10 +77,10 @@ namespace YGDR.Editor.Animation
         {
             _cachedVersion    = null;
             _paletteApplied   = false;
-            _helpTransitions  = MdvHelpAction("Transitions", 62, 84);
-            _helpStates       = MdvHelpAction("States", 87, 134);
-            _helpController   = MdvHelpAction("Controller", 137, 188);
-            _helpSettings     = MdvHelpAction("Settings", 191, 289);
+            _helpTransitions  = MdvHelpAction("Transitions", 62, 86);
+            _helpStates       = MdvHelpAction("States", 89, 136);
+            _helpController   = MdvHelpAction("Controller", 139, 192);
+            _helpSettings     = MdvHelpAction("Settings", 195, 293);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;
@@ -389,15 +389,14 @@ namespace YGDR.Editor.Animation
         void SetTabOpen(int index, bool open)
         {
             if (_tabOpen[index] == open) return;
-            PreserveScrollOffset(() =>
-            {
-                _tabOpen[index] = open;
-                var body = index == 0 ? _transitionsBody : index == 1 ? _statesBody : _controllerBody;
-                var header = index == 0 ? _transitionsHeader : index == 1 ? _statesHeader : _controllerHeader;
-                if (body != null) body.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
-                if (header != null) header.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
-                RefreshTabStrip();
-            });
+            var offset = _sectionScrollView?.scrollOffset;
+            _tabOpen[index] = open;
+            var body = index == 0 ? _transitionsBody : index == 1 ? _statesBody : _controllerBody;
+            var header = index == 0 ? _transitionsHeader : index == 1 ? _statesHeader : _controllerHeader;
+            if (body != null) body.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
+            if (header != null) header.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
+            RefreshTabStrip();
+            if (offset != null) _sectionScrollView.schedule.Execute(() => _sectionScrollView.scrollOffset = offset.Value);
         }
 
         /* Inspector Mode: opens only the tab relevant to selection, Controller as fallback. */
@@ -439,15 +438,6 @@ namespace YGDR.Editor.Animation
             if (_sectionScrollView == null) return;
             float maxScroll = Mathf.Max(0f, _sectionScrollView.contentContainer.resolvedStyle.height - _sectionScrollView.resolvedStyle.height);
             _sectionScrollView.scrollOffset = new Vector2(_sectionScrollView.scrollOffset.x, maxScroll);
-        }
-
-        /* Section toggle changes content height, which makes ScrollView reclamp and jump — restore offset after. */
-        void PreserveScrollOffset(Action toggle)
-        {
-            if (_sectionScrollView == null) { toggle(); return; }
-            var offset = _sectionScrollView.scrollOffset;
-            toggle();
-            _sectionScrollView.schedule.Execute(() => _sectionScrollView.scrollOffset = offset);
         }
 
         void RefreshTabStrip()
@@ -616,6 +606,8 @@ namespace YGDR.Editor.Animation
 
             _footerVersionLabel = new Label();
             _footerVersionLabel.AddToClassList("ygdr-footer-text");
+            _footerVersionLabel.AddToClassList("ygdr-footer-version");
+            _footerVersionLabel.RegisterCallback<ClickEvent>(_ => ChangelogWindow.Open());
             _footerBar.Add(_footerVersionLabel);
 
             RefreshFooterLabels();

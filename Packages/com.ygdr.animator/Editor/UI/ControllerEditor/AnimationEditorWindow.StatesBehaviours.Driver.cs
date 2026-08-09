@@ -86,10 +86,11 @@ namespace YGDR.Editor.Animation
 
             Func<AnimatorState, VRCAvatarParameterDriver> resolver = state => FindInstance<VRCAvatarParameterDriver>(state, name);
 
-            var body = BuildDriverInstanceBody(statesWithName, resolver);
+            var sharedParams = GetSharedDriverParams(statesWithName, resolver);
+            var body = BuildDriverInstanceBody(statesWithName, resolver, sharedParams);
             body.style.display = IsExpandedByDefault(_driverFoldoutExpanded, name) ? DisplayStyle.Flex : DisplayStyle.None;
 
-            bool canSwap = GetSharedDriverParams(statesWithName, resolver).Any(entry => entry.param.type == VRC_AvatarParameterDriver.ChangeType.Copy);
+            bool canSwap = sharedParams.Any(entry => entry.param.type == VRC_AvatarParameterDriver.ChangeType.Copy);
 
             var header = BuildInstanceFoldoutHeader<VRCAvatarParameterDriver>(name, statesWithName, _driverFoldoutExpanded,
                 isFirst, isLast, out _, expandedNow => body.style.display = expandedNow ? DisplayStyle.Flex : DisplayStyle.None,
@@ -102,7 +103,7 @@ namespace YGDR.Editor.Animation
             return container;
         }
 
-        VisualElement BuildDriverInstanceBody(AnimatorState[] statesWithName, Func<AnimatorState, VRCAvatarParameterDriver> resolver)
+        VisualElement BuildDriverInstanceBody(AnimatorState[] statesWithName, Func<AnimatorState, VRCAvatarParameterDriver> resolver, List<DriverParamEntry> initialSharedParams)
         {
             var wrapper = new VisualElement();
 
@@ -144,36 +145,58 @@ namespace YGDR.Editor.Animation
             debugRow.Add(localOnlyButton);
             body.Add(debugRow);
 
-            var paramsContainer = new VisualElement();
-            paramsContainer.AddToClassList("ygdr-driver-params-rows");
-            body.Add(paramsContainer);
-
-            void RebuildParamRows()
+            var paramsListView = new ListView
             {
-                paramsContainer.Clear();
-                var currentStatesWithDriver = statesWithName.Where(state => resolver(state) != null).ToArray();
-                if (currentStatesWithDriver.Length == 0) return;
+                reorderable = true,
+                reorderMode = ListViewReorderMode.Animated,
+                showBorder = false,
+                showAddRemoveFooter = false,
+                selectionType = SelectionType.None,
+                virtualizationMethod = CollectionVirtualizationMethod.DynamicHeight,
+                makeItem = () => new VisualElement()
+            };
+            paramsListView.AddToClassList("ygdr-driver-params-rows");
+            body.Add(paramsListView);
 
-                var sharedParams = GetSharedDriverParams(statesWithName, resolver);
-                if (sharedParams.Count == 0)
-                {
-                    var emptyLabel = new Label(L10n.Get("vrc.list_empty"));
-                    emptyLabel.AddToClassList("ygdr-empty-label");
-                    paramsContainer.Add(emptyLabel);
-                }
-                else
-                {
-                    for (int i = 0; i < sharedParams.Count; i++)
-                        paramsContainer.Add(BuildDriverParamRow(sharedParams[i], i, statesWithName, resolver, RebuildParamRows));
-                }
+            var paramsEmptyLabel = new Label(L10n.Get("vrc.list_empty"));
+            paramsEmptyLabel.AddToClassList("ygdr-empty-label");
+            paramsEmptyLabel.style.display = DisplayStyle.None;
+            body.Add(paramsEmptyLabel);
+
+            /* Captured by both RebuildParamRows and itemIndexChanged below — itemIndexChanged needs the
+               pre-move entry at oldIndex to resolve each state's own parameter position (see MoveDriverParam). */
+            var sharedParams = new List<DriverParamEntry>();
+
+            /* precomputed lets the initial call below reuse the list BuildDriverFoldout already walked for
+               canSwap instead of walking driver.parameters a second time on every foldout build. */
+            void RebuildParamRows(List<DriverParamEntry> precomputed = null)
+            {
+                sharedParams = precomputed ?? GetSharedDriverParams(statesWithName, resolver);
+
+                paramsEmptyLabel.style.display = sharedParams.Count == 0 ? DisplayStyle.Flex : DisplayStyle.None;
+
+                var indices = new List<int>(sharedParams.Count);
+                for (int i = 0; i < sharedParams.Count; i++) indices.Add(i);
+                paramsListView.itemsSource = indices;
+                paramsListView.bindItem = (element, index) => BindDriverParamRow(element, sharedParams[index], index, statesWithName, resolver, RefreshDriverSection);
+                paramsListView.Rebuild();
             }
 
-            RebuildParamRows();
+            WireListViewReorder(paramsListView, (oldIndex, newIndex) =>
+            {
+                if (oldIndex < 0 || oldIndex >= sharedParams.Count) return;
+                var movedEntry = sharedParams[oldIndex];
+                MoveDriverParam(statesWithName, resolver, movedEntry, newIndex);
+                sharedParams.RemoveAt(oldIndex);
+                sharedParams.Insert(newIndex, movedEntry);
+            }, RefreshDriverSection);
+
+            RebuildParamRows(initialSharedParams);
 
             /* "+" sits outside body's padded wrapper, flush against its bottom edge — mirrors Transitions' condAddRow. */
             var addRow = new VisualElement();
             addRow.AddToClassList("ygdr-driver-param-add-row");
-            var addRowButton = new Button(() => { AddDriverParam(statesWithName, resolver); RebuildParamRows(); }) { text = "+" };
+            var addRowButton = new Button(() => { AddDriverParam(statesWithName, resolver); RefreshDriverSection(); }) { text = "+" };
             addRowButton.AddToClassList("ygdr-driver-param-add-btn");
             StyleSecondaryButton(addRowButton);
             addRow.Add(addRowButton);
@@ -264,12 +287,14 @@ namespace YGDR.Editor.Animation
         }
 
         /* Edits that change which rows are visible (type/dest/source/convertRange) call rebuild; plain value edits mutate in place. */
-        VisualElement BuildDriverParamRow(DriverParamEntry entry, int index, AnimatorState[] statesWithName, Func<AnimatorState, VRCAvatarParameterDriver> resolver, Action rebuild)
+        void BindDriverParamRow(VisualElement element, DriverParamEntry entry, int index, AnimatorState[] statesWithName, Func<AnimatorState, VRCAvatarParameterDriver> resolver, Action rebuild)
         {
+            element.Clear();
+            element.ClearClassList();
+            element.AddToClassList("ygdr-driver-param-row");
             var param = entry.param;
-            var row = new VisualElement();
-            row.AddToClassList("ygdr-driver-param-row");
-            row.style.backgroundColor = index % 2 == 0 ? SharedWindowStyles.SecondaryColor : SharedWindowStyles.RowAltColor;
+            var idleColor = index % 2 == 0 ? SharedWindowStyles.SecondaryColor : SharedWindowStyles.RowAltColor;
+            StyleHoverTint(element, () => false, () => SecondaryButtonHoverColor, () => idleColor);
 
             var paramType = GetParamType(param.name);
             bool isBool = paramType == AnimatorControllerParameterType.Bool;
@@ -283,6 +308,7 @@ namespace YGDR.Editor.Animation
 
             var headerRow = new VisualElement();
             headerRow.AddToClassList("ygdr-behavior-field-row");
+
             var typeLabel = new Label(L10n.Get("vrc.param_driver.type"));
             typeLabel.AddToClassList("ygdr-behavior-field-label");
             headerRow.Add(typeLabel);
@@ -301,11 +327,10 @@ namespace YGDR.Editor.Animation
             var removeButton = new Button(() => { RemoveDriverParam(statesWithName, resolver, entry); rebuild(); }) { text = "−" };
             removeButton.AddToClassList("ygdr-behavior-icon-btn");
             StyleSecondaryButton(removeButton);
-            var removeButtonIdleColor = index % 2 == 0 ? SharedWindowStyles.SecondaryColor : SharedWindowStyles.RowAltColor;
-            removeButton.style.backgroundColor = removeButtonIdleColor;
-            removeButton.RegisterCallback<MouseLeaveEvent>(_ => removeButton.style.backgroundColor = removeButtonIdleColor);
+            removeButton.style.backgroundColor = idleColor;
+            removeButton.RegisterCallback<MouseLeaveEvent>(_ => removeButton.style.backgroundColor = idleColor);
             headerRow.Add(removeButton);
-            row.Add(headerRow);
+            element.Add(headerRow);
 
             if (param.type == VRC_AvatarParameterDriver.ChangeType.Copy)
             {
@@ -320,7 +345,7 @@ namespace YGDR.Editor.Animation
                         rebuild();
                     });
                 };
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.source"), null, sourceButton));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.source"), null, sourceButton));
 
                 var destButton = new Button { text = string.IsNullOrEmpty(param.name) ? "—" : param.name };
                 StyleAccentButton(destButton);
@@ -333,13 +358,13 @@ namespace YGDR.Editor.Animation
                         rebuild();
                     });
                 };
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.destination"), null, destButton));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.destination"), null, destButton));
 
                 if (!string.IsNullOrEmpty(param.source) && GetParamType(param.source) != GetParamType(param.name))
                 {
                     var hint = new Label($"Value will be converted to {GetParamType(param.name)}");
                     hint.AddToClassList("ygdr-driver-hint");
-                    row.Add(hint);
+                    element.Add(hint);
                 }
 
                 var convertToggle = new Toggle { value = param.convertRange };
@@ -348,18 +373,18 @@ namespace YGDR.Editor.Animation
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, convertRange: evt.newValue));
                     rebuild();
                 });
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.convert_range"), null, convertToggle));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.convert_range"), null, convertToggle));
 
                 if (param.convertRange)
                 {
-                    row.Add(BuildDriverMinMaxRow(L10n.Get("vrc.param_driver.source"), param.sourceMin, param.sourceMax, entry.mixedSourceMin, entry.mixedSourceMax,
+                    element.Add(BuildDriverMinMaxRow(L10n.Get("vrc.param_driver.source"), param.sourceMin, param.sourceMax, entry.mixedSourceMin, entry.mixedSourceMax,
                         newMin => ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, sourceMin: newMin)),
                         newMax => ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, sourceMax: newMax))));
-                    row.Add(BuildDriverMinMaxRow(L10n.Get("vrc.param_driver.destination"), param.destMin, param.destMax, entry.mixedDestMin, entry.mixedDestMax,
+                    element.Add(BuildDriverMinMaxRow(L10n.Get("vrc.param_driver.destination"), param.destMin, param.destMax, entry.mixedDestMin, entry.mixedDestMax,
                         newMin => ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, destMin: newMin)),
                         newMax => ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, destMax: newMax))));
                 }
-                return row;
+                return;
             }
 
             var nameButton = new Button { text = string.IsNullOrEmpty(param.name) ? "—" : param.name };
@@ -373,47 +398,47 @@ namespace YGDR.Editor.Animation
                     rebuild();
                 });
             };
-            row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.destination"), null, nameButton));
+            element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.destination"), null, nameButton));
 
             if (isBool && param.type == VRC_AvatarParameterDriver.ChangeType.Set)
             {
                 var toggle = new Toggle { value = param.value >= 0.5f, showMixedValue = entry.hasMixedValues };
                 toggle.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, value: evt.newValue ? 1f : 0f)));
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.value"), null, toggle));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.value"), null, toggle));
             }
             else if (isBool && param.type == VRC_AvatarParameterDriver.ChangeType.Random)
             {
                 var slider = new Slider(0f, 1f) { value = param.chance, showMixedValue = entry.hasMixedValues };
                 slider.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, chance: evt.newValue)));
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.chance"), null, slider));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.chance"), null, slider));
             }
             else if (param.type == VRC_AvatarParameterDriver.ChangeType.Random)
             {
                 var minField = new FloatField { value = param.valueMin, showMixedValue = entry.hasMixedValues };
                 minField.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, valueMin: evt.newValue)));
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.min_value"), null, minField));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.min_value"), null, minField));
 
                 var maxField = new FloatField { value = param.valueMax, showMixedValue = entry.hasMixedValues };
                 maxField.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, valueMax: evt.newValue)));
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.max_value"), null, maxField));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.max_value"), null, maxField));
 
                 if (paramType == AnimatorControllerParameterType.Int)
                 {
                     var preventToggle = new Toggle { value = param.preventRepeats };
                     preventToggle.RegisterValueChangedCallback(evt =>
                         ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, preventRepeats: evt.newValue)));
-                    row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.prevent_repeats"), null, preventToggle));
+                    element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.prevent_repeats"), null, preventToggle));
                 }
                 else
                 {
                     var chanceSlider = new Slider(0f, 1f) { value = param.chance, showMixedValue = entry.hasMixedValues };
                     chanceSlider.RegisterValueChangedCallback(evt =>
                         ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, chance: evt.newValue)));
-                    row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.chance"), null, chanceSlider));
+                    element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.chance"), null, chanceSlider));
                 }
             }
             else
@@ -421,10 +446,8 @@ namespace YGDR.Editor.Animation
                 var valueField = new FloatField { value = param.value, showMixedValue = entry.hasMixedValues };
                 valueField.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, value: evt.newValue)));
-                row.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.value"), null, valueField));
+                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.value"), null, valueField));
             }
-
-            return row;
         }
 
         static VisualElement BuildDriverMinMaxRow(string label, float min, float max, bool mixedMin, bool mixedMax, Action<float> onMinChanged, Action<float> onMaxChanged)
@@ -580,6 +603,29 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* newIndex comes from the dragged row's drop position; each state resolves its own oldIndex via entry
+           identity (name + index hint) since per-state parameter lists can be offset when rows are filtered
+           to only shared params — same lookup RemoveDriverParam/ReplaceDriverParam already rely on. */
+        static void MoveDriverParam(AnimatorState[] statesWithName, Func<AnimatorState, VRCAvatarParameterDriver> resolver, DriverParamEntry entry, int newIndex)
+        {
+            foreach (var state in statesWithName)
+            {
+                var driver = resolver(state);
+                if (driver == null) continue;
+                int oldIndex = FindDriverParamIndex(driver, entry.param, entry.index);
+                if (oldIndex < 0) continue;
+
+                int clampedNewIndex = Mathf.Clamp(newIndex, 0, driver.parameters.Count - 1);
+                if (clampedNewIndex == oldIndex) continue;
+
+                Undo.RecordObject(driver, "Reorder Driver Parameters");
+                var moved = driver.parameters[oldIndex];
+                driver.parameters.RemoveAt(oldIndex);
+                driver.parameters.Insert(clampedNewIndex, moved);
+                EditorUtility.SetDirty(driver);
+            }
+        }
+
         void AddDriverParam(AnimatorState[] statesWithName, Func<AnimatorState, VRCAvatarParameterDriver> resolver)
         {
             if (statesWithName.Length > 1) EnsureUniqueDrivers(statesWithName, resolver);
@@ -663,18 +709,9 @@ namespace YGDR.Editor.Animation
             }
         }
 
-        /* Rescoped Remove All: destroys every driver instance (all names) on every selected state. */
         void RemoveDriverFromAll()
         {
-            foreach (var state in _selectedStates)
-            {
-                var drivers = Instances<VRCAvatarParameterDriver>(state);
-                if (drivers.Count == 0) continue;
-                Undo.RegisterCompleteObjectUndo(state, "Remove VRC Drivers");
-                state.behaviours = state.behaviours.Where(b => !(b is VRCAvatarParameterDriver)).ToArray();
-                foreach (var driver in drivers) Undo.DestroyObjectImmediate(driver);
-                EditorUtility.SetDirty(state);
-            }
+            RemoveAllInstancesOfType<VRCAvatarParameterDriver>(_selectedStates, "Remove VRC Drivers");
             _driverFoldoutExpanded.Clear();
         }
 

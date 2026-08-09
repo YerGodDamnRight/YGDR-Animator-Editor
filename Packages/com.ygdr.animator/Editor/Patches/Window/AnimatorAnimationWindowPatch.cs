@@ -176,11 +176,15 @@ namespace YGDR.Editor.Animation
             {
                 void SelectClip(AnimationClip clip)
                 {
-                    try { WindowPatchReflection.AnimationWindowEditAnimationClipMethod?.Invoke(animWindow, new object[] { clip }); }
-                    catch (Exception e) { Debug.LogError($"[AnimatorTools] ClipMenuDropdown select: {e}"); }
+                    // EditAnimationClip swaps the selection to a clip-only item that can't be reassigned later
+                    // without the graph tab redrawing — write the clip directly whenever the current selection allows it.
+                    if (stateProxy.CanChangeAnimationClip) stateProxy.ActiveAnimationClip = clip;
+                    else
+                    {
+                        try { WindowPatchReflection.AnimationWindowEditAnimationClipMethod?.Invoke(animWindow, new object[] { clip }); }
+                        catch (Exception e) { Debug.LogError($"[AnimatorTools] ClipMenuDropdown select: {e}"); }
+                    }
 
-                    // EditAnimationClip silently no-ops while the window is locked; force the write directly.
-                    if (stateProxy.ActiveAnimationClip != clip) stateProxy.ActiveAnimationClip = clip;
                     animWindow.Repaint();
                 }
 
@@ -336,7 +340,7 @@ namespace YGDR.Editor.Animation
             var animator = gameObject.GetComponentInParent<Animator>(true);
             var controller = (animator.runtimeAnimatorController as AnimatorController)
                 ?? WindowPatchReflection.GetOpenController();
-            var relativePath = GetRelativePath(animator.transform, gameObject.transform);
+            var relativePath = AnimatorGameObjectToggleOps.GetRelativePath(animator.transform, gameObject.transform);
             if (relativePath == null) return;
             AnimatorFindUsageWindow.Open(relativePath, controller, gameObject.name);
         }
@@ -359,19 +363,6 @@ namespace YGDR.Editor.Animation
 #else
             return false;
 #endif
-        }
-
-        static string GetRelativePath(Transform root, Transform target)
-        {
-            if (target == root) return "";
-            var parts = new List<string>();
-            var current = target;
-            while (current != null && current != root)
-            {
-                parts.Insert(0, current.name);
-                current = current.parent;
-            }
-            return current == null ? null : string.Join("/", parts);
         }
     }
 }

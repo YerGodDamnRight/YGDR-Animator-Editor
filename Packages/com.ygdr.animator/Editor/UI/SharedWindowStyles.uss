@@ -38,6 +38,24 @@
     margin-bottom: 2px;
 }
 
+/* Neutralizes Unity's built-in ListView item hover/selected background and the Animated-reorder drag-handle
+   background — both default to a fixed color that doesn't track our live palette and bleeds past our row content's
+   right edge (item wrapper is wider than the row itself). Hover feedback is instead driven per-row in C# via
+   StyleHoverTint, same as every other row/button in this UI, so it always matches the current palette. */
+.unity-collection-view__item {
+    background-color: transparent;
+    overflow: hidden;
+}
+
+.unity-collection-view__item:hover,
+.unity-collection-view__item--selected {
+    background-color: transparent;
+}
+
+.unity-list-view__reorderable-handle {
+    background-color: transparent;
+}
+
 .u-flat-btn-sm {
     height: 20px;
     margin: 0;
@@ -101,6 +119,14 @@
     font-size: 10px;
     color: rgb(191, 191, 191);
     padding-left: 6px;
+}
+
+.ygdr-footer-version {
+    cursor: link;
+}
+
+.ygdr-footer-version:hover {
+    color: rgb(255, 255, 255);
 }
 
 .ygdr-footer-spacer {
@@ -558,6 +584,10 @@
     color: rgb(255, 255, 255);
 }
 
+.ygdr-transition-tag-delete:hover {
+    color: rgb(224, 90, 90);
+}
+
 .ygdr-transition-tag-label {
     font-size: 10px;
     -unity-text-align: middle-left;
@@ -615,6 +645,7 @@
 
 .ygdr-cond-body {
     padding: 6px;
+    position: relative;
 }
 
 .ygdr-cond-row {
@@ -632,6 +663,25 @@
 
 .ygdr-cond-row-group-gap {
     margin-top: 6px;
+}
+
+.ygdr-cond-row-dragging {
+    opacity: 0.4;
+}
+
+.ygdr-cond-drag-handle {
+    width: 14px;
+    height: 14px;
+    margin-right: 2px;
+    align-self: center;
+}
+
+.ygdr-cond-drag-indicator {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    height: 2px;
+    background-color: rgb(90, 160, 255);
 }
 
 .ygdr-cond-param-label {
@@ -1103,14 +1153,12 @@
     align-items: center;
     height: 20px;
     margin-bottom: 1px;
-    padding-right: 22px;
-    position: relative;
 }
 
-.ygdr-audio-clip-remove-btn {
-    position: absolute;
-    right: 0;
-    top: 0;
+.ygdr-audio-clip-field {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 0;
 }
 
 .ygdr-audio-minmax-field {
@@ -1282,9 +1330,17 @@
 }
 
 .ygdr-network-label-wide {
-    width: 164px;
+    width: 25%;
+    flex-shrink: 0;
     -unity-text-align: middle-left;
     font-size: 11px;
+}
+
+.ygdr-network-row-content {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+    width: 75%;
 }
 
 .ygdr-network-dropdown-field,
@@ -1589,10 +1645,6 @@
 
 .ygdr-menu-controls-scroll {
     max-height: 200px;
-}
-
-.ygdr-menu-controls-rows {
-    flex-grow: 1;
 }
 
 .ygdr-menu-control-row {

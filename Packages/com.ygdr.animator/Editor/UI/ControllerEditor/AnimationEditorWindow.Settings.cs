@@ -426,6 +426,96 @@ namespace YGDR.Editor.Animation
             return field;
         }
 
+        /* Compact unlabeled color field for placing multiple evenly-split fields in one row: ColorField's own label element is removed entirely (not just styled), since even an empty label reserves min-width and unbalances the split. */
+        static ColorField MakeInlineColorField(VisualElement row, Color initial, Action<Color> onChanged)
+        {
+            var field = new ColorField { value = initial, showAlpha = false };
+            field.style.flexBasis = 0;
+            field.style.flexGrow = 1;
+            field.style.flexShrink = 1;
+            field.style.minWidth = 0;
+            field.style.overflow = Overflow.Hidden;
+            field.style.marginRight = 6;
+
+            var fieldLabel = field.Q<Label>(className: "unity-base-field__label");
+            fieldLabel?.RemoveFromHierarchy();
+
+            var inputPart = field.Q<VisualElement>(className: "unity-base-field__input");
+            if (inputPart != null)
+            {
+                inputPart.style.flexGrow = 1;
+                inputPart.style.flexShrink = 1;
+                inputPart.style.minWidth = 0;
+            }
+
+            field.RegisterValueChangedCallback(evt => onChanged(evt.newValue));
+            row.Add(field);
+            return field;
+        }
+
+        /* Row with a fixed label plus a swappable content area: a single plain ColorField (registered into _paletteColorFields[paletteIndex]) in the normal case, or an A/B color pair + speed slider sharing the same space when gradient mode is on. Returns the setter to flip between the two. */
+        Action<bool> BuildDirectionalGradientRow(
+            VisualElement parent, int paletteIndex, string label,
+            Color plainInitial, Color plainDefault, Action<Color> setPlain,
+            Color gradientColorAInitial, Color gradientColorADefault, Action<Color> setGradientColorA,
+            Color gradientColorBInitial, Color gradientColorBDefault, Action<Color> setGradientColorB,
+            float gradientSpeedInitial, float gradientSpeedDefault, Action<float> setGradientSpeed)
+        {
+            var row = MakeRow(parent);
+            row.style.width = Length.Percent(100);
+            var labelElement = new Label(label);
+            labelElement.style.width = 150;
+            labelElement.style.flexShrink = 0;
+            row.Add(labelElement);
+
+            var content = new VisualElement();
+            content.style.flexDirection = FlexDirection.Row;
+            content.style.flexGrow = 1;
+            content.style.minWidth = 0;
+            row.Add(content);
+
+            var plainField = new ColorField { value = plainInitial, showAlpha = false };
+            plainField.style.flexGrow = 1;
+            plainField.style.flexShrink = 1;
+            plainField.style.minWidth = 0;
+            plainField.RegisterValueChangedCallback(evt => setPlain(evt.newValue));
+            content.Add(plainField);
+            _paletteColorFields[paletteIndex] = plainField;
+
+            var gradientContent = new VisualElement();
+            gradientContent.style.flexDirection = FlexDirection.Row;
+            gradientContent.style.flexGrow = 1;
+            gradientContent.style.minWidth = 0;
+            gradientContent.style.display = DisplayStyle.None;
+            content.Add(gradientContent);
+
+            var gradientColorAField = MakeInlineColorField(gradientContent, gradientColorAInitial, setGradientColorA);
+            var gradientColorBField = MakeInlineColorField(gradientContent, gradientColorBInitial, setGradientColorB);
+
+            var speedSlider = new Slider(0.5f, 1.5f) { value = gradientSpeedInitial, tooltip = L10n.Get("settings.trans_overlay.gradient_speed") };
+            speedSlider.style.flexBasis = 0;
+            speedSlider.style.flexGrow = 1;
+            speedSlider.style.flexShrink = 1;
+            speedSlider.style.minWidth = 0;
+            speedSlider.style.marginRight = 6;
+            speedSlider.RegisterValueChangedCallback(evt => setGradientSpeed(evt.newValue));
+            gradientContent.Add(speedSlider);
+
+            MakeSettingsResetButton(row, () =>
+            {
+                plainField.value = plainDefault;
+                gradientColorAField.value = gradientColorADefault;
+                gradientColorBField.value = gradientColorBDefault;
+                speedSlider.value = gradientSpeedDefault;
+            });
+
+            return enabled =>
+            {
+                plainField.style.display = enabled ? DisplayStyle.None : DisplayStyle.Flex;
+                gradientContent.style.display = enabled ? DisplayStyle.Flex : DisplayStyle.None;
+            };
+        }
+
         // ── Interface palette ─────────────────────────────────────────────────
 
         void BuildInterfaceSection(VisualElement parent, AnimatorDefaultSettings settings)
@@ -707,8 +797,23 @@ namespace YGDR.Editor.Animation
             var selectionGroup = new VisualElement();
             selectionGroup.SetEnabled(settings.transitionSelectionColorEnabled);
             body.Add(selectionGroup);
-            _paletteColorFields[25] = MakeColorRow(selectionGroup, L10n.Get("settings.trans_overlay.selection_in"),  150, settings.transitionIncomingColor, new Color(0f, 1f, 1f, 1f), c => { settings.transitionIncomingColor = c; settings.Save(); });
-            _paletteColorFields[26] = MakeColorRow(selectionGroup, L10n.Get("settings.trans_overlay.selection_out"), 150, settings.transitionOutgoingColor, new Color(1f, 0f, 1f, 1f), c => { settings.transitionOutgoingColor = c; settings.Save(); });
+
+            var setInGradientMode = BuildDirectionalGradientRow(selectionGroup, 25, L10n.Get("settings.trans_overlay.selection_in"),
+                settings.transitionIncomingColor, new Color(0f, 1f, 1f, 1f), c => { settings.transitionIncomingColor = c; settings.Save(); },
+                settings.transitionGradientInColorA, new Color(0f, 1f, 1f, 1f), c => { settings.transitionGradientInColorA = c; settings.Save(); },
+                settings.transitionGradientInColorB, new Color(0.45f, 0f, 1f, 1f), c => { settings.transitionGradientInColorB = c; settings.Save(); },
+                settings.transitionGradientInSpeed,  1.0f, v => { settings.transitionGradientInSpeed  = v; settings.Save(); });
+
+            var setOutGradientMode = BuildDirectionalGradientRow(selectionGroup, 26, L10n.Get("settings.trans_overlay.selection_out"),
+                settings.transitionOutgoingColor, new Color(1f, 0f, 1f, 1f), c => { settings.transitionOutgoingColor = c; settings.Save(); },
+                settings.transitionGradientOutColorA, new Color(1f, 0f, 1f, 1f), c => { settings.transitionGradientOutColorA = c; settings.Save(); },
+                settings.transitionGradientOutColorB, new Color(1f, 0f, 0f, 1f), c => { settings.transitionGradientOutColorB = c; settings.Save(); },
+                settings.transitionGradientOutSpeed,  1.0f, v => { settings.transitionGradientOutSpeed  = v; settings.Save(); });
+
+            void SetGradientMode(bool enabled) { setInGradientMode(enabled); setOutGradientMode(enabled); }
+            SetGradientMode(settings.transitionGradientEnabled);
+            AddGridToggle(toggleGrid, 4, L10n.Get("settings.trans_overlay.gradient"), settings.transitionGradientEnabled,
+                v => { settings.transitionGradientEnabled = v; settings.Save(); SetGradientMode(v); });
 
             var arrowGroup = new VisualElement();
             arrowGroup.SetEnabled(settings.transitionIndicatorArrowsEnabled);

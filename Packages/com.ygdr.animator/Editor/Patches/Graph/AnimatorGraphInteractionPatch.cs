@@ -957,7 +957,6 @@ namespace YGDR.Editor.Animation
         [HarmonyPostfix]
         static void Postfix(object __instance)
         {
-            PatchDrawEdge.FlushExpandedBox();
             if (_pasteSM == null) return;
             try
             {

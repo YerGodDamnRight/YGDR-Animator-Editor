@@ -54,6 +54,15 @@ namespace YGDR.Editor.Animation
             ("Pose Space",    typeof(VRCAnimatorTemporaryPoseSpace)),
             ("Playable Layer",typeof(VRCPlayableLayerControl)),
         };
+
+        // Types that support multiple named instances per state (vs. singleton behaviors like Tracking/Locomotion/PoseSpace).
+        static readonly HashSet<Type> _multiInstanceBehaviorTypes = new HashSet<Type>
+        {
+            typeof(VRCAvatarParameterDriver),
+            typeof(VRCAnimatorPlayAudio),
+            typeof(VRCAnimatorLayerControl),
+            typeof(VRCPlayableLayerControl),
+        };
 #else
         static readonly (string label, Type type)[] _behaviorTypes = System.Array.Empty<(string, Type)>();
 #endif
@@ -276,26 +285,29 @@ namespace YGDR.Editor.Animation
                         : $"{L10n.Get("context_menu.paste_behaviors")} ({typeName})";
 
 #if VRC_SDK_VRCSDK3
-                    var existingDrivers = _copiedBehaviorType == typeof(VRCAvatarParameterDriver)
-                        ? selectedStates[0].behaviours.OfType<VRCAvatarParameterDriver>().ToArray()
-                        : System.Array.Empty<VRCAvatarParameterDriver>();
+                    var existingOfType = _multiInstanceBehaviorTypes.Contains(_copiedBehaviorType)
+                        ? selectedStates[0].behaviours.Where(b => b.GetType() == _copiedBehaviorType).ToArray()
+                        : System.Array.Empty<StateMachineBehaviour>();
 
-                    if (existingDrivers.Length > 0)
+                    if (existingOfType.Length > 0)
                     {
                         menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_replace")}"), false,
-                            static data => ReplaceDriverInstances((AnimatorState[])data),
+                            static data => ReplaceAllInstancesOfType((AnimatorState[])data, "Paste Behaviors"),
                             selectedStates);
 
-                        foreach (var existing in existingDrivers)
+                        if (_copiedBehaviorType == typeof(VRCAvatarParameterDriver))
                         {
-                            var targetName = existing.name;
-                            menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_append")}/{targetName}"), false,
-                                static data => { var (states, name) = ((AnimatorState[], string))data; AppendDriverRows(states, name); },
-                                (selectedStates, targetName));
+                            foreach (var existing in existingOfType)
+                            {
+                                var targetName = existing.name;
+                                menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_append")}/{targetName}"), false,
+                                    static data => { var (states, name) = ((AnimatorState[], string))data; AppendDriverRows(states, name); },
+                                    (selectedStates, targetName));
+                            }
                         }
 
                         menu.AddItem(new GUIContent($"{pasteLabel}/{L10n.Get("context_menu.paste_driver_append_instance")}"), false,
-                            static data => AppendDriverInstance((AnimatorState[])data),
+                            static data => AppendBehaviourInstance((AnimatorState[])data),
                             selectedStates);
                     }
                     else
@@ -636,6 +648,7 @@ namespace YGDR.Editor.Animation
                     PasteBehaviourValuesOnto(newBehavior);
                     EditorUtility.SetDirty(state);
                 }
+                AnimationEditorWindow.RefreshOpenWindowsStatesTab();
                 return;
             }
 
@@ -654,6 +667,7 @@ namespace YGDR.Editor.Animation
                 AddBehavioursFromClipboard(state, undoLabel);
                 EditorUtility.SetDirty(state);
             }
+            AnimationEditorWindow.RefreshOpenWindowsStatesTab();
         }
 
         /* Adds one new behaviour instance per clipboard JSON to state, without touching existing behaviours. */
@@ -664,19 +678,12 @@ namespace YGDR.Editor.Animation
                 var newBehavior = state.AddStateMachineBehaviour(_copiedBehaviorType);
                 Undo.RegisterCreatedObjectUndo(newBehavior, undoLabel);
                 EditorJsonUtility.FromJsonOverwrite(json, newBehavior);
+                AnimationEditorWindow.EnsureUniqueName(state, newBehavior);
                 EditorUtility.SetDirty(newBehavior);
             }
         }
 
 #if VRC_SDK_VRCSDK3
-        /* "Replace" — wipes every existing VRCAvatarParameterDriver instance on each target state
-           and rebuilds from the clipboard JSON(s), regardless of named/all-instances copy mode. */
-        static void ReplaceDriverInstances(AnimatorState[] states)
-        {
-            if (_copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
-            ReplaceAllInstancesOfType(states, "Replace Param Drivers");
-        }
-
         /* "Append" — merges the copied driver's parameter rows into an existing named instance on each target state. */
         static void AppendDriverRows(AnimatorState[] states, string targetInstanceName)
         {
@@ -699,19 +706,21 @@ namespace YGDR.Editor.Animation
                 }
                 EditorUtility.SetDirty(target);
             }
+            AnimationEditorWindow.RefreshOpenWindowsStatesTab();
         }
 
-        /* "Append Instance" — adds the copied driver(s) as brand new instances, never upserting by name. */
-        static void AppendDriverInstance(AnimatorState[] states)
+        /* "Append Instance" — adds the copied behaviour(s) as brand new instances, never upserting by name. */
+        static void AppendBehaviourInstance(AnimatorState[] states)
         {
             if (_copiedBehaviorType == null || _copiedBehaviorJsons.Count == 0) return;
 
             foreach (var state in states)
             {
-                Undo.RegisterCompleteObjectUndo(state, "Append Param Driver Instance");
-                AddBehavioursFromClipboard(state, "Append Param Driver Instance");
+                Undo.RegisterCompleteObjectUndo(state, "Append Behaviour Instance");
+                AddBehavioursFromClipboard(state, "Append Behaviour Instance");
                 EditorUtility.SetDirty(state);
             }
+            AnimationEditorWindow.RefreshOpenWindowsStatesTab();
         }
 #endif
 
@@ -1078,6 +1087,25 @@ namespace YGDR.Editor.Animation
                         selectedStates);
                 }
 
+                if (selectedTransitions.Length > 0 || selectedEntryTransitions.Length > 0)
+                {
+                    var capturedSM = activeStateMachine;
+                    var capturedTransitions = selectedTransitions
+                        .Cast<AnimatorTransitionBase>()
+                        .Concat(selectedEntryTransitions.Cast<AnimatorTransitionBase>())
+                        .ToArray();
+                    var manualPathController = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(capturedSM));
+                    var manualPathData = manualPathController != null ? TransitionPathData.Get(manualPathController) : null;
+                    bool allManualPath = capturedTransitions.All(transition => IsTransitionManualPath(capturedSM, manualPathData, transition));
+                    menu.AddItem(new GUIContent(L10n.Get("context_menu.toggle_manual_path")), allManualPath,
+                        static data =>
+                        {
+                            var pair = ((AnimatorStateMachine, AnimatorTransitionBase[]))data;
+                            ToggleManualPath(pair.Item1, pair.Item2);
+                        },
+                        (capturedSM, capturedTransitions));
+                }
+
                 // Always visible
                 menu.AddItem(
                     new GUIContent(L10n.Get("context_menu.delete_all_transitions")),
@@ -1224,6 +1252,65 @@ namespace YGDR.Editor.Animation
             }
 
             return menu;
+        }
+
+        /* Resolves the (fromState, toState) identity pair for a transition — fromState/fromSpecial is
+           AnyState/Entry when the transition isn't on any child state's own list (Entry transitions are
+           AnimatorTransition, never on a state's own list, so they always resolve to Entry here); toState/
+           toSpecial is Exit when the transition exits the state machine. Sub-state-machine targets stay
+           unsupported (not modeled by TransitionPathEntry). */
+        static (AnimatorState fromState, SpecialNode fromSpecial, AnimatorState toState, SpecialNode toSpecial) ResolveTransitionStates(AnimatorStateMachine sm, AnimatorTransitionBase transition)
+        {
+            AnimatorState fromState = null;
+            SpecialNode fromSpecial = SpecialNode.Entry;
+            if (transition is AnimatorStateTransition stateTransition)
+            {
+                fromState = sm.states.FirstOrDefault(x => x.state.transitions.Contains(stateTransition)).state;
+                fromSpecial = fromState != null ? SpecialNode.None
+                    : sm.anyStateTransitions.Contains(stateTransition) ? SpecialNode.AnyState
+                    : SpecialNode.None;
+            }
+
+            var toState = transition.destinationState;
+            var toSpecial = toState != null ? SpecialNode.None
+                : transition.isExit ? SpecialNode.Exit
+                : SpecialNode.None; // sub-state-machine target — unsupported
+
+            return (fromState, fromSpecial, toState, toSpecial);
+        }
+
+        static bool IsTransitionManualPath(AnimatorStateMachine sm, TransitionPathData pathData, AnimatorTransitionBase transition)
+        {
+            if (pathData == null) return false;
+            var (fromState, fromSpecial, toState, toSpecial) = ResolveTransitionStates(sm, transition);
+            if (toState == null && toSpecial == SpecialNode.None) return false; // sub-state-machine target
+            return pathData.TryGetEntry(fromState, toState, fromSpecial, toSpecial) != null;
+        }
+
+        /* Toggles manual-path mode for every selected transition's edge. Mixed selection (some manual, some not)
+           turns all of them on, matching the "not all checked -> enable all" convention used elsewhere in this menu. */
+        static void ToggleManualPath(AnimatorStateMachine sm, AnimatorTransitionBase[] transitions)
+        {
+            var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(sm));
+            if (controller == null) return;
+
+            var existingPathData = TransitionPathData.Get(controller);
+            bool enable = !transitions.All(transition => IsTransitionManualPath(sm, existingPathData, transition));
+            var pathData = TransitionPathData.GetOrCreate(controller, out bool createdPathData);
+            Undo.RegisterCompleteObjectUndo(pathData, "Toggle Manual Path");
+
+            var seenEdges = new HashSet<(AnimatorState, SpecialNode, AnimatorState, SpecialNode)>();
+            foreach (var transition in transitions)
+            {
+                var (fromState, fromSpecial, toState, toSpecial) = ResolveTransitionStates(sm, transition);
+                if (toState == null && toSpecial == SpecialNode.None) continue; // sub-state-machine target
+                if (!seenEdges.Add((fromState, fromSpecial, toState, toSpecial))) continue;
+                pathData.SetEnabled(fromState, toState, enable, fromSpecial, toSpecial);
+            }
+
+            if (createdPathData) AssetDatabase.SaveAssets();
+            TransitionPathData.RemoveIfEmpty(controller);
+            UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
         }
 
         [HarmonyTranspiler]

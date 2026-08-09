@@ -39,18 +39,31 @@ namespace YGDR.Editor.Animation
         internal bool removeTracking;
         internal bool anyStateTransitions;
         internal bool packIntoSubSM;
-        internal bool preserveTransitionProperties;
+        internal bool preserveExitTime;
+        internal bool preserveDuration;
+        internal bool preserveOffset;
         /* false (default): merge the sync parameter into whichever VRCAvatarParameterDriver instance
            already exists on the state (or create one if none exists) — matches pre-multi-instance behavior.
            true: always use/create a dedicated driver instance named "Network", leaving any other driver
            instances on the state untouched. */
         internal bool useOwnNetworkInstance;
+        /* When true, states tagged "network merge" that share the same motion are collapsed into a single
+           mirror state and sync value, reducing the number of sync bools/values needed. States tagged but
+           without a duplicate-motion match sync individually as normal. Only the first state encountered in
+           each merged group contributes behaviours/transition properties to the mirror side. */
+        internal bool mergeTaggedDuplicates;
+        /* When true, duplicates the target layer and sets the copy's weight to 0 before applying any
+           other network sync operations, giving the user an untouched fallback layer. */
+        internal bool createBackup;
     }
 
     internal static class AnimatorNetworkSync
     {
+        internal const string MergeTag = "network merge";
+
         /* Duplicates all states in parentSM into a remote-only mirror layer driven by a sync parameter, wiring IsLocal conditions on all transitions.
-           Adds parameter drivers to original states and optionally packs the mirror states into a sub SM. */
+           Adds parameter drivers to original states and optionally packs the mirror states into a sub SM.
+           When config.mergeTaggedDuplicates is set, states tagged MergeTag with identical motion share one mirror state and sync value. */
         internal static void NetworkSync(AnimatorStateMachine parentSM, NetworkSyncConfig config)
         {
             var entriesList = new List<(AnimatorState state, Vector3 position)>();
@@ -62,9 +75,25 @@ namespace YGDR.Editor.Animation
             var controller = AnimatorBulkTransitionOps.GetController(parentSM);
             if (controller == null) return;
 
+            if (config.createBackup)
+            {
+                int sourceLayerIndex = Array.FindIndex(controller.layers, layer => layer.stateMachine == parentSM);
+                if (sourceLayerIndex >= 0) CreateBackupLayer(controller, sourceLayerIndex);
+            }
+
+            var groups = BuildSyncGroups(entries, config.mergeTaggedDuplicates);
+
+            // Default state's group must be group 0: sync params default to 0 before the first
+            // network value arrives, so the remote side would otherwise transition away from the
+            // mirrored default state into whichever group happens to sit at index 0.
+            int defaultGroupIndex = groups.FindIndex(group => group.Any(member => member.state == parentSM.defaultState));
+            if (defaultGroupIndex > 0)
+                (groups[0], groups[defaultGroupIndex]) = (groups[defaultGroupIndex], groups[0]);
+
             var stateValues = new Dictionary<AnimatorState, int>();
-            for (int i = 0; i < entries.Length; i++)
-                stateValues[entries[i].state] = i;
+            for (int g = 0; g < groups.Count; g++)
+                foreach (var member in groups[g])
+                    stateValues[member.state] = g;
 
             var removedTypes = BuildRemovedTypeSet(config);
             var priorBehaviors = entries.ToDictionary(
@@ -81,25 +110,28 @@ namespace YGDR.Editor.Animation
 
             // IsLocal parameter
             if (!controller.parameters.Any(parameter => parameter.name == "IsLocal"))
-                controller.AddParameter("IsLocal", AnimatorControllerParameterType.Bool);
+                AnimatorParameterOps.InsertParameterAtIndex(controller, controller.parameters.Length,
+                    "IsLocal", AnimatorControllerParameterType.Bool);
 
             // Sync parameter(s)
             string[] syncParams;
             if (!config.useBool)
             {
                 if (!controller.parameters.Any(parameter => parameter.name == config.paramName))
-                    controller.AddParameter(config.paramName, AnimatorControllerParameterType.Int);
+                    AnimatorParameterOps.InsertParameterAtIndex(controller, controller.parameters.Length,
+                        config.paramName, AnimatorControllerParameterType.Int);
                 syncParams = new[] { config.paramName };
             }
             else
             {
-                int bitCount = BitsRequired(entries.Length);
+                int bitCount = BitsRequired(groups.Count);
                 syncParams = new string[bitCount];
                 for (int i = 0; i < bitCount; i++)
                 {
                     syncParams[i] = $"{config.paramName}{i}";
                     if (!controller.parameters.Any(parameter => parameter.name == syncParams[i]))
-                        controller.AddParameter(syncParams[i], AnimatorControllerParameterType.Bool);
+                        AnimatorParameterOps.InsertParameterAtIndex(controller, controller.parameters.Length,
+                            syncParams[i], AnimatorControllerParameterType.Bool);
                 }
             }
 
@@ -175,33 +207,35 @@ namespace YGDR.Editor.Animation
                 targetSM = parentSM;
             }
 
-            // Create copies
+            // Create copies (one mirror state per sync group; merged groups share a single copy)
             var stateCopyMap = new Dictionary<AnimatorState, AnimatorState>();
-            foreach (var entry in entries)
+            var groupCopies = new AnimatorState[groups.Count];
+            for (int g = 0; g < groups.Count; g++)
             {
+                var repEntry = groups[g][0];
                 var copyPos = config.packIntoSubSM
-                    ? entry.position
-                    : entry.position + new Vector3(0f, verticalOffset, 0f);
+                    ? repEntry.position
+                    : repEntry.position + new Vector3(0f, verticalOffset, 0f);
 
-                var copy = targetSM.AddState($"{config.statesPrefix}{entry.state.name}", copyPos);
+                var copy = targetSM.AddState($"{config.statesPrefix}{repEntry.state.name}", copyPos);
                 Undo.RegisterCreatedObjectUndo(copy, "Network Sync");
-                copy.motion = entry.state.motion;
-                copy.speed = entry.state.speed;
-                copy.writeDefaultValues = entry.state.writeDefaultValues;
-                copy.mirror = entry.state.mirror;
-                copy.cycleOffset = entry.state.cycleOffset;
-                copy.iKOnFeet = entry.state.iKOnFeet;
-                copy.tag = entry.state.tag;
-                copy.speedParameterActive = entry.state.speedParameterActive;
-                copy.speedParameter = entry.state.speedParameter;
-                copy.mirrorParameterActive = entry.state.mirrorParameterActive;
-                copy.mirrorParameter = entry.state.mirrorParameter;
-                copy.cycleOffsetParameterActive = entry.state.cycleOffsetParameterActive;
-                copy.cycleOffsetParameter = entry.state.cycleOffsetParameter;
-                copy.timeParameterActive = entry.state.timeParameterActive;
-                copy.timeParameter = entry.state.timeParameter;
+                copy.motion = repEntry.state.motion;
+                copy.speed = repEntry.state.speed;
+                copy.writeDefaultValues = repEntry.state.writeDefaultValues;
+                copy.mirror = repEntry.state.mirror;
+                copy.cycleOffset = repEntry.state.cycleOffset;
+                copy.iKOnFeet = repEntry.state.iKOnFeet;
+                copy.tag = repEntry.state.tag;
+                copy.speedParameterActive = repEntry.state.speedParameterActive;
+                copy.speedParameter = repEntry.state.speedParameter;
+                copy.mirrorParameterActive = repEntry.state.mirrorParameterActive;
+                copy.mirrorParameter = repEntry.state.mirrorParameter;
+                copy.cycleOffsetParameterActive = repEntry.state.cycleOffsetParameterActive;
+                copy.cycleOffsetParameter = repEntry.state.cycleOffsetParameter;
+                copy.timeParameterActive = repEntry.state.timeParameterActive;
+                copy.timeParameter = repEntry.state.timeParameter;
 
-                if (priorBehaviors.TryGetValue(entry.state, out var behaviors))
+                if (priorBehaviors.TryGetValue(repEntry.state, out var behaviors))
                 {
                     foreach (var sourceBehaviour in behaviors)
                     {
@@ -210,26 +244,28 @@ namespace YGDR.Editor.Animation
                     }
                 }
 
-                stateCopyMap[entry.state] = copy;
+                groupCopies[g] = copy;
+                foreach (var member in groups[g])
+                    stateCopyMap[member.state] = copy;
             }
 
             // Transitions
             if (config.anyStateTransitions)
             {
-                foreach (var entry in entries)
+                for (int g = 0; g < groups.Count; g++)
                 {
-                    var copy = stateCopyMap[entry.state];
+                    var copy = groupCopies[g];
                     var transition = parentSM.AddAnyStateTransition(copy);
                     Undo.RegisterCreatedObjectUndo(transition, "Network Sync");
                     transition.hasExitTime = false;
                     transition.exitTime = 0f;
                     transition.duration = 0f;
                     transition.canTransitionToSelf = false;
-                    AddSyncConditions(transition, config.useBool, syncParams, stateValues[entry.state]);
+                    AddSyncConditions(transition, config.useBool, syncParams, g);
                     transition.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsLocal");
                 }
             }
-            else if (config.preserveTransitionProperties)
+            else if (config.preserveExitTime || config.preserveDuration || config.preserveOffset)
             {
                 var originalTransitionMap = new Dictionary<(AnimatorState, AnimatorState), AnimatorStateTransition>();
                 foreach (var (sourceState, transitions) in originalTransitions)
@@ -237,51 +273,62 @@ namespace YGDR.Editor.Animation
                         if (originalTransition.destinationState != null)
                             originalTransitionMap.TryAdd((sourceState, originalTransition.destinationState), originalTransition);
 
-                foreach (var sourceEntry in entries)
+                for (int sg = 0; sg < groups.Count; sg++)
                 {
-                    var sourceCopy = stateCopyMap[sourceEntry.state];
-                    foreach (var destinationEntry in entries)
+                    var sourceRepState = groups[sg][0].state;
+                    var sourceCopy = groupCopies[sg];
+                    for (int dg = 0; dg < groups.Count; dg++)
                     {
-                        if (sourceEntry.state == destinationEntry.state) continue;
-                        var destinationCopy = stateCopyMap[destinationEntry.state];
+                        if (sg == dg) continue;
+                        var destinationRepState = groups[dg][0].state;
+                        var destinationCopy = groupCopies[dg];
                         var transition = sourceCopy.AddTransition(destinationCopy);
                         Undo.RegisterCreatedObjectUndo(transition, "Network Sync");
-                        if (originalTransitionMap.TryGetValue((sourceEntry.state, destinationEntry.state), out var originalTransition))
+                        originalTransitionMap.TryGetValue((sourceRepState, destinationRepState), out var originalTransition);
+
+                        if (config.preserveExitTime && originalTransition != null)
                         {
-                            transition.hasExitTime         = originalTransition.hasExitTime;
-                            transition.exitTime            = originalTransition.exitTime;
-                            transition.hasFixedDuration    = originalTransition.hasFixedDuration;
-                            transition.duration            = originalTransition.duration;
-                            transition.offset              = originalTransition.offset;
-                            transition.interruptionSource  = originalTransition.interruptionSource;
-                            transition.orderedInterruption = originalTransition.orderedInterruption;
-                            transition.canTransitionToSelf = originalTransition.canTransitionToSelf;
+                            transition.hasExitTime = originalTransition.hasExitTime;
+                            transition.exitTime    = originalTransition.exitTime;
                         }
                         else
                         {
                             transition.hasExitTime = false;
                             transition.exitTime    = 0f;
-                            transition.duration    = 0f;
                         }
-                        AddSyncConditions(transition, config.useBool, syncParams, stateValues[destinationEntry.state]);
+
+                        if (config.preserveDuration && originalTransition != null)
+                        {
+                            transition.hasFixedDuration = originalTransition.hasFixedDuration;
+                            transition.duration         = originalTransition.duration;
+                        }
+                        else
+                        {
+                            transition.duration = 0f;
+                        }
+
+                        if (config.preserveOffset && originalTransition != null)
+                            transition.offset = originalTransition.offset;
+
+                        AddSyncConditions(transition, config.useBool, syncParams, dg);
                     }
                 }
             }
             else
             {
-                foreach (var sourceEntry in entries)
+                for (int sg = 0; sg < groups.Count; sg++)
                 {
-                    var sourceCopy = stateCopyMap[sourceEntry.state];
-                    foreach (var destinationEntry in entries)
+                    var sourceCopy = groupCopies[sg];
+                    for (int dg = 0; dg < groups.Count; dg++)
                     {
-                        if (sourceEntry.state == destinationEntry.state) continue;
-                        var destinationCopy = stateCopyMap[destinationEntry.state];
+                        if (sg == dg) continue;
+                        var destinationCopy = groupCopies[dg];
                         var transition = sourceCopy.AddTransition(destinationCopy);
                         Undo.RegisterCreatedObjectUndo(transition, "Network Sync");
                         transition.hasExitTime = false;
                         transition.exitTime = 0f;
                         transition.duration = 0f;
-                        AddSyncConditions(transition, config.useBool, syncParams, stateValues[destinationEntry.state]);
+                        AddSyncConditions(transition, config.useBool, syncParams, dg);
                     }
                 }
             }
@@ -311,7 +358,7 @@ namespace YGDR.Editor.Animation
             }
 
             // Add IsLocal=false to all transitions on copied states
-            foreach (var copy in stateCopyMap.Values)
+            foreach (var copy in groupCopies.Distinct())
             {
                 foreach (var transition in copy.transitions)
                     transition.AddCondition(AnimatorConditionMode.IfNot, 0f, "IsLocal");
@@ -361,7 +408,84 @@ namespace YGDR.Editor.Animation
             return removedTypes;
         }
 
+        /* Groups entries into sync groups. When mergeTaggedDuplicates is set, states tagged MergeTag that share
+           an identical motion are collapsed into one group (one sync value, one mirror state); all other states
+           (untagged, or tagged without a duplicate-motion match) form singleton groups. Group order is stable
+           relative to entries so results are deterministic across runs. */
+        static List<List<(AnimatorState state, Vector3 position)>> BuildSyncGroups(
+            (AnimatorState state, Vector3 position)[] entries, bool mergeTaggedDuplicates)
+        {
+            var groups = new List<List<(AnimatorState state, Vector3 position)>>();
+            if (!mergeTaggedDuplicates)
+            {
+                foreach (var entry in entries)
+                    groups.Add(new List<(AnimatorState, Vector3)> { entry });
+                return groups;
+            }
+
+            var motionGroups = new Dictionary<Motion, List<(AnimatorState state, Vector3 position)>>();
+            var grouped = new HashSet<AnimatorState>();
+            foreach (var entry in entries)
+            {
+                if (entry.state.tag != MergeTag || entry.state.motion == null) continue;
+                if (!motionGroups.TryGetValue(entry.state.motion, out var list))
+                    motionGroups[entry.state.motion] = list = new List<(AnimatorState, Vector3)>();
+                list.Add(entry);
+            }
+            foreach (var entry in entries)
+            {
+                if (entry.state.tag != MergeTag) continue;
+                if (motionGroups.TryGetValue(entry.state.motion, out var list) && list.Count >= 2)
+                {
+                    grouped.Add(entry.state);
+                }
+            }
+            var addedGroups = new HashSet<Motion>();
+            foreach (var entry in entries)
+            {
+                if (!grouped.Contains(entry.state)) continue;
+                if (addedGroups.Contains(entry.state.motion)) continue;
+                addedGroups.Add(entry.state.motion);
+                groups.Add(motionGroups[entry.state.motion]);
+            }
+            foreach (var entry in entries)
+            {
+                if (grouped.Contains(entry.state)) continue;
+                groups.Add(new List<(AnimatorState, Vector3)> { entry });
+            }
+            return groups;
+        }
+
         /* Recursively collects all states with their node positions from sm and all nested sub state machines. */
+        /* Deep-copies the layer at sourceLayerIndex into a new layer with weight 0, leaving the original untouched. */
+        static void CreateBackupLayer(AnimatorController controller, int sourceLayerIndex)
+        {
+            var sourceLayer = controller.layers[sourceLayerIndex];
+            Unsupported.CopyStateMachineDataToPasteboard(sourceLayer.stateMachine, controller, sourceLayerIndex);
+
+            string backupName = controller.MakeUniqueLayerName(sourceLayer.name + " (Backup)");
+            Undo.RecordObject(controller, "Create Backup Layer");
+            controller.AddLayer(backupName);
+            var layers = controller.layers;
+            var backupLayer = layers[layers.Length - 1];
+            Unsupported.PasteToStateMachineFromPasteboard(backupLayer.stateMachine, controller, layers.Length - 1, Vector3.zero);
+
+            // PasteToStateMachineFromPasteboard creates the pasted SM as a child of a wrapper SM — promote it to top-level
+            var wrapperSM = backupLayer.stateMachine;
+            var pastedSM = wrapperSM.stateMachines[0].stateMachine;
+            pastedSM.name = backupName;
+            wrapperSM.stateMachines = new ChildAnimatorStateMachine[0];
+            Undo.DestroyObjectImmediate(wrapperSM);
+            backupLayer.stateMachine = pastedSM;
+
+            PatchLayerCopyPaste.PasteLayerProperties(backupLayer, sourceLayer);
+            backupLayer.defaultWeight = 0f;
+
+            layers[layers.Length - 1] = backupLayer;
+            controller.layers = layers;
+            EditorUtility.SetDirty(controller);
+        }
+
         static void CollectStates(AnimatorStateMachine sm, List<(AnimatorState state, Vector3 position)> result)
         {
             foreach (var childState in sm.states)

@@ -79,18 +79,19 @@ namespace YGDR.Editor.Animation
             if (activeGO == null) return;
             if (ReferenceEquals(activeGO, _cachedSelectedGO)) return;
 
-            // VRCFury FullController directly on selected GO — no descriptor required
-            if (FindFirstFullControllerData(activeGO, out var fullControllerController, out var fullControllerParams, out var fullControllerMenu))
+            // Only the exact selected GameObject qualifies — a child merely sitting under an avatar
+            // or a FullController host must not touch the cache at all. Descriptor wins when the
+            // same GO carries both (avatar root with its own FullController).
+            var ownDescriptor = activeGO.GetComponent<VRCAvatarDescriptor>();
+            if (ownDescriptor != null)
             {
-                RebuildFromVrcFury(activeGO, fullControllerController, fullControllerParams, fullControllerMenu);
+                Rebuild(ownDescriptor, activeGO);
+                EditorApplication.delayCall += RepaintAnimatorWindow;
                 return;
             }
 
-            var avatarDescriptor = activeGO.GetComponentInParent<VRCAvatarDescriptor>(true);
-            if (avatarDescriptor == null) return;
-
-            Rebuild(avatarDescriptor, activeGO);
-            EditorApplication.delayCall += RepaintAnimatorWindow;
+            if (FindFirstFullControllerData(activeGO, out var fullControllerController, out var fullControllerParams, out var fullControllerMenu))
+                RebuildFromVrcFury(activeGO, fullControllerController, fullControllerParams, fullControllerMenu);
         }
 
         static void OnUndoRedo()
@@ -156,18 +157,27 @@ namespace YGDR.Editor.Animation
                 if (expressionParameters?.parameters == null)
                 {
                     // Descriptor has no expression params — keep existing sync data so params from
-                    // the previous qualifying avatar remain visible in the animator window.
+                    // the previous qualifying avatar remain visible in the animator window. Still
+                    // push the controller below so the graph updates regardless.
                     _cachedSelectedGO = selectedGO;
-                    return;
+                }
+                else
+                {
+                    ClearCache();
+                    _cachedAvatarRoot = avatarDescriptor.gameObject;
+                    _cachedSelectedGO = selectedGO;
+#if VRC_SDK_VRCSDK3
+                    PatchParameterRow.InvalidateVrcComponentCache();
+#endif
+                    BuildSyncMaps(expressionParameters.parameters);
                 }
 
-                ClearCache();
-                _cachedAvatarRoot = avatarDescriptor.gameObject;
-                _cachedSelectedGO = selectedGO;
-#if VRC_SDK_VRCSDK3
-                PatchParameterRow.InvalidateVrcComponentCache();
-#endif
-                BuildSyncMaps(expressionParameters.parameters);
+                // Force-pushing the controller on every rebuild (like RebuildFromVrcFury does) keeps the
+                // native window's graph in an eager-sync mode; without this, clip changes made through our
+                // dropdown only actually commit to state.motion while the graph tab is visible.
+                var animator = avatarDescriptor.GetComponent<Animator>();
+                if (animator != null && animator.runtimeAnimatorController is AnimatorController animatorController)
+                    OpenControllerInAnimatorWindow(animatorController);
             }
             catch (Exception e)
             {
@@ -239,11 +249,16 @@ namespace YGDR.Editor.Animation
 
         static void OpenControllerInAnimatorWindow(AnimatorController controller)
         {
-            var animatorControllerProperty = AccessTools.Property(AnimatorEditorInit.AnimatorControllerToolType, "animatorController");
             var windows = Resources.FindObjectsOfTypeAll(AnimatorEditorInit.AnimatorControllerToolType);
-            if (windows.Length > 0 && animatorControllerProperty != null)
+            if (windows.Length > 0 && WindowPatchReflection.AnimatorControllerProperty != null)
             {
-                animatorControllerProperty.SetValue(windows[0], controller);
+                // ResetBreadCrumbs() (called by the animatorController setter below) only resets
+                // selectedLayerIndex to 0 if it was already -1 — otherwise it silently keeps the
+                // previous controller's layer index, leaving graph/zoom state stale until the user
+                // clicks a node/layer manually. Forcing it to -1 first makes the setter's own reset
+                // logic run against a valid trigger every time.
+                WindowPatchReflection.SelectedLayerIndexProperty?.SetValue(windows[0], -1);
+                WindowPatchReflection.AnimatorControllerProperty.SetValue(windows[0], controller);
                 (windows[0] as EditorWindow)?.Repaint();
             }
             else

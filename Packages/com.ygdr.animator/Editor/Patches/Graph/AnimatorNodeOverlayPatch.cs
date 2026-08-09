@@ -119,10 +119,6 @@ namespace YGDR.Editor.Animation
                     DrawRenameField(state, stateRect);
                 if (isRenamingMotion)
                     DrawMotionRenameField(state, stateRect);
-                if (Event.current?.alt == true)
-                    PatchDrawEdge.DrawExpandedBox();
-                else
-                    PatchDrawEdge.ClearExpandedBox();
             }
             catch (Exception e) { Debug.LogError($"[YGDR] State node overlay error: {e}"); }
         }

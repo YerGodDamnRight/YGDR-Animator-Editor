@@ -147,6 +147,16 @@ namespace YGDR.Editor.Animation
             });
         }
 
+        /* Called by patches (e.g. context menu paste) that mutate state behaviours outside this window's own UI flow. */
+        internal static void RefreshOpenWindowsStatesTab()
+        {
+            foreach (var window in Resources.FindObjectsOfTypeAll<AnimationEditorWindow>())
+            {
+                window.RefreshStatesTab();
+                window.Repaint();
+            }
+        }
+
         /* Mirrors the old per-frame IMGUI redraw. */
         void RefreshStatesTab()
         {
@@ -709,10 +719,14 @@ namespace YGDR.Editor.Animation
             string undoName = vertical ? "Align States Vertical" : "Align States Horizontal";
             RegisterAllSMUndos(undoName);
 
+            var anchor2D = anchorPos.Value;
+            Vector2 AlignedPos(AnimatorState _, Vector2 pos) =>
+                vertical ? new Vector2(anchor2D.x, pos.y) : new Vector2(pos.x, anchor2D.y);
+
             var toAlign = new HashSet<AnimatorState>(_selectedStates.Where(state => state != anchor));
             foreach (var layer in _controller.layers)
             {
-                ApplyAlignment(layer.stateMachine, toAlign, vertical, anchorPos.Value);
+                ApplyNewPositions(layer.stateMachine, toAlign, AlignedPos);
                 if (toAlign.Count == 0) break;
             }
 
@@ -752,7 +766,7 @@ namespace YGDR.Editor.Animation
             var remaining = new HashSet<AnimatorState>(newPositions.Keys);
             foreach (var layer in _controller.layers)
             {
-                ApplyDistribution(layer.stateMachine, remaining, newPositions);
+                ApplyNewPositions(layer.stateMachine, remaining, (state, _) => newPositions[state]);
                 if (remaining.Count == 0) break;
             }
 
@@ -773,38 +787,15 @@ namespace YGDR.Editor.Animation
                 RegisterSMUndosRecursive(childStateMachine.stateMachine, name);
         }
 
-        /* Moves each state in targets found within sm (or its descendants) to match anchor's X (vertical) or Y (horizontal) coordinate. Removes found states from targets to avoid double-visiting. */
-        static void ApplyAlignment(AnimatorStateMachine sm, HashSet<AnimatorState> targets, bool vertical, Vector2 anchor)
+        /* Moves each state in targets found within sm (or its descendants) to the position computeNewPos returns given its current position. Removes found states from targets to avoid double-visiting. */
+        static void ApplyNewPositions(AnimatorStateMachine sm, HashSet<AnimatorState> targets, Func<AnimatorState, Vector2, Vector2> computeNewPos)
         {
             var states = sm.states;
             bool changed = false;
             for (int i = 0; i < states.Length; i++)
             {
                 if (!targets.Remove(states[i].state)) continue;
-                var pos = (Vector2)states[i].position;
-                states[i].position = vertical
-                    ? new Vector3(anchor.x, pos.y, 0f)
-                    : new Vector3(pos.x, anchor.y, 0f);
-                changed = true;
-            }
-            if (changed) { sm.states = states; EditorUtility.SetDirty(sm); }
-            if (targets.Count == 0) return;
-            foreach (var childStateMachine in sm.stateMachines)
-            {
-                ApplyAlignment(childStateMachine.stateMachine, targets, vertical, anchor);
-                if (targets.Count == 0) return;
-            }
-        }
-
-        /* Writes the pre-computed positions from newPositions to each matching state in sm and its descendants, removing found states from targets. */
-        static void ApplyDistribution(AnimatorStateMachine sm, HashSet<AnimatorState> targets, Dictionary<AnimatorState, Vector2> newPositions)
-        {
-            var states = sm.states;
-            bool changed = false;
-            for (int i = 0; i < states.Length; i++)
-            {
-                if (!targets.Remove(states[i].state)) continue;
-                var newPos = newPositions[states[i].state];
+                var newPos = computeNewPos(states[i].state, states[i].position);
                 states[i].position = new Vector3(newPos.x, newPos.y, 0f);
                 changed = true;
             }
@@ -812,7 +803,7 @@ namespace YGDR.Editor.Animation
             if (targets.Count == 0) return;
             foreach (var childStateMachine in sm.stateMachines)
             {
-                ApplyDistribution(childStateMachine.stateMachine, targets, newPositions);
+                ApplyNewPositions(childStateMachine.stateMachine, targets, computeNewPos);
                 if (targets.Count == 0) return;
             }
         }

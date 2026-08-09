@@ -103,9 +103,26 @@ namespace YGDR.Editor.Animation
             int count = Instances<T>(state).Count;
             var instance = state.AddStateMachineBehaviour<T>();
             instance.name = $"{typeLabel} {count + 1}";
+            EnsureUniqueName(state, instance);
             Undo.RegisterCreatedObjectUndo(instance, $"Add {typeLabel}");
             EditorUtility.SetDirty(state);
             return instance;
+        }
+
+        /* Renames newBehavior to "{name} (N)" if another behaviour of the same type on state already has that name. */
+        internal static void EnsureUniqueName(AnimatorState state, StateMachineBehaviour newBehavior)
+        {
+            var taken = new HashSet<string>(state.behaviours
+                .Where(b => b != newBehavior && b.GetType() == newBehavior.GetType())
+                .Select(b => b.name));
+            if (!taken.Contains(newBehavior.name)) return;
+
+            var baseName = newBehavior.name;
+            int suffix = 1;
+            string candidate;
+            do candidate = $"{baseName} ({++suffix})";
+            while (taken.Contains(candidate));
+            newBehavior.name = candidate;
         }
 
         /* Destroys the instance named `name` on every state in statesWithName. */
@@ -370,6 +387,46 @@ namespace YGDR.Editor.Animation
             field.AddToClassList("u-mr-4");
             row.Add(field);
             return row;
+        }
+
+        /* Destroys every instance of T (all names) on every given state. Caller still clears its own
+           foldout-expanded dictionaries afterward since those are section-specific. */
+        static void RemoveAllInstancesOfType<T>(AnimatorState[] states, string undoName) where T : StateMachineBehaviour
+        {
+            foreach (var state in states)
+            {
+                var instances = Instances<T>(state);
+                if (instances.Count == 0) continue;
+                Undo.RegisterCompleteObjectUndo(state, undoName);
+                state.behaviours = state.behaviours.Where(b => !(b is T)).ToArray();
+                foreach (var instance in instances) Undo.DestroyObjectImmediate(instance);
+                EditorUtility.SetDirty(state);
+            }
+        }
+
+        /* Shifts array[oldIndex] to newIndex, preserving the order of everything between. */
+        static void MoveArrayElement<T>(T[] array, int oldIndex, int newIndex)
+        {
+            T item = array[oldIndex];
+            if (oldIndex < newIndex)
+                Array.Copy(array, oldIndex + 1, array, oldIndex, newIndex - oldIndex);
+            else
+                Array.Copy(array, newIndex, array, newIndex + 1, oldIndex - newIndex);
+            array[newIndex] = item;
+        }
+
+        /* Shared by every reorderable ListView in this UI (Driver params, Audio clips, Menu controls). moveData
+           mutates the real data synchronously (plain C# — safe) so any rebind before the deferred rebuild runs
+           still shows the dropped order. rebuild (which destroys/recreates the ListView) must be deferred via
+           delayCall — doing that inside ListViewDraggerAnimated.OnDrop, which still touches its own element after
+           this returns, throws a NullReferenceException in DragAndDropUtility once the dragger resumes. */
+        static void WireListViewReorder(ListView listView, Action<int, int> moveData, Action rebuild)
+        {
+            listView.itemIndexChanged += (oldIndex, newIndex) =>
+            {
+                moveData(oldIndex, newIndex);
+                EditorApplication.delayCall += () => rebuild();
+            };
         }
     }
 }

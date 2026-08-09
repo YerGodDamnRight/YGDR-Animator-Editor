@@ -938,6 +938,7 @@ namespace YGDR.Editor.Animation
                 if (state.mirrorParameterActive)      paramNames.Add(state.mirrorParameter);
                 if (state.cycleOffsetParameterActive) paramNames.Add(state.cycleOffsetParameter);
                 CollectMotionParamNames(state.motion, paramNames);
+                CollectBehaviourParamNames(state.behaviours, paramNames);
             }
             foreach (var childSM in sm.stateMachines)
                 CollectSMParams(childSM.stateMachine, paramNames);
@@ -962,6 +963,13 @@ namespace YGDR.Editor.Animation
                     CollectMotionParamNames(child.motion, paramNames);
                 }
             }
+        }
+
+        static void CollectBehaviourParamNames(StateMachineBehaviour[] behaviours, HashSet<string> paramNames)
+        {
+#if VRC_SDK_VRCSDK3
+            AnimatorParameterOps.CollectBehaviourNames(behaviours, paramNames);
+#endif
         }
 
         static void CopyClipsInSM(AnimatorStateMachine sm, string destDir, Dictionary<string, AnimationClip> clipCache)
@@ -1074,6 +1082,7 @@ namespace YGDR.Editor.Animation
 
             CreateLocalClipsForNewLayers(targetController, newLayers);
             SyncClipAAPParams(targetController, _templateController, newLayers);
+            SyncBehaviourParams(targetController, _templateController, newLayers);
 
             var templateParameters = _templateController.parameters;
             for (int i = 0; i < templateParameters.Length && i < _renamedParameterNames.Length; i++)
@@ -1085,19 +1094,19 @@ namespace YGDR.Editor.Animation
                 foreach (var newLayer in newLayers)
                     UpdateParamRefsInSM(newLayer.stateMachine, oldName, newName);
 
-                bool wasNewlyAdded = !existingParamNames.Contains(oldName)
-                    && targetController.parameters.Any(parameter => parameter.name == oldName);
+                Undo.RecordObject(targetController, "Rename Template Parameter");
 
-                if (wasNewlyAdded)
+                bool oldParamIsImportOnly = !existingParamNames.Contains(oldName);
+                if (oldParamIsImportOnly)
                 {
-                    Undo.RecordObject(targetController, "Rename Template Parameter");
                     var paramToRemove = System.Array.Find(targetController.parameters,
                         parameter => parameter.name == oldName);
-                    targetController.RemoveParameter(paramToRemove);
-
-                    if (!targetController.parameters.Any(parameter => parameter.name == newName))
-                        targetController.AddParameter(newName, templateParameters[i].type);
+                    if (paramToRemove != null)
+                        targetController.RemoveParameter(paramToRemove);
                 }
+
+                if (!targetController.parameters.Any(parameter => parameter.name == newName))
+                    targetController.AddParameter(newName, templateParameters[i].type);
             }
 
             Undo.CollapseUndoOperations(undoGroup);
@@ -1239,6 +1248,49 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        static void SyncBehaviourParams(AnimatorController targetController,
+            AnimatorController templateController, AnimatorControllerLayer[] newLayers)
+        {
+            var existingParamNames = new HashSet<string>(targetController.parameters.Select(parameter => parameter.name));
+            var templateParamMap = templateController.parameters.ToDictionary(parameter => parameter.name, parameter => parameter);
+
+            foreach (var layer in newLayers)
+                SyncBehaviourParamsInSM(layer.stateMachine, targetController, templateParamMap, existingParamNames);
+        }
+
+        static void SyncBehaviourParamsInSM(AnimatorStateMachine sm, AnimatorController targetController,
+            Dictionary<string, AnimatorControllerParameter> templateParamMap, HashSet<string> existingParamNames)
+        {
+            AddMissingBehaviourParams(sm.behaviours, targetController, templateParamMap, existingParamNames);
+            foreach (var childState in sm.states)
+                AddMissingBehaviourParams(childState.state.behaviours, targetController, templateParamMap, existingParamNames);
+            foreach (var childStateMachine in sm.stateMachines)
+                SyncBehaviourParamsInSM(childStateMachine.stateMachine, targetController, templateParamMap, existingParamNames);
+        }
+
+        static void AddMissingBehaviourParams(StateMachineBehaviour[] behaviours, AnimatorController targetController,
+            Dictionary<string, AnimatorControllerParameter> templateParamMap, HashSet<string> existingParamNames)
+        {
+#if VRC_SDK_VRCSDK3
+            var names = new HashSet<string>();
+            AnimatorParameterOps.CollectBehaviourNames(behaviours, names);
+
+            bool recorded = false;
+            foreach (var paramName in names)
+            {
+                if (existingParamNames.Contains(paramName)) continue;
+
+                var paramType = templateParamMap.TryGetValue(paramName, out var templateParam)
+                    ? templateParam.type
+                    : AnimatorControllerParameterType.Float;
+
+                if (!recorded) { Undo.RecordObject(targetController, "Add Template Behaviour Parameters"); recorded = true; }
+                targetController.AddParameter(paramName, paramType);
+                existingParamNames.Add(paramName);
+            }
+#endif
+        }
+
         static void UpdateParamRefsInSM(AnimatorStateMachine sm, string oldName, string newName)
         {
             foreach (var anyStateTransition in sm.anyStateTransitions)
@@ -1269,10 +1321,19 @@ namespace YGDR.Editor.Animation
                     UpdateBlendTreeParams(blendTree, oldName, newName);
                 else if (state.motion is AnimationClip stateClip)
                     UpdateClipAAPBinding(stateClip, oldName, newName);
+
+                UpdateBehaviourParamRefs(state.behaviours, oldName, newName);
             }
 
             foreach (var childStateMachine in sm.stateMachines)
                 UpdateParamRefsInSM(childStateMachine.stateMachine, oldName, newName);
+        }
+
+        static void UpdateBehaviourParamRefs(StateMachineBehaviour[] behaviours, string oldName, string newName)
+        {
+#if VRC_SDK_VRCSDK3
+            AnimatorParameterOps.RemapBehaviours(behaviours, oldName, newName);
+#endif
         }
 
         static void UpdateTransitionConditions(AnimatorStateTransition transition, string oldName, string newName)

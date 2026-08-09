@@ -40,6 +40,8 @@ namespace YGDR.Editor.Animation
         static Texture2D DuplicateParamIconTex => _duplicateParamIconTex ??= EditorGUIUtility.IconContent("d_console.erroricon").image as Texture2D;
         static Texture2D _dropdownArrowIconTex;
         static Texture2D DropdownArrowIconTex => _dropdownArrowIconTex ??= EditorGUIUtility.IconContent("d_profilertimelinedigdownarrow@2x").image as Texture2D;
+        static Texture2D _dragHandleIconTex;
+        static Texture2D DragHandleIconTex => _dragHandleIconTex ??= EditorGUIUtility.IconContent("d_align_vertically_center_active").image as Texture2D;
 
         /* ── Transitions tab (native UI Toolkit shell + conditions grid) ── */
 
@@ -225,26 +227,31 @@ namespace YGDR.Editor.Animation
         {
             _transitionsTagsContainer.Clear();
             foreach (var transition in _selectedTransitions)
-                _transitionsTagsContainer.Add(BuildTransitionTagChip(GetTransitionLabel(transition), () =>
+                _transitionsTagsContainer.Add(BuildTransitionTagChip(GetTransitionLabel(transition), onRemove: () =>
                 {
                     Selection.objects = _selectedTransitions.Where(x => x != transition).Cast<UnityEngine.Object>()
                         .Concat(_selectedEntryTransitions.Cast<UnityEngine.Object>()).ToArray();
-                }));
+                }, onDelete: () => DeleteTransitionFromChip(transition)));
             foreach (var transition in _selectedEntryTransitions)
-                _transitionsTagsContainer.Add(BuildTransitionTagChip(GetEntryTransitionLabel(transition), () =>
+                _transitionsTagsContainer.Add(BuildTransitionTagChip(GetEntryTransitionLabel(transition), onRemove: () =>
                 {
                     Selection.objects = _selectedTransitions.Cast<UnityEngine.Object>()
                         .Concat(_selectedEntryTransitions.Where(x => x != transition).Cast<UnityEngine.Object>()).ToArray();
-                }));
+                }, onDelete: () => DeleteEntryTransitionFromChip(transition)));
         }
 
-        static VisualElement BuildTransitionTagChip(string label, Action onRemove)
+        static VisualElement BuildTransitionTagChip(string label, Action onRemove, Action onDelete)
         {
             var chip = new VisualElement();
             chip.AddToClassList("ygdr-transition-tag-chip");
             chip.style.backgroundColor = SecondaryButtonHoverColor;
 
-            var removeButton = new Button(onRemove) { text = "✕" };
+            var deleteButton = new Button(onDelete) { text = "-", tooltip = L10n.Get("transitions.tag_delete_tooltip") };
+            deleteButton.AddToClassList("ygdr-transition-tag-remove");
+            deleteButton.AddToClassList("ygdr-transition-tag-delete");
+            chip.Add(deleteButton);
+
+            var removeButton = new Button(onRemove) { text = "✕", tooltip = L10n.Get("transitions.tag_deselect_tooltip") };
             removeButton.AddToClassList("ygdr-transition-tag-remove");
             chip.Add(removeButton);
 
@@ -253,6 +260,35 @@ namespace YGDR.Editor.Animation
             chip.Add(labelElement);
 
             return chip;
+        }
+
+        /* Deletes the transition asset entirely (not just from selection) — mirrors DeleteTransition's use in MergeTransitions. */
+        void DeleteTransitionFromChip(AnimatorStateTransition transition)
+        {
+            if (_controller == null) return;
+            var ownerStateMachine = FindOwnerSM(_controller, transition);
+            if (ownerStateMachine == null) return;
+            Undo.RegisterCompleteObjectUndo(ownerStateMachine, "Delete Transition");
+            DeleteTransition(ownerStateMachine, transition);
+            Selection.objects = _selectedTransitions.Where(x => x != transition).Cast<UnityEngine.Object>()
+                .Concat(_selectedEntryTransitions.Cast<UnityEngine.Object>()).ToArray();
+            EditorUtility.SetDirty(_controller);
+            InvalidateConditionCache();
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
+        }
+
+        void DeleteEntryTransitionFromChip(AnimatorTransition transition)
+        {
+            if (_controller == null) return;
+            var ownerStateMachine = FindEntryOwnerSM(_controller, transition);
+            if (ownerStateMachine == null) return;
+            Undo.RegisterCompleteObjectUndo(ownerStateMachine, "Delete Transition");
+            ownerStateMachine.RemoveEntryTransition(transition);
+            Selection.objects = _selectedTransitions.Cast<UnityEngine.Object>()
+                .Concat(_selectedEntryTransitions.Where(x => x != transition).Cast<UnityEngine.Object>()).ToArray();
+            EditorUtility.SetDirty(_controller);
+            InvalidateConditionCache();
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
         }
 
         /* ── Property rows (native) ──────────────────────────────────────── */
@@ -401,21 +437,26 @@ namespace YGDR.Editor.Animation
             if (controller == null) return null;
             foreach (var layer in controller.layers)
             {
-                var name = FindSrcInSM(layer.stateMachine, transition);
+                var name = WalkSM(layer.stateMachine, sm =>
+                {
+                    if (sm.anyStateTransitions.Contains(transition)) return "Any State";
+                    foreach (var childState in sm.states)
+                        if (childState.state.transitions.Contains(transition)) return childState.state.name;
+                    return null;
+                });
                 if (name != null) return name;
             }
             return null;
         }
 
-        /* Recursively searches sm and its sub-SMs for the state or anyState that owns the transition, returning its name. */
-        static string FindSrcInSM(AnimatorStateMachine sm, AnimatorStateTransition transition)
+        /* Recursively searches sm and its sub-SMs, returning the first non-null result of tryMatch (checked at each level, depth-first). */
+        static T WalkSM<T>(AnimatorStateMachine sm, Func<AnimatorStateMachine, T> tryMatch) where T : class
         {
-            if (sm.anyStateTransitions.Contains(transition)) return "Any State";
-            foreach (var childState in sm.states)
-                if (childState.state.transitions.Contains(transition)) return childState.state.name;
+            var result = tryMatch(sm);
+            if (result != null) return result;
             foreach (var childSM in sm.stateMachines)
             {
-                var found = FindSrcInSM(childSM.stateMachine, transition);
+                var found = WalkSM(childSM.stateMachine, tryMatch);
                 if (found != null) return found;
             }
             return null;
@@ -428,6 +469,8 @@ namespace YGDR.Editor.Animation
         UnityEngine.Object[] _cachedForOwners;
         List<CondEntry> _cachedEntries;
         HashSet<(UnityEngine.Object, string)> _cachedDuplicateParameters;
+        int _condDragIndex = -1;
+        VisualElement _condDragIndicator;
         string[] _cachedParameterNames;
         HashSet<string> _cachedParamNameSet;
         Dictionary<string, string> _danglingParamResolution;
@@ -568,19 +611,11 @@ namespace YGDR.Editor.Animation
 
         /* +/- buttons: same bg as the section body (blend in) with a hover tint lighter than SecondaryColor. */
         static Color SecondaryButtonHoverColor => new Color(SharedWindowStyles.SecondaryColor.r + 0.14f, SharedWindowStyles.SecondaryColor.g + 0.14f, SharedWindowStyles.SecondaryColor.b + 0.14f, 1f);
-        static void StyleSecondaryButton(VisualElement button)
-        {
-            button.style.backgroundColor = SharedWindowStyles.SecondaryColor;
-            button.RegisterCallback<MouseEnterEvent>(_ => button.style.backgroundColor = SecondaryButtonHoverColor);
-            button.RegisterCallback<MouseLeaveEvent>(_ => button.style.backgroundColor = SharedWindowStyles.SecondaryColor);
-        }
+        static void StyleSecondaryButton(VisualElement button) =>
+            StyleHoverTint(button, () => false, () => SecondaryButtonHoverColor, () => SharedWindowStyles.SecondaryColor);
 
-        static void StyleAccentButton(VisualElement button)
-        {
-            button.style.backgroundColor = SharedWindowStyles.AccentColor;
-            button.RegisterCallback<MouseEnterEvent>(_ => button.style.backgroundColor = AccentHoverColor);
-            button.RegisterCallback<MouseLeaveEvent>(_ => button.style.backgroundColor = SharedWindowStyles.AccentColor);
-        }
+        static void StyleAccentButton(VisualElement button) =>
+            StyleHoverTint(button, () => false, () => AccentHoverColor, () => SharedWindowStyles.AccentColor);
 
         void RefreshConditionsHeaderState()
         {
@@ -629,10 +664,16 @@ namespace YGDR.Editor.Animation
                 _danglingParamResolution = BuildDanglingResolution();
                 _cachedParameterNames = _controller != null ? _controller.parameters.Select(parameter => parameter.name).ToArray() : Array.Empty<string>();
                 _cachedParamNameSet   = new HashSet<string>(_cachedParameterNames);
+
                 _conditionCacheDirty = false;
             }
             var entries = _cachedEntries;
             var duplicateParameters = _cachedDuplicateParameters;
+
+            /* Reorder only makes unambiguous sense within one owner's conditions — with multiple owners
+               flattened together in individual mode, a cross-owner drag has no coherent meaning. Same
+               condition _condAddRow already uses to hide when editing wouldn't apply uniformly. */
+            bool reorderEnabled = _showSharedConditions || allOwners.Length <= 1;
 
             _condRowsContainer.Clear();
             if (entries.Count == 0)
@@ -650,7 +691,7 @@ namespace YGDR.Editor.Animation
                     if (newGroup) groupIndex++;
                     if (entries[i].owner == null) continue;
                     bool altRow = _showSharedConditions ? i % 2 == 1 : groupIndex % 2 == 1;
-                    var rowElement = BuildConditionRow(entries[i], duplicateParameters, altRow);
+                    var rowElement = BuildConditionRow(entries[i], duplicateParameters, altRow, reorderEnabled ? i : -1);
                     if (newGroup) rowElement.AddToClassList("ygdr-cond-row-group-gap");
                     _condRowsContainer.Add(rowElement);
                 }
@@ -672,22 +713,107 @@ namespace YGDR.Editor.Animation
         {
             var filterButton = new Button(() => SelectMatchingConditionTransitions(condition));
             filterButton.AddToClassList("ygdr-cond-filter-btn");
+            filterButton.tabIndex = -1;
             filterButton.style.backgroundImage = new StyleBackground(FilterIconTex);
             filterButton.tooltip = L10n.Get("transitions.tooltip.select_matching");
             return filterButton;
         }
 
-        /* Builds one condition row: parameter dropdown, mode/value controls, and a remove button. */
-        VisualElement BuildConditionRow(CondEntry entry, HashSet<(UnityEngine.Object, string)> duplicateParameters, bool altRow)
+        /* Manual pointer-drag handle — ListView's built-in Animated reorder fought our interactive row
+           content (buttons/dropdowns inside draggable rows caused red flicker + recycled/blank rows).
+           Small self-contained drag instead: capture on the grip only, insertion-line indicator, drop
+           reads the target row's stored displayIndex (row.userData) and hands off to MoveCondition. */
+        VisualElement BuildConditionDragHandle(VisualElement row, int displayIndex)
         {
+            var grip = new Image { image = DragHandleIconTex };
+            grip.AddToClassList("ygdr-cond-drag-handle");
+
+            grip.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0) return;
+                _condDragIndex = displayIndex;
+                row.AddToClassList("ygdr-cond-row-dragging");
+                grip.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            grip.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (_condDragIndex < 0 || !grip.HasPointerCapture(evt.pointerId)) return;
+                ShowConditionDragIndicator(evt.position);
+                evt.StopPropagation();
+            });
+            grip.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (_condDragIndex < 0) return;
+                grip.ReleasePointer(evt.pointerId);
+                row.RemoveFromClassList("ygdr-cond-row-dragging");
+                int dropIndex = FindConditionDropIndex(evt.position);
+                HideConditionDragIndicator();
+                int fromIndex = _condDragIndex;
+                _condDragIndex = -1;
+                if (dropIndex >= 0 && dropIndex != fromIndex)
+                {
+                    MoveCondition(fromIndex, dropIndex);
+                    RebuildConditionRows();
+                }
+                evt.StopPropagation();
+            });
+            return grip;
+        }
+
+        /* Row whose vertical midpoint the pointer is above, or the last row if pointer is below all of them.
+           Shared by drop-index lookup (on release) and the drag indicator (on every move). */
+        VisualElement FindConditionRowUnderPointer(Vector2 pointerPosition)
+        {
+            float localY = _condRowsContainer.WorldToLocal(pointerPosition).y;
+            VisualElement last = null;
+            foreach (var child in _condRowsContainer.Children())
+            {
+                if (!(child.userData is int)) continue;
+                if (localY < child.layout.y + child.layout.height / 2f) return child;
+                last = child;
+            }
+            return last;
+        }
+
+        int FindConditionDropIndex(Vector2 pointerPosition)
+        {
+            var row = FindConditionRowUnderPointer(pointerPosition);
+            return row != null ? (int)row.userData : -1;
+        }
+
+        void ShowConditionDragIndicator(Vector2 pointerPosition)
+        {
+            _condDragIndicator ??= new VisualElement { pickingMode = PickingMode.Ignore };
+            _condDragIndicator.AddToClassList("ygdr-cond-drag-indicator");
+            if (_condDragIndicator.parent != _condRowsContainer) _condRowsContainer.Add(_condDragIndicator);
+
+            float localY = _condRowsContainer.WorldToLocal(pointerPosition).y;
+            var row = FindConditionRowUnderPointer(pointerPosition);
+            float indicatorY = row == null ? 0f
+                : localY < row.layout.y + row.layout.height / 2f ? row.layout.y
+                : row.layout.y + row.layout.height;
+            _condDragIndicator.style.top = indicatorY;
+        }
+
+        void HideConditionDragIndicator() => _condDragIndicator?.RemoveFromHierarchy();
+
+        /* Builds one condition row: optional drag handle (reorderIndex >= 0), parameter dropdown, mode/value controls, remove button. */
+        VisualElement BuildConditionRow(CondEntry entry, HashSet<(UnityEngine.Object, string)> duplicateParameters, bool altRow, int reorderIndex)
+        {
+            var row = new VisualElement();
+            if (reorderIndex >= 0)
+            {
+                row.userData = reorderIndex;
+                row.Add(BuildConditionDragHandle(row, reorderIndex));
+            }
+
             var ownerConditions = GetConditions(entry.owner);
             var condition = entry.index < ownerConditions.Length ? ownerConditions[entry.index] : entry.condition;
             if (_danglingParamResolution != null && _danglingParamResolution.TryGetValue(condition.parameter, out string resolvedParam))
                 condition = new AnimatorCondition { parameter = resolvedParam, mode = condition.mode, threshold = condition.threshold };
 
-            var row = new VisualElement();
             row.AddToClassList("ygdr-cond-row");
-            row.EnableInClassList("ygdr-cond-row-alt", altRow);
 
             /* Accent strip only in "All Conditions" mode — shared mode's altRow is per-row, not per-group. */
             bool groupAccent = !_showSharedConditions && altRow;
@@ -748,6 +874,7 @@ namespace YGDR.Editor.Animation
                 });
             });
             paramButton.AddToClassList("ygdr-cond-param-dropdown");
+            paramButton.tabIndex = -1;
             StyleAccentButton(paramButton);
             paramCell.Add(paramButton);
             SetTruncatedDropdownLabel(paramButton, entry.mixedName ? "—" : condition.parameter, 74f);
@@ -783,6 +910,7 @@ namespace YGDR.Editor.Animation
                 { text = entry.mixedMode ? "—" : (isTrue ? L10n.Get("transitions.bool_true") : L10n.Get("transitions.bool_false")) };
                 boolButton.AddToClassList("ygdr-cond-bool-btn");
                 boolButton.AddToClassList(isTrue ? "ygdr-cond-bool-btn-true" : "ygdr-cond-bool-btn-false");
+                boolButton.tabIndex = -1;
                 StyleAccentButton(boolButton);
                 row.Add(boolButton);
             }
@@ -803,6 +931,7 @@ namespace YGDR.Editor.Animation
                 })
                 { text = entry.mixedMode ? "—" : ModeLabel(condition.mode) };
                 modeButton.AddToClassList("ygdr-cond-mode-dropdown");
+                modeButton.tabIndex = -1;
                 StyleAccentButton(modeButton);
                 modeButton.Add(BuildDropdownArrow());
                 row.Add(modeButton);
@@ -811,22 +940,34 @@ namespace YGDR.Editor.Animation
                 {
                     var intField = new IntegerField { value = (int)condition.threshold, showMixedValue = entry.mixedThreshold };
                     intField.AddToClassList("ygdr-cond-value-field");
-                    intField.RegisterValueChangedCallback(evt =>
-                        ReplaceConditionOnTargets(capturedEntry, new AnimatorCondition { parameter = capturedCondition.parameter, mode = capturedCondition.mode, threshold = evt.newValue }, preserveParameter: true, preserveMode: true));
+                    /* ValueChangedCallback only fires when the value differs from the field's own starting value —
+                       in shared mode with mixed thresholds that misses the case where the typed value matches that
+                       starting value but other owners still differ. Sync on blur instead, using the current value. */
+                    intField.RegisterCallback<FocusOutEvent>(_ =>
+                    {
+                        intField.showMixedValue = false;
+                        ReplaceConditionOnTargets(capturedEntry, new AnimatorCondition { parameter = capturedCondition.parameter, mode = capturedCondition.mode, threshold = intField.value }, preserveParameter: true, preserveMode: true);
+                    });
                     row.Add(intField);
                 }
                 else
                 {
                     var floatField = new FloatField { value = condition.threshold, showMixedValue = entry.mixedThreshold };
                     floatField.AddToClassList("ygdr-cond-value-field");
-                    floatField.RegisterValueChangedCallback(evt =>
-                        ReplaceConditionOnTargets(capturedEntry, new AnimatorCondition { parameter = capturedCondition.parameter, mode = capturedCondition.mode, threshold = evt.newValue }, preserveParameter: true, preserveMode: true));
+                    /* See intField above: sync on blur instead of on change, so a typed value matching the field's
+                       own starting value still propagates to owners whose threshold differs. */
+                    floatField.RegisterCallback<FocusOutEvent>(_ =>
+                    {
+                        floatField.showMixedValue = false;
+                        ReplaceConditionOnTargets(capturedEntry, new AnimatorCondition { parameter = capturedCondition.parameter, mode = capturedCondition.mode, threshold = floatField.value }, preserveParameter: true, preserveMode: true);
+                    });
                     row.Add(floatField);
                 }
             }
 
             var removeBtn = new Button(() => { RemoveConditionFromTargets(capturedEntry); RebuildConditionRows(); }) { text = "−" };
             removeBtn.AddToClassList("ygdr-cond-remove-btn");
+            removeBtn.tabIndex = -1;
             StyleSecondaryButton(removeBtn);
             row.Add(removeBtn);
 
@@ -1036,6 +1177,61 @@ namespace YGDR.Editor.Animation
             }
         }
 
+        /* Drag-reorder callback from the manual condition-row drag handle. Individual mode only reaches
+           here with a single owner (reorderEnabled gates multi-owner individual mode off in the caller),
+           so newIndex is just that owner's local index. */
+        void MoveCondition(int oldIndex, int newIndex)
+        {
+            var entries = _cachedEntries;
+            if (entries == null || oldIndex < 0 || oldIndex >= entries.Count) return;
+            newIndex = Mathf.Clamp(newIndex, 0, entries.Count - 1);
+            if (oldIndex == newIndex) return;
+
+            if (!_showSharedConditions)
+            {
+                var movedEntry = entries[oldIndex];
+                int segStart = entries.FindIndex(e => e.owner == movedEntry.owner);
+                int count = GetConditions(movedEntry.owner).Length;
+                InvalidateConditionCache();
+                ReorderConditionOnOwner(movedEntry.owner, movedEntry.index, Mathf.Clamp(newIndex - segStart, 0, count - 1));
+                return;
+            }
+
+            /* Shared mode: one consistent rank order applied across every owner, permuting only the
+               array slots each owner already uses for its shared conditions — its other conditions
+               never move — so the relative order among shared entries matches across owners even when
+               they have differing numbers/positions of non-shared conditions in between. */
+            var rankOrder = Enumerable.Range(0, entries.Count).ToArray();
+            MoveArrayElement(rankOrder, oldIndex, newIndex);
+
+            InvalidateConditionCache();
+            foreach (var owner in AllSelectedOwners())
+            {
+                var localForRank = entries.Select(e => e.IndexFor(owner)).ToArray();
+                if (localForRank.Any(idx => idx < 0)) continue;
+                var slots = localForRank.OrderBy(idx => idx).ToArray();
+                var original = GetConditions(owner);
+                var reordered = (AnimatorCondition[])original.Clone();
+                for (int k = 0; k < slots.Length; k++)
+                    reordered[slots[k]] = original[localForRank[rankOrder[k]]];
+
+                Undo.RecordObject(owner, "Reorder Condition");
+                SetConditions(owner, reordered);
+                EditorUtility.SetDirty(owner);
+            }
+        }
+
+        static void ReorderConditionOnOwner(UnityEngine.Object owner, int oldIndex, int newIndex)
+        {
+            if (oldIndex == newIndex) return;
+            var conditions = GetConditions(owner);
+            if (oldIndex < 0 || oldIndex >= conditions.Length) return;
+            Undo.RecordObject(owner, "Reorder Condition");
+            MoveArrayElement(conditions, oldIndex, newIndex);
+            SetConditions(owner, conditions);
+            EditorUtility.SetDirty(owner);
+        }
+
         /* Adds a new condition using the parameter after the last one added (params-list order, wraps at end). */
         void AddConditionToAll()
         {
@@ -1175,10 +1371,12 @@ namespace YGDR.Editor.Animation
                     DeleteTransition(ownerStateMachine, transition);
                 }
                 EditorUtility.SetDirty(primary);
+                EditorUtility.SetDirty(ownerStateMachine);
             }
 
             EditorUtility.SetDirty(controller);
             InvalidateConditionCache();
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
         }
 
         /* Splits each selected transition that has multiple conditions into one transition per condition, copying all non-condition settings to each new transition. */
@@ -1217,9 +1415,11 @@ namespace YGDR.Editor.Animation
                 Undo.RecordObject(transition, "Separate Transitions");
                 foreach (var condition in conditions.Skip(1)) transition.RemoveCondition(condition);
                 EditorUtility.SetDirty(transition);
+                EditorUtility.SetDirty(ownerStateMachine);
             }
 
             EditorUtility.SetDirty(controller);
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
         }
 
         void MergeEntryTransitions()
@@ -1252,10 +1452,12 @@ namespace YGDR.Editor.Animation
                     ownerSM.RemoveEntryTransition(transition);
                 }
                 EditorUtility.SetDirty(group[0]);
+                EditorUtility.SetDirty(ownerSM);
             }
 
             EditorUtility.SetDirty(_controller);
             InvalidateConditionCache();
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
         }
 
         void SeparateEntryTransitions()
@@ -1290,9 +1492,11 @@ namespace YGDR.Editor.Animation
                 Undo.RecordObject(transition, "Separate Transitions");
                 foreach (var condition in conditions.Skip(1)) transition.RemoveCondition(condition);
                 EditorUtility.SetDirty(transition);
+                EditorUtility.SetDirty(ownerSM);
             }
 
             EditorUtility.SetDirty(_controller);
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
         }
 
         /* Creates a new transition in sm with the same source/destination topology as original (anyState, exit, state, or SM). */
@@ -1331,21 +1535,8 @@ namespace YGDR.Editor.Animation
         {
             foreach (var layer in controller.layers)
             {
-                var found = FindOwnerSMRecursive(layer.stateMachine, transition);
-                if (found != null) return found;
-            }
-            return null;
-        }
-
-        /* Recursively searches sm and its sub-SMs for the one that directly contains the transition. */
-        static AnimatorStateMachine FindOwnerSMRecursive(AnimatorStateMachine sm, AnimatorStateTransition transition)
-        {
-            if (sm.anyStateTransitions.Contains(transition)) return sm;
-            foreach (var childState in sm.states)
-                if (childState.state.transitions.Contains(transition)) return sm;
-            foreach (var childSM in sm.stateMachines)
-            {
-                var found = FindOwnerSMRecursive(childSM.stateMachine, transition);
+                var found = WalkSM(layer.stateMachine, sm =>
+                    sm.anyStateTransitions.Contains(transition) || sm.states.Any(childState => childState.state.transitions.Contains(transition)) ? sm : null);
                 if (found != null) return found;
             }
             return null;
@@ -1355,18 +1546,7 @@ namespace YGDR.Editor.Animation
         {
             foreach (var layer in controller.layers)
             {
-                var found = FindEntryOwnerSMRecursive(layer.stateMachine, transition);
-                if (found != null) return found;
-            }
-            return null;
-        }
-
-        static AnimatorStateMachine FindEntryOwnerSMRecursive(AnimatorStateMachine sm, AnimatorTransition transition)
-        {
-            if (sm.entryTransitions.Contains(transition)) return sm;
-            foreach (var childSM in sm.stateMachines)
-            {
-                var found = FindEntryOwnerSMRecursive(childSM.stateMachine, transition);
+                var found = WalkSM(layer.stateMachine, sm => sm.entryTransitions.Contains(transition) ? sm : null);
                 if (found != null) return found;
             }
             return null;
@@ -1454,6 +1634,13 @@ namespace YGDR.Editor.Animation
         {
             if (obj is AnimatorStateTransition stateTrans) stateTrans.RemoveCondition(condition);
             else if (obj is AnimatorTransition entryTrans) entryTrans.RemoveCondition(condition);
+        }
+
+        /* Overwrites the conditions array wholesale for any transition type — used for drag-reorder. */
+        static void SetConditions(UnityEngine.Object obj, AnimatorCondition[] conditions)
+        {
+            if (obj is AnimatorStateTransition stateTrans) stateTrans.conditions = conditions;
+            else if (obj is AnimatorTransition entryTrans) entryTrans.conditions = conditions;
         }
     }
 }

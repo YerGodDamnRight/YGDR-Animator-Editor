@@ -988,7 +988,7 @@ namespace YGDR.Editor.Animation
             var entryCenter = SpecialCenter(activeSM.entryPosition);
 
             bool SegmentHit(Vector2 from, Vector2 to) =>
-                DistancePointToSegment(graphMouse, from, to) < hitDistance;
+                GraphPatchReflection.DistancePointToSegment(graphMouse, from, to) < hitDistance;
 
             bool TryGetTransitionDest(AnimatorStateTransition transition, out Vector2 dest)
             {
@@ -1024,15 +1024,6 @@ namespace YGDR.Editor.Animation
             }
 
             return false;
-        }
-
-        static float DistancePointToSegment(Vector2 point, Vector2 segA, Vector2 segB)
-        {
-            var ab = segB - segA;
-            float sqrLen = ab.sqrMagnitude;
-            if (sqrLen < 0.0001f) return (point - segA).magnitude;
-            float t = Mathf.Clamp01(Vector2.Dot(point - segA, ab) / sqrLen);
-            return (point - (segA + t * ab)).magnitude;
         }
 
         static void FitFrameToSelected(FrameRect frame, FrameLayoutData frameData,

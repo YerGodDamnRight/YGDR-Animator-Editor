@@ -37,7 +37,6 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
         List<VRCExpressionsMenu> _menuStack = new();
         int _selectedMenuControlIndex = -1;
-        VisualElement _menuDragRow;
 
         VisualElement _menusPanel;
         Label _menusEmptyLabel;
@@ -45,8 +44,8 @@ namespace YGDR.Editor.Animation
         VisualElement _menuControlsPanel;
         IntegerField _menuControlCountField;
         Label _menuControlCountSuffixLabel;
-        ScrollView _menuControlsScroll;
-        VisualElement _menuControlsRowsContainer;
+        ListView _menuControlsListView;
+        VRCExpressionsMenu _menuControlsBoundMenu;
         Button _menuAddControlButton, _menuRemoveControlButton;
         Label _menuMaxControlsLabel;
         VisualElement _menuInspectorPanel;
@@ -106,12 +105,33 @@ namespace YGDR.Editor.Animation
             countFrame.Add(_menuControlCountSuffixLabel);
             panel.Add(countRow);
 
-            _menuControlsScroll = new ScrollView(ScrollViewMode.Vertical);
-            _menuControlsScroll.AddToClassList("ygdr-menu-controls-scroll");
-            _menuControlsRowsContainer = new VisualElement();
-            _menuControlsRowsContainer.AddToClassList("ygdr-menu-controls-rows");
-            _menuControlsScroll.Add(_menuControlsRowsContainer);
-            panel.Add(_menuControlsScroll);
+            _menuControlsListView = new ListView
+            {
+                reorderable = true,
+                reorderMode = ListViewReorderMode.Animated,
+                showBorder = false,
+                showAddRemoveFooter = false,
+                selectionType = SelectionType.Single,
+                fixedItemHeight = 24,
+                virtualizationMethod = CollectionVirtualizationMethod.FixedHeight,
+                makeItem = MakeMenuControlRow,
+                bindItem = (element, index) => BindMenuControlRow(element, _menuControlsBoundMenu, index)
+            };
+            _menuControlsListView.AddToClassList("ygdr-menu-controls-scroll");
+            WireListViewReorder(_menuControlsListView, MoveMenuControl, () =>
+            {
+                var menu = _menuStack.Count > 0 ? _menuStack[_menuStack.Count - 1] : null;
+                if (menu != null) RebuildMenuControlRows(menu);
+            });
+            _menuControlsListView.selectionChanged += _ =>
+            {
+                _selectedMenuControlIndex = _menuControlsListView.selectedIndex;
+                _menuControlsListView.RefreshItems(); // rebinds visible rows so the (unselected → selected) tint follows, since we drive it ourselves instead of Unity's default selected-item background
+                var menu = _menuStack.Count > 0 ? _menuStack[_menuStack.Count - 1] : null;
+                if (menu != null) RebuildMenuInspector(menu);
+            };
+            _menuControlsListView.itemsChosen += _ => TryEnterSelectedSubMenu();
+            panel.Add(_menuControlsListView);
 
             var footerRow = new VisualElement();
             footerRow.AddToClassList("ygdr-menu-controls-footer-row");
@@ -225,102 +245,81 @@ namespace YGDR.Editor.Animation
             _selectedMenuControlIndex = -1;
         }
 
-        void RebuildMenuControlRows(VRCExpressionsMenu menu)
+        void MoveMenuControl(int oldIndex, int newIndex)
         {
-            _menuControlsRowsContainer.Clear();
-            for (int i = 0; i < menu.controls.Count; i++)
-                _menuControlsRowsContainer.Add(BuildMenuControlRow(menu, i));
+            var menu = _menuStack.Count > 0 ? _menuStack[_menuStack.Count - 1] : null;
+            if (menu == null || oldIndex == newIndex) return;
+
+            Undo.RecordObject(menu, "Reorder Menu Controls");
+            var movedControl = menu.controls[oldIndex];
+            menu.controls.RemoveAt(oldIndex);
+            menu.controls.Insert(newIndex, movedControl);
+            if (_selectedMenuControlIndex == oldIndex) _selectedMenuControlIndex = newIndex;
+            EditorUtility.SetDirty(menu);
         }
 
-        VisualElement BuildMenuControlRow(VRCExpressionsMenu menu, int index)
+        void TryEnterSelectedSubMenu()
         {
+            var menu = _menuStack.Count > 0 ? _menuStack[_menuStack.Count - 1] : null;
+            if (menu == null) return;
+            int selectedIndex = _menuControlsListView.selectedIndex;
+            if (selectedIndex < 0 || selectedIndex >= menu.controls.Count) return;
+
+            var control = menu.controls[selectedIndex];
+            if (control.type != VRCExpressionsMenu.Control.ControlType.SubMenu || control.subMenu == null) return;
+
+            _menuStack.Add(control.subMenu);
+            _selectedMenuControlIndex = -1;
+            RefreshMenusBody();
+        }
+
+        /* itemsSource is a throwaway index list, not menu.controls directly — ListView's built-in reorder would
+           mutate it without going through Undo, and bindItem always re-reads menu.controls[index] fresh anyway. */
+        void RebuildMenuControlRows(VRCExpressionsMenu menu)
+        {
+            var indices = new List<int>(menu.controls.Count);
+            for (int i = 0; i < menu.controls.Count; i++) indices.Add(i);
+            _menuControlsBoundMenu = menu;
+            _menuControlsListView.itemsSource = indices;
+            _menuControlsListView.SetSelectionWithoutNotify(_selectedMenuControlIndex >= 0 ? new[] { _selectedMenuControlIndex } : Array.Empty<int>());
+            _menuControlsListView.Rebuild();
+        }
+
+        /* Hover handlers registered once here (not in bindItem) — ListView recycles these elements across binds,
+           and re-registering per bind stacked stale closures from prior menus, causing wrong tint after breadcrumb navigation. */
+        VisualElement MakeMenuControlRow()
+        {
+            var element = new VisualElement();
+            element.RegisterCallback<MouseEnterEvent>(_ => element.style.backgroundColor = SecondaryButtonHoverColor);
+            element.RegisterCallback<MouseLeaveEvent>(_ =>
+                element.style.backgroundColor = (int)element.userData == _selectedMenuControlIndex
+                    ? SecondaryButtonHoverColor
+                    : new StyleColor(StyleKeyword.Null));
+            return element;
+        }
+
+        void BindMenuControlRow(VisualElement element, VRCExpressionsMenu menu, int index)
+        {
+            element.Clear();
+            element.ClearClassList();
+            element.AddToClassList("ygdr-menu-control-row");
+            if (index % 2 != 0) element.AddToClassList("ygdr-menu-control-row-alt");
+            element.userData = index;
+            element.style.backgroundColor = index == _selectedMenuControlIndex ? SecondaryButtonHoverColor : new StyleColor(StyleKeyword.Null);
+
             var control = menu.controls[index];
-            var row = new VisualElement { userData = index };
-            row.AddToClassList("ygdr-menu-control-row");
-            if (index % 2 != 0) row.AddToClassList("ygdr-menu-control-row-alt");
-            StyleHoverTint(row, () => (int)row.userData == _selectedMenuControlIndex, () => SecondaryButtonHoverColor, () => new StyleColor(StyleKeyword.Null));
 
             var icon = new Image { image = control.icon, scaleMode = ScaleMode.ScaleToFit };
             icon.AddToClassList("ygdr-menu-control-icon");
-            row.Add(icon);
+            element.Add(icon);
 
             var nameLabel = new Label(string.IsNullOrEmpty(control.name) ? "(unnamed)" : control.name);
             nameLabel.AddToClassList("ygdr-menu-control-name");
-            row.Add(nameLabel);
+            element.Add(nameLabel);
 
             var typeLabel = new Label(control.type.ToString());
             typeLabel.AddToClassList("ygdr-menu-control-type");
-            row.Add(typeLabel);
-
-            row.RegisterCallback<PointerDownEvent>(evt =>
-            {
-                _selectedMenuControlIndex = (int)row.userData;
-                RefreshMenuControlRowSelection();
-                RebuildMenuInspector(menu);
-                row.CapturePointer(evt.pointerId);
-                _menuDragRow = row;
-            });
-            row.RegisterCallback<PointerMoveEvent>(evt =>
-            {
-                if (_menuDragRow != row || !row.HasPointerCapture(evt.pointerId)) return;
-                HandleMenuControlDrag(menu, row, evt.position.y);
-            });
-            row.RegisterCallback<PointerUpEvent>(evt =>
-            {
-                if (_menuDragRow != row) return;
-                row.ReleasePointer(evt.pointerId);
-                _menuDragRow = null;
-                EditorUtility.SetDirty(menu);
-            });
-            row.RegisterCallback<ClickEvent>(evt =>
-            {
-                if (evt.clickCount == 2 && control.type == VRCExpressionsMenu.Control.ControlType.SubMenu && control.subMenu != null)
-                {
-                    _menuStack.Add(control.subMenu);
-                    _selectedMenuControlIndex = -1;
-                    RefreshMenusBody();
-                }
-            });
-
-            return row;
-        }
-
-        void RefreshMenuControlRowSelection()
-        {
-            for (int i = 0; i < _menuControlsRowsContainer.childCount; i++)
-                _menuControlsRowsContainer[i].style.backgroundColor = i == _selectedMenuControlIndex ? SecondaryButtonHoverColor : new StyleColor(StyleKeyword.Null);
-        }
-
-        void HandleMenuControlDrag(VRCExpressionsMenu menu, VisualElement draggedRow, float pointerScreenY)
-        {
-            var container = _menuControlsRowsContainer;
-            float localY = pointerScreenY - container.worldBound.y;
-
-            int newIndex = 0;
-            for (int i = 0; i < container.childCount; i++)
-            {
-                var sibling = container[i];
-                if (sibling == draggedRow) continue;
-                float siblingCenter = sibling.layout.y + sibling.layout.height * 0.5f;
-                if (localY > siblingCenter) newIndex = i < container.IndexOf(draggedRow) ? i : i + 1;
-            }
-            newIndex = Mathf.Clamp(newIndex, 0, container.childCount - 1);
-
-            int oldIndex = container.IndexOf(draggedRow);
-            if (newIndex == oldIndex) return;
-
-            Undo.RecordObject(menu, "Reorder Menu Controls");
-            var control = menu.controls[oldIndex];
-            menu.controls.RemoveAt(oldIndex);
-            menu.controls.Insert(newIndex, control);
-
-            container.Remove(draggedRow);
-            container.Insert(newIndex, draggedRow);
-            if (_selectedMenuControlIndex == oldIndex) _selectedMenuControlIndex = newIndex;
-
-            for (int i = 0; i < container.childCount; i++)
-                container[i].userData = i;
-            RefreshMenuControlRowSelection();
+            element.Add(typeLabel);
         }
 
         static void AddMenuControl(VRCExpressionsMenu menu)
@@ -369,7 +368,8 @@ namespace YGDR.Editor.Animation
 
             _menuInspectorPanel.Add(BuildMenuNameIconRow(menu, control));
             _menuInspectorPanel.Add(BuildMenuTypeField(menu, control));
-            _menuInspectorPanel.Add(BuildMenuParameterFieldRow(menu, L10n.Get("controller.menus.parameter"), control.parameter, false));
+            _menuInspectorPanel.Add(BuildMenuParameterFieldRow(menu, L10n.Get("controller.menus.parameter"), control.parameter, false,
+                onParameterChanged: () => RebuildMenuInspector(menu)));
             _menuInspectorPanel.Add(BuildMenuValueRow(menu, control));
 
             switch (control.type)
@@ -487,9 +487,48 @@ namespace YGDR.Editor.Animation
             row.Add(label);
 
             var boundParam = FindParameter(_controller, control.parameter.name);
-            bool isFloat = boundParam != null && boundParam.type == AnimatorControllerParameterType.Float;
-            float min = isFloat ? -1f : 0f;
-            float max = 1f;
+
+            if (boundParam != null && boundParam.type == AnimatorControllerParameterType.Bool)
+            {
+                var boolLabel = new Label(L10n.Get("controller.menus.value_bool_fixed"));
+                boolLabel.AddToClassList("ygdr-menu-value-field");
+                boolLabel.SetEnabled(false);
+                row.Add(boolLabel);
+                return row;
+            }
+
+            bool isInt = boundParam != null && boundParam.type == AnimatorControllerParameterType.Int;
+            float min = isInt ? 0f : (boundParam == null || boundParam.type == AnimatorControllerParameterType.Float ? -1f : 0f);
+            float max = isInt ? 255f : 1f;
+
+            if (isInt)
+            {
+                var intSlider = new SliderInt((int)min, (int)max) { value = Mathf.RoundToInt(control.value) };
+                intSlider.AddToClassList("ygdr-menu-value-slider");
+                var intField = new IntegerField { value = Mathf.RoundToInt(control.value) };
+                intField.AddToClassList("ygdr-menu-value-field");
+
+                intSlider.RegisterValueChangedCallback(evt =>
+                {
+                    int clamped = Mathf.Clamp(evt.newValue, (int)min, (int)max);
+                    intField.SetValueWithoutNotify(clamped);
+                    Undo.RecordObject(menu, "Edit Control Value");
+                    control.value = clamped;
+                    EditorUtility.SetDirty(menu);
+                });
+                intField.RegisterValueChangedCallback(evt =>
+                {
+                    int clamped = Mathf.Clamp(evt.newValue, (int)min, (int)max);
+                    intSlider.SetValueWithoutNotify(clamped);
+                    Undo.RecordObject(menu, "Edit Control Value");
+                    control.value = clamped;
+                    EditorUtility.SetDirty(menu);
+                });
+
+                row.Add(intSlider);
+                row.Add(intField);
+                return row;
+            }
 
             var slider = new Slider(min, max) { value = control.value };
             slider.AddToClassList("ygdr-menu-value-slider");
@@ -569,14 +608,10 @@ namespace YGDR.Editor.Animation
         static AnimatorControllerParameter FindParameter(AnimatorController controller, string name)
         {
             if (controller == null || string.IsNullOrEmpty(name)) return null;
-            var parameters = controller.parameters;
-            for (int i = 0; i < parameters.Length; i++)
-                if (parameters[i].name == name)
-                    return parameters[i];
-            return null;
+            return Array.Find(controller.parameters, p => p.name == name);
         }
 
-        VisualElement BuildMenuParameterFieldRow(VRCExpressionsMenu menu, string label, VRCExpressionsMenu.Control.Parameter parameter, bool expectFloat)
+        VisualElement BuildMenuParameterFieldRow(VRCExpressionsMenu menu, string label, VRCExpressionsMenu.Control.Parameter parameter, bool expectFloat, Action onParameterChanged = null)
         {
             var row = new VisualElement();
             row.AddToClassList("ygdr-menu-property-row");
@@ -635,6 +670,7 @@ namespace YGDR.Editor.Animation
                     EditorUtility.SetDirty(menu);
                     manualField.SetValueWithoutNotify(parameter.name);
                     RefreshFieldState();
+                    onParameterChanged?.Invoke();
                 }, includeNone: true);
             };
             manualField.RegisterValueChangedCallback(evt =>
@@ -643,6 +679,7 @@ namespace YGDR.Editor.Animation
                 parameter.name = evt.newValue;
                 EditorUtility.SetDirty(menu);
                 RefreshFieldState();
+                onParameterChanged?.Invoke();
             });
 
             RefreshFieldState();
