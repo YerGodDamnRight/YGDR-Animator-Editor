@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.1
+## v1.2.0
 - Param driver switch copy mode src/dest fix
 - Animation clip dropdown not changing after exiting play mode
 - Added network sync merge network states toggle
