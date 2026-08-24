@@ -245,14 +245,17 @@ namespace YGDR.Editor.Animation
         {
             var set = new HashSet<AnimationClip>();
             foreach (var layer in controller.layers)
-                CollectFromSM(layer.stateMachine, set);
+                if (layer != null) CollectFromSM(layer.stateMachine, set);
             return set.OrderBy(c => c.name).ToList();
         }
 
         static void CollectFromSM(AnimatorStateMachine sm, HashSet<AnimationClip> set)
         {
-            foreach (var s in sm.states)        CollectFromMotion(s.state.motion, set);
-            foreach (var s in sm.stateMachines) CollectFromSM(s.stateMachine, set);
+            if (sm == null) return;
+            foreach (var s in sm.states)
+                if (s.state != null) CollectFromMotion(s.state.motion, set);
+            foreach (var s in sm.stateMachines)
+                if (s.stateMachine != null) CollectFromSM(s.stateMachine, set);
         }
 
         static void CollectFromMotion(Motion motion, HashSet<AnimationClip> set)

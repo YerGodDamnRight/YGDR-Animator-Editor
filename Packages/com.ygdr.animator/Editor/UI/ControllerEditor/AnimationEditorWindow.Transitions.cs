@@ -111,6 +111,7 @@ namespace YGDR.Editor.Animation
             _transitionsPanel.Add(_transitionsPropertiesContainer);
 
             _transitionsPanel.Add(BuildConditionsSection());
+            _transitionsPanel.Add(BuildTransitionPreviewSection());
 
             return _transitionsPanel;
         }
@@ -176,6 +177,7 @@ namespace YGDR.Editor.Animation
             }
 
             if (_transitionsEmptyLabel != null) _transitionsEmptyLabel.text = L10n.Get("transitions.empty");
+            RefreshTransitionPreviewHeaderLabel();
 
             if (_transitionsRightLabel != null)
                 _transitionsRightLabel.text = _selectedTransitions.Length > 0
@@ -202,6 +204,7 @@ namespace YGDR.Editor.Animation
                     : string.Empty;
 
             RebuildConditionRows();
+            RefreshTransitionPreviewSection();
         }
 
         void RefreshTransitionsPaletteColors()
@@ -210,6 +213,11 @@ namespace YGDR.Editor.Animation
             if (_transitionsTagsScroll != null) _transitionsTagsScroll.style.backgroundColor = SharedWindowStyles.SecondaryColor;
             if (_transitionsTagsContainer != null) RebuildTransitionTags();
             if (_transitionsTagsResizeGrip != null) _transitionsTagsResizeGrip.style.unityBackgroundImageTintColor = SharedWindowStyles.AccentColor;
+            if (_previewWrapper != null)
+            {
+                _previewWrapper.Query<VisualElement>(className: "ygdr-settings-section-header").ForEach(h => h.style.backgroundColor = SharedWindowStyles.AccentColor);
+                _previewWrapper.Query<VisualElement>(className: "ygdr-settings-section-body").ForEach(b => b.style.backgroundColor = SharedWindowStyles.SecondaryColor);
+            }
             if (_condRowsContainer != null) _condRowsContainer.style.backgroundColor = SharedWindowStyles.SecondaryColor;
             if (_condHeader == null) return;
             _condModeButton.style.backgroundColor = SharedWindowStyles.AccentColor;
@@ -446,6 +454,15 @@ namespace YGDR.Editor.Animation
                 });
                 if (name != null) return name;
             }
+            return null;
+        }
+
+        /* Scans sm.states (single level, not recursive) for the state that owns transition — for callers that
+           already know the owning SM (e.g. via FindOwnerSM) and want the AnimatorState itself, not just its name. */
+        static AnimatorState FindSourceState(AnimatorStateMachine sm, AnimatorStateTransition transition)
+        {
+            foreach (var childState in sm.states)
+                if (childState.state.transitions.Contains(transition)) return childState.state;
             return null;
         }
 

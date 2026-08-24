@@ -655,6 +655,13 @@ Right-click a binding name in the Animation window's hierarchy list (same menu a
 - **Cascade Bindings** — Triangular crossfade across 2+ selected bindings: each peaks at 1 in its own time slot, ramping to/from 0 at its neighbors. Two ordering variants:
   - **By Component Index** — Orders by the trailing index in each binding's property path (e.g. constraint `Sources[0..3].Weight`).
   - **By Selection Order** — Orders by the literal sequence the rows were clicked/shift-selected in, for manual control.
+- **Offset Keyframes** — Shifts every keyframe's *value* on the selected bindings by a fixed amount (set via popup).
+  - **Offset Selected Bindings** — applies to the selected bindings only.
+  - **Offset All Clips** — expands to every other clip on the controller with a matching path/type/property binding (e.g. offsetting one clip's `rotation.z` also offsets every other clip's `rotation.z`). Requires the Animator window's controller to be open.
+- **Jitter Keyframes** — Adds an independent random value offset in `[-max, max]` to each keyframe (set via popup), not a uniform shift.
+  - **Jitter Selected Keyframes** — only the individual keys selected in the dopesheet; disabled when no keys are selected.
+  - **Jitter All Keyframes** — every keyframe on the selected bindings.
+- **Remap Range** — Linearly rescales each binding's own value range into a new Min/Max (set via two-field popup), independently per binding. Unlike Offset, this stretches/compresses to fit exact target bounds rather than shifting by a flat amount. A binding with a flat curve (no range to scale) is left untouched.
 
 > [!TIP]
 > Useful for VRC parent/rotation constraint source weights — cascade or reverse the crossfade across multiple sources in one pass instead of hand-editing each curve.

@@ -76,13 +76,14 @@ namespace YGDR.Editor.Animation
         }
 
         [HarmonyPostfix]
-        static void Postfix(AnimatorStateTransition __result)
+        static void Postfix(AnimatorStateTransition __result, MethodBase __originalMethod)
         {
             try
             {
                 if (__result == null || !AssetDatabase.Contains(__result)) return;
                 var settings = AnimatorDefaultSettings.Load();
-                if (settings.applyToTransitions) AnimatorDefaultSettings.ApplyTransitionDefaults(__result);
+                if (settings.applyToTransitions)
+                    AnimatorDefaultSettings.ApplyTransitionDefaults(__result, __originalMethod.Name == "AddAnyStateTransition");
             }
             catch (Exception e)
             {

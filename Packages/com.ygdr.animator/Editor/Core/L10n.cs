@@ -99,6 +99,14 @@ namespace YGDR.Editor.Animation
 
             // ── Transitions tab — properties ──────────────────────────────────────
             ["transitions.empty"]                  = "Select a transition to edit",
+            ["transitions.preview"]                = "Preview",
+            ["transitions.preview_select_single"]      = "Select a transition, or a chain of connected transitions, to preview.",
+            ["transitions.preview_no_anystate"]        = "Any State transitions can't be previewed (no source clip).",
+            ["transitions.preview_no_exit"]            = "Exit / sub-state-machine transitions can't be previewed yet.",
+            ["transitions.preview_needs_clip"]         = "Preview needs a plain Animation Clip on every state in the chain (no Blend Trees yet).",
+            ["transitions.preview_broken_chain"]       = "Selected transitions don't form a single unbroken chain.",
+            ["transitions.preview_api_unavailable"]    = "Preview unavailable (Unity internal API changed).",
+            ["transitions.preview_init_failed"]        = "Preview failed to initialize.",
             ["transitions.tag_delete_tooltip"]     = "Delete transition",
             ["transitions.tag_deselect_tooltip"]   = "Deselect transition",
             ["transitions.has_exit_time"]          = "Has Exit Time",
@@ -117,6 +125,7 @@ namespace YGDR.Editor.Animation
             ["transitions.mute"]                   = "Mute",
             ["transitions.can_transition_to_self"] = "Can Transition To Self",
             ["transitions.solo"]                   = "Solo",
+            ["transitions.can_transition_to_self_anystate"] = "Can Transition to Self (Anystate)",
             // Conditions
             ["transitions.tooltip.toggle_conditions"] = "Toggle All / Shared Conditions",
             ["transitions.tooltip.switch_modes"]      = "Switch Condition Modes",
@@ -126,8 +135,6 @@ namespace YGDR.Editor.Animation
             ["transitions.tooltip.match_mode"]        = "Match Mode",
             ["transitions.tooltip.match_value"]       = "Match Value",
             ["transitions.tooltip.select_matching"]   = "Select Matching Transitions",
-            ["transitions.tooltip.move_up"]           = "Move condition up",
-            ["transitions.tooltip.move_down"]         = "Move condition down",
 
             ["transitions.shared_conditions"] = "Shared Conditions",
             ["transitions.all_conditions"]    = "All Conditions",
@@ -308,6 +315,7 @@ namespace YGDR.Editor.Animation
             ["controller.network.no_window"]          = "No animator window open",
             ["controller.network.no_vrcsdk"]          = "Network Sync not available without VRCSDK",
 
+            ["keyframe_menu.timing"]                         = "Timing",
             ["keyframe_menu.double_time"]                    = "Double Time",
             ["keyframe_menu.half_time_floor"]                = "Half Time (Floor)",
             ["keyframe_menu.half_time_ceiling"]              = "Half Time (Ceiling)",
@@ -317,6 +325,13 @@ namespace YGDR.Editor.Animation
             ["keyframe_menu.cascade_bindings"]               = "Cascade Bindings",
             ["keyframe_menu.cascade_by_component_index"]     = "By Component Index",
             ["keyframe_menu.cascade_by_selection_order"]     = "By Selection Order",
+            ["keyframe_menu.offset"]                         = "Offset",
+            ["keyframe_menu.offset_selected_bindings"]       = "Selected Bindings",
+            ["keyframe_menu.offset_all_clips"]               = "All Clips",
+            ["keyframe_menu.jitter"]                         = "Jitter",
+            ["keyframe_menu.jitter_all_keyframes"]           = "All Keyframes",
+            ["keyframe_menu.jitter_selected_keyframes"]      = "Selected Keyframes",
+            ["keyframe_menu.remap_range"]                    = "Remap Range",
             ["controller.network.duplicate_name"]     = "Duplicate Name",
             // Clip Remapper
             ["controller.repath.avatar_root"]      = "Avatar",

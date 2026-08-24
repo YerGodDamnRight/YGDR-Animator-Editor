@@ -354,6 +354,7 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool transOrderedInterruption = true;
         [SerializeField] internal bool transMute = false;
         [SerializeField] internal bool transSolo = false;
+        [SerializeField] internal bool transCanTransitionToSelfAnyState = false;
 
         // Miscellaneous
         [SerializeField] internal bool framesEnabled              = true;
@@ -443,7 +444,7 @@ namespace YGDR.Editor.Animation
         // ── Creation defaults ─────────────────────────────────────────────────
 
         /* Applies all configured transition defaults (exit time, duration, interruption, etc.) to the given transition. */
-        internal static void ApplyTransitionDefaults(AnimatorStateTransition transition)
+        internal static void ApplyTransitionDefaults(AnimatorStateTransition transition, bool isAnyStateSource = false)
         {
             var settings = Load();
             transition.hasExitTime         = settings.transHasExitTime;
@@ -455,6 +456,7 @@ namespace YGDR.Editor.Animation
             transition.orderedInterruption = settings.transOrderedInterruption;
             transition.mute                = settings.transMute;
             transition.solo                = settings.transSolo;
+            if (isAnyStateSource) transition.canTransitionToSelf = settings.transCanTransitionToSelfAnyState;
         }
 
         /* Applies all configured state defaults (tag, speed, mirror, WD, IK, etc.) to the given state. */

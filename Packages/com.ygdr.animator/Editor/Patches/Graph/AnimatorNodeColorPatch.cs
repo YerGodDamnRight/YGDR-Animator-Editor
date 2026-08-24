@@ -74,7 +74,9 @@ namespace YGDR.Editor.Animation
                 BlendTreeType? resolvedBlendType = null;
                 if (PatchBlendTreeOnGraphGUI.InBlendTreeGUI && color == 0)
                 {
-                    if (PatchBlendTreeNodeGUI.InNodeGUI && PatchBlendTreeNodeGUI.CurrentBlendType.HasValue)
+                    if (PatchBlendTreeOnGraphGUI.LightweightOverrideActive)
+                        resolvedBlendType = PatchBlendTreeOnGraphGUI.LightweightOverrideBlendType;
+                    else if (PatchBlendTreeNodeGUI.InNodeGUI && PatchBlendTreeNodeGUI.CurrentBlendType.HasValue)
                         resolvedBlendType = PatchBlendTreeNodeGUI.CurrentBlendType;
                     else if (PatchBlendTreeOnGraphGUI._blendTypeQueue.Count > 0)
                         resolvedBlendType = PatchBlendTreeOnGraphGUI._blendTypeQueue.Dequeue();

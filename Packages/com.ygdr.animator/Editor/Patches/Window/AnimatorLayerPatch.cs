@@ -555,10 +555,11 @@ namespace YGDR.Editor.Animation
         }
 
         internal static bool IsEmpty(AnimatorStateMachine sm) =>
-            sm.states.Length == 0 && sm.stateMachines.Length == 0;
+            sm == null || (sm.states.Length == 0 && sm.stateMachines.Length == 0);
 
         internal static bool HasFrameData(AnimatorStateMachine sm)
         {
+            if (sm == null) return false;
             if (_hasFrameDataCache.TryGetValue(sm, out bool cached)) return cached;
             var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(AssetDatabase.GetAssetPath(sm));
             bool result = false;

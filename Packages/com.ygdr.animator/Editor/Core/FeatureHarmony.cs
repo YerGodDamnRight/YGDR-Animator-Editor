@@ -130,6 +130,11 @@ namespace YGDR.Editor.Animation
             [BlendTreeId] = new[]
             {
                 typeof(PatchBlendTreeNodeGUI),
+                typeof(PatchBlendTreeNodeGUICache),
+                typeof(PatchGraphPopulateParameterValuesCache),
+                typeof(PatchGraphSetParameterValueDedup),
+                typeof(PatchGraphGetParameterValueSilentMissing),
+                typeof(PatchBlendTreeUpdateAnimatorThrottle),
                 typeof(PatchBlendTreeOnGraphGUI),
                 typeof(PatchBlendTreeGetNodeStyle),
                 typeof(PatchBlendTreeNodeTitle),

@@ -23,6 +23,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using HarmonyLib;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -55,6 +56,46 @@ namespace YGDR.Editor.Animation
         internal static void ClearPendingContext() => PendingContextNode = null;
     }
 
+    // Caches BlendTree.recursiveBlendParameterCount / GetRecursiveBlendParameter[Min/Max], which native
+    // NodeGUI otherwise recomputes (full descendant subtree walk) on every call, every node, every repaint.
+    // Wired in via PatchBlendTreeNodeGUICache's transpiler below.
+    internal static class BlendTreeRecursiveParamCache
+    {
+        internal readonly struct Entry
+        {
+            internal readonly string Name;
+            internal readonly float Min;
+            internal readonly float Max;
+            internal Entry(string name, float min, float max) { Name = name; Min = min; Max = max; }
+        }
+
+        static readonly Dictionary<BlendTree, Entry[]> _cache = new();
+
+        static BlendTreeRecursiveParamCache() =>
+            ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream _) => Invalidate();
+
+        internal static Entry[] Get(BlendTree blendTree)
+        {
+            if (blendTree == null) return System.Array.Empty<Entry>();
+            if (_cache.TryGetValue(blendTree, out var cached)) return cached;
+
+            int count = (int)(BlendTreePatchReflection.RecursiveBlendParameterCountGetter?.Invoke(blendTree, null) ?? 0);
+            var entries = new Entry[count];
+            for (int i = 0; i < count; i++)
+            {
+                var indexArg = new object[] { i };
+                entries[i] = new Entry(
+                    BlendTreePatchReflection.GetRecursiveBlendParameterMethod?.Invoke(blendTree, indexArg) as string,
+                    (float)(BlendTreePatchReflection.GetRecursiveBlendParameterMinMethod?.Invoke(blendTree, indexArg) ?? 0f),
+                    (float)(BlendTreePatchReflection.GetRecursiveBlendParameterMaxMethod?.Invoke(blendTree, indexArg) ?? 0f));
+            }
+            _cache[blendTree] = entries;
+            return entries;
+        }
+
+        internal static void Invalidate() => _cache.Clear();
+    }
+
     // NodeGUI fires per-node before HandleNodeInput (which calls Event.Use()).
     // Prefix captures MouseDown; postfix draws custom name label and rename field.
     // InNodeGUI gates GetNodeStyle color patch to blend tree context only.
@@ -78,7 +119,7 @@ namespace YGDR.Editor.Animation
         static Color _nameLabelColor;
 
         /* Returns a centered label style for the node title, rebuilding the cached instance only when color changes. */
-        static GUIStyle GetNameLabelStyle(Color color)
+        internal static GUIStyle GetNameLabelStyle(Color color)
         {
             if (_nameLabelStyle != null && _nameLabelColor == color) return _nameLabelStyle;
             _nameLabelColor = color;
@@ -96,7 +137,7 @@ namespace YGDR.Editor.Animation
         static Color _blendTypeLabelColor;
 
         /* Returns a small bold label style for the blend type badge, rebuilding the cached instance only when color changes. */
-        static GUIStyle GetBlendTypeLabelStyle(Color color)
+        internal static GUIStyle GetBlendTypeLabelStyle(Color color)
         {
             if (_blendTypeLabelStyle != null && _blendTypeLabelColor == color) return _blendTypeLabelStyle;
             _blendTypeLabelColor = color;
@@ -113,7 +154,7 @@ namespace YGDR.Editor.Animation
         static GUIStyle _thresholdLabelStyle;
         static Color _thresholdLabelColor;
 
-        static GUIStyle GetThresholdLabelStyle(Color color)
+        internal static GUIStyle GetThresholdLabelStyle(Color color)
         {
             if (_thresholdLabelStyle != null && _thresholdLabelColor == color) return _thresholdLabelStyle;
             _thresholdLabelColor = color;
@@ -144,15 +185,14 @@ namespace YGDR.Editor.Animation
         static void Prefix(object n)
         {
             InNodeGUI = true;
-            var prefixMotion = Traverse.Create(n).Field("motion").GetValue() as Motion;
+            var prefixMotion = new BlendTreePatchReflection.BlendTreeNodeProxy(n).Motion;
             CurrentBlendType = prefixMotion is BlendTree prefixBlendTree ? prefixBlendTree.blendType : (BlendTreeType?)null;
             try
             {
                 if (Event.current.type == EventType.MouseDown && Event.current.button == 0)
                 {
                     SelectedNode = n;
-                    var parentNode = Traverse.Create(n).Property("parent").GetValue();
-                    if (parentNode != null)
+                    if (new BlendTreePatchReflection.BlendTreeNodeProxy(n).Parent != null)
                         BlendTreeReparentState.DragCandidate = n;
                 }
             }
@@ -169,7 +209,7 @@ namespace YGDR.Editor.Animation
             CurrentBlendType = null;
             try
             {
-                var motion = Traverse.Create(n).Field("motion").GetValue() as Motion;
+                var motion = new BlendTreePatchReflection.BlendTreeNodeProxy(n).Motion;
                 if (motion == null) return;
 
                 // NodeGUI runs inside GUILayout.Window — local coords, title bar is at y < 0.
@@ -209,11 +249,12 @@ namespace YGDR.Editor.Animation
         /* Draws the threshold value in the upper-right corner for nodes that are direct children of a 1D blend tree. */
         static void TryDrawThresholdLabel(object node, Rect lastRect, Color color)
         {
-            var parentNode = Traverse.Create(node).Property("parent").GetValue();
+            var proxy = new BlendTreePatchReflection.BlendTreeNodeProxy(node);
+            var parentNode = proxy.Parent;
             if (parentNode == null) return;
-            var parentBlendTree = Traverse.Create(parentNode).Field("motion").GetValue() as BlendTree;
+            var parentBlendTree = new BlendTreePatchReflection.BlendTreeNodeProxy(parentNode).Motion as BlendTree;
             if (parentBlendTree == null || parentBlendTree.blendType != BlendTreeType.Simple1D) return;
-            int childIndex = Traverse.Create(node).Property("childIndex").GetValue<int>();
+            int childIndex = proxy.ChildIndex;
             if (childIndex < 0 || childIndex >= parentBlendTree.children.Length) return;
             float threshold = parentBlendTree.children[childIndex].threshold;
             var thresholdRect = new Rect(lastRect.xMax - 40f, 3f, 38f, 11f);
@@ -262,6 +303,171 @@ namespace YGDR.Editor.Animation
         }
     }
 
+    // Transpiler on NodeGUI: redirects the 4 native recursive-blend-parameter calls to
+    // BlendTreeRecursiveParamCache so they run once per structural change instead of every node every repaint.
+    // No other IL is touched — slot layout, slider draw, and animator preview stay byte-identical to native.
+    [HarmonyPatch]
+    internal static class PatchBlendTreeNodeGUICache
+    {
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod()
+        {
+            var graphGUIType = AccessTools.TypeByName("UnityEditor.Graphs.AnimationBlendTree.GraphGUI");
+            if (graphGUIType == null) return null;
+            return AccessTools.Method(graphGUIType, "NodeGUI");
+        }
+
+        internal static int CachedRecursiveBlendParameterCount(BlendTree blendTree) =>
+            BlendTreeRecursiveParamCache.Get(blendTree).Length;
+
+        internal static string CachedGetRecursiveBlendParameter(BlendTree blendTree, int index) =>
+            BlendTreeRecursiveParamCache.Get(blendTree)[index].Name;
+
+        internal static float CachedGetRecursiveBlendParameterMin(BlendTree blendTree, int index) =>
+            BlendTreeRecursiveParamCache.Get(blendTree)[index].Min;
+
+        internal static float CachedGetRecursiveBlendParameterMax(BlendTree blendTree, int index) =>
+            BlendTreeRecursiveParamCache.Get(blendTree)[index].Max;
+
+        [HarmonyTranspiler]
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            foreach (var instruction in instructions)
+            {
+                if (instruction.Calls(BlendTreePatchReflection.RecursiveBlendParameterCountGetter))
+                    yield return new CodeInstruction(OpCodes.Call,
+                        AccessTools.Method(typeof(PatchBlendTreeNodeGUICache), nameof(CachedRecursiveBlendParameterCount)));
+                else if (instruction.Calls(BlendTreePatchReflection.GetRecursiveBlendParameterMethod))
+                    yield return new CodeInstruction(OpCodes.Call,
+                        AccessTools.Method(typeof(PatchBlendTreeNodeGUICache), nameof(CachedGetRecursiveBlendParameter)));
+                else if (instruction.Calls(BlendTreePatchReflection.GetRecursiveBlendParameterMinMethod))
+                    yield return new CodeInstruction(OpCodes.Call,
+                        AccessTools.Method(typeof(PatchBlendTreeNodeGUICache), nameof(CachedGetRecursiveBlendParameterMin)));
+                else if (instruction.Calls(BlendTreePatchReflection.GetRecursiveBlendParameterMaxMethod))
+                    yield return new CodeInstruction(OpCodes.Call,
+                        AccessTools.Method(typeof(PatchBlendTreeNodeGUICache), nameof(CachedGetRecursiveBlendParameterMax)));
+                else
+                    yield return instruction;
+            }
+        }
+    }
+
+    // Same fix as PatchBlendTreeNodeGUICache, different call site: Graph.PopulateParameterValues walks
+    // m_RootBlendTree's entire recursive parameter set (same 2 uncached native calls) once per OnGraphGUI
+    // pass — confirmed via profiler as the single largest per-call cost (~56ms/call) once VRCFury's
+    // uncached Animator.SetFloat hook was ruled out. Reuses the same cache and wrapper methods.
+    [HarmonyPatch]
+    internal static class PatchGraphPopulateParameterValuesCache
+    {
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => BlendTreePatchReflection.GraphPopulateParameterValuesMethod;
+
+        [HarmonyTranspiler]
+        static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            foreach (var instruction in instructions)
+            {
+                if (instruction.Calls(BlendTreePatchReflection.RecursiveBlendParameterCountGetter))
+                    yield return new CodeInstruction(OpCodes.Call,
+                        AccessTools.Method(typeof(PatchBlendTreeNodeGUICache), nameof(PatchBlendTreeNodeGUICache.CachedRecursiveBlendParameterCount)));
+                else if (instruction.Calls(BlendTreePatchReflection.GetRecursiveBlendParameterMethod))
+                    yield return new CodeInstruction(OpCodes.Call,
+                        AccessTools.Method(typeof(PatchBlendTreeNodeGUICache), nameof(PatchBlendTreeNodeGUICache.CachedGetRecursiveBlendParameter)));
+                else
+                    yield return instruction;
+            }
+        }
+    }
+
+    // Graph.SetParameterValue triggers SetParameterValueRecursive, which walks EVERY node in the entire
+    // tree pushing this one parameter's value down natively — called once per recursive parameter, every
+    // PopulateParameterValues call (2x/repaint), regardless of whether the value actually changed.
+    // Confirmed via profiler: dominant sustained per-repaint cost once cache thrashing was ruled out.
+    // Dedupe here: skip the whole recursive walk when the value matches what we last pushed.
+    [HarmonyPatch]
+    internal static class PatchGraphSetParameterValueDedup
+    {
+        const float Epsilon = 0.0001f;
+        static readonly Dictionary<object, Dictionary<string, float>> _lastValues = new();
+
+        static PatchGraphSetParameterValueDedup() =>
+            ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream _) => _lastValues.Clear();
+
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => BlendTreePatchReflection.GraphSetParameterValueMethod;
+
+        [HarmonyPrefix]
+        static bool Prefix(object __instance, string parameterName, float parameterValue)
+        {
+            if (!_lastValues.TryGetValue(__instance, out var perParam))
+                _lastValues[__instance] = perParam = new Dictionary<string, float>();
+
+            if (perParam.TryGetValue(parameterName, out var last) && Mathf.Abs(last - parameterValue) < Epsilon)
+                return false;
+
+            perParam[parameterName] = parameterValue;
+            return true;
+        }
+    }
+
+    // Native GetParameterValue logs "parameter name does not exist." and returns 0f for a key not (yet)
+    // in m_ParameterValues — reproduces even through the fully native, unpatched OnGraphGUI path on trees
+    // with Direct-type children, so it's a native structural quirk, not something our patches cause or
+    // can otherwise fix. Mirror its own fallback (return 0f) without the log call.
+    [HarmonyPatch]
+    internal static class PatchGraphGetParameterValueSilentMissing
+    {
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod() => BlendTreePatchReflection.GraphGetParameterValueMethod;
+
+        [HarmonyPrefix]
+        static bool Prefix(object __instance, string parameterName, ref float __result)
+        {
+            if (BlendTreePatchReflection.GraphParameterValuesRef != null)
+            {
+                var values = BlendTreePatchReflection.GraphParameterValuesRef(__instance);
+                if (values != null && !values.ContainsKey(parameterName))
+                {
+                    __result = 0f;
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    // Throttles UpdateAnimator (full native Animator.EvaluateController per non-leaf node) — native NodeGUI
+    // runs it unconditionally every repaint for live edge-weight-color preview. Confirmed via diagnostic
+    // counter: ~500 calls/repaint on a large tree, dominant native GC.Alloc source under CallWindowDelegate.
+    // Preview coloring only needs to be visually smooth, not per-frame-exact — throttled to 15Hz per node.
+    [HarmonyPatch]
+    internal static class PatchBlendTreeUpdateAnimatorThrottle
+    {
+        const double ThrottleSeconds = 1.0 / 15.0;
+        static readonly Dictionary<object, double> _lastEvalTime = new();
+
+        static PatchBlendTreeUpdateAnimatorThrottle() =>
+            ObjectChangeEvents.changesPublished += (ref ObjectChangeEventStream _) => _lastEvalTime.Clear();
+
+        [HarmonyTargetMethod]
+        static MethodBase TargetMethod()
+        {
+            var nodeType = AccessTools.TypeByName("UnityEditor.Graphs.AnimationBlendTree.Node");
+            if (nodeType == null) return null;
+            return AccessTools.Method(nodeType, "UpdateAnimator");
+        }
+
+        [HarmonyPrefix]
+        static bool Prefix(object __instance)
+        {
+            double now = EditorApplication.timeSinceStartup;
+            if (_lastEvalTime.TryGetValue(__instance, out var last) && now - last < ThrottleSeconds)
+                return false;
+            _lastEvalTime[__instance] = now;
+            return true;
+        }
+    }
+
     // OnGraphGUI prefix+postfix: drives drag, drop, and sets blend tree GUI context flag for GetNodeStyle.
     [HarmonyPatch]
     internal static class PatchBlendTreeOnGraphGUI
@@ -269,6 +475,16 @@ namespace YGDR.Editor.Animation
         internal static bool InBlendTreeGUI { get; private set; }
         internal static object CurrentGraphGUI { get; private set; }
         internal static readonly Queue<BlendTreeType?> _blendTypeQueue = new Queue<BlendTreeType?>();
+
+        // Explicit per-call override for the lightweight idle/active draw path: GetNodeStyle's FIFO
+        // queue dequeue only lines up with the calling node when native OnGraphGUI's own node loop calls
+        // it once per node in order — TryDrawLightweightGraph doesn't (idle nodes share one resolved
+        // style, and the active node's window-chrome style is resolved before NodeGUI sets
+        // InNodeGUI/CurrentBlendType), so both cases silently pick up the wrong node's queued type. Set
+        // this immediately before invoking GetNodeStyleMethod so PatchNodeStyles.Postfix uses the correct
+        // type for THAT specific call instead of guessing from queue order.
+        internal static bool LightweightOverrideActive;
+        internal static BlendTreeType? LightweightOverrideBlendType;
 
         [HarmonyTargetMethod]
         static MethodBase TargetMethod()
@@ -341,7 +557,7 @@ namespace YGDR.Editor.Animation
         }
 
         [HarmonyPrefix]
-        static void Prefix(object __instance)
+        static bool Prefix(object __instance)
         {
             try
             {
@@ -426,7 +642,381 @@ namespace YGDR.Editor.Animation
             }
             }
             catch (ExitGUIException) { throw; }
-            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchBlendTreeOnGraphGUI.Prefix: {e}"); }
+            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchBlendTreeOnGraphGUI.Prefix: {e}"); return true; }
+
+            bool handled;
+            try { handled = TryDrawLightweightGraph(__instance); }
+            catch (ExitGUIException) { throw; }
+            catch (Exception e) { Debug.LogError($"[AnimatorTools] PatchBlendTreeOnGraphGUI lightweight draw error: {e}"); handled = false; }
+            return !handled;
+        }
+
+        const int LightweightNodeThreshold = 100;
+
+        // Reimplements base GraphGUI.OnGraphGUI's node loop (decompiled reference: foreach node,
+        // GUILayout.Window(id, position, NodeGUI, title, style)). GUILayout.Window carries fixed
+        // per-call overhead (ID hashing, event routing, drag/focus state) that dominates cost on
+        // large trees regardless of zoom — confirmed via profiler, unaffected by caching/throttling.
+        // Only the active node (selected/dragging/hovered) gets a real window; everyone else gets
+        // a cheap static box. Gated to trees above LightweightNodeThreshold; small trees are
+        // unaffected. Any missing reflection member safely falls back to running native original.
+        static bool TryDrawLightweightGraph(object graphGUI)
+        {
+            if (BlendTreePatchReflection.GraphGUIGraphGetter == null || BlendTreePatchReflection.NodeGUIMethod == null) return false;
+            if (BlendTreePatchReflection.HostGetter == null || BlendTreePatchReflection.HostBeginWindowsMethod == null
+                || BlendTreePatchReflection.HostEndWindowsMethod == null)
+                return false;
+            if (BlendTreePatchReflection.EdgeGUIGetter == null || BlendTreePatchReflection.EdgeGUIDoEdgesMethod == null
+                || BlendTreePatchReflection.DragSelectionMethod == null || BlendTreePatchReflection.ShowContextMenuMethod == null
+                || BlendTreePatchReflection.HandleMenuEventsMethod == null)
+                return false;
+
+            var graph = BlendTreePatchReflection.GraphGUIGraphGetter.Invoke(graphGUI, null);
+            if (graph == null) return false;
+
+            // Matches native OnGraphGUI's own first line — refreshes m_ParameterValues from
+            // m_RootBlendTree's recursive set. We fully replace OnGraphGUI below, so without this
+            // the dict is only ever populated once (at BuildFromBlendTree/breadcrumb-nav time).
+            try
+            {
+                BlendTreePatchReflection.GraphPopulateParameterValuesMethod?.Invoke(graph, null);
+            }
+            catch (TargetInvocationException) { /* mirrors native: logs internally, doesn't throw through */ }
+
+            var rawNodes = PatchGraphInputHandler.GetNodes(graph);
+            if (rawNodes == null) return false;
+
+            var nodes = new List<object>();
+            foreach (var node in rawNodes) nodes.Add(node);
+            if (nodes.Count < LightweightNodeThreshold) return false;
+
+            var host = BlendTreePatchReflection.HostGetter(graphGUI);
+            if (host == null) return false;
+
+            var mousePos = Event.current.mousePosition;
+            var settings = AnimatorDefaultSettings.Load();
+            var idleStyleCache = new Dictionary<int, GUIStyle>();
+            var paramValues = BuildParamValueCache(graph, nodes);
+
+            BlendTreePatchReflection.HostBeginWindowsMethod.Invoke(host, null);
+            foreach (var node in nodes)
+            {
+                var proxy = new BlendTreePatchReflection.BlendTreeNodeProxy(node);
+                var rect = proxy.Position;
+                bool isActive = ReferenceEquals(node, PatchBlendTreeNodeGUI.SelectedNode)
+                    || ReferenceEquals(node, BlendTreeReparentState.DraggingNode)
+                    || rect.Contains(mousePos);
+
+                if (isActive)
+                    proxy.Position = DrawActiveNodeWindow(graphGUI, node, rect);
+                else
+                    DrawLightweightNodeBox(node, proxy, rect, settings, mousePos, GetIdleNodeStyle(node, idleStyleCache), paramValues);
+            }
+            BlendTreePatchReflection.HostEndWindowsMethod.Invoke(host, null);
+
+            var edgeGUI = BlendTreePatchReflection.EdgeGUIGetter(graphGUI);
+            if (edgeGUI != null)
+            {
+                BlendTreePatchReflection.EdgeGUIDoEdgesMethod.Invoke(edgeGUI, null);
+                BlendTreePatchReflection.EdgeGUIDoDraggedEdgeMethod?.Invoke(edgeGUI, null);
+            }
+            // Native DragSelection syncs Selection.activeObject to the owning (sub)BlendTree asset
+            // whenever it sees an empty selection — pings it on every single background click since
+            // our SelectedNode field bypasses graph.selection. Only forward double clicks (breadcrumb
+            // back-navigation); handle single clicks (deselect) ourselves.
+            var backgroundEvent = Event.current;
+            if (backgroundEvent.type == EventType.MouseDown && backgroundEvent.button == 0)
+            {
+                if (backgroundEvent.clickCount >= 2)
+                {
+                    BlendTreePatchReflection.DragSelectionMethod.Invoke(graphGUI, null);
+                }
+                else
+                {
+                    PatchBlendTreeNodeGUI.SelectedNode = null;
+                    backgroundEvent.Use();
+                }
+            }
+            BlendTreePatchReflection.ShowContextMenuMethod.Invoke(graphGUI, null);
+            BlendTreePatchReflection.HandleMenuEventsMethod.Invoke(graphGUI, null);
+            return true;
+        }
+
+        /* Builds paramName -> currentValue once per call (values are graph-wide, not per-node) so idle
+           slider rows don't re-fetch the same value once per node — O(distinct params), not O(nodes). */
+        static Dictionary<string, float> BuildParamValueCache(object graph, List<object> nodes)
+        {
+            var cache = new Dictionary<string, float>();
+            if (BlendTreePatchReflection.GraphParameterValuesRef == null) return cache;
+            var rawValues = BlendTreePatchReflection.GraphParameterValuesRef(graph);
+            if (rawValues == null) return cache;
+
+            foreach (var node in nodes)
+            {
+                var motion = new BlendTreePatchReflection.BlendTreeNodeProxy(node).Motion;
+                if (motion is not BlendTree blendTree) continue;
+                foreach (var entry in BlendTreeRecursiveParamCache.Get(blendTree))
+                {
+                    if (entry.Name == null || cache.ContainsKey(entry.Name)) continue;
+
+                    if (!rawValues.TryGetValue(entry.Name, out var value))
+                    {
+                        // graph's populated set (from m_RootBlendTree's own recursive walk) doesn't
+                        // always cover a nested child's recursive params (Direct-type children in
+                        // particular) — seed it via the real native setter so both our lookups and
+                        // native NodeGUI's own GetParameterValue calls stop logging "parameter name
+                        // does not exist." for it.
+                        value = BlendTreePatchReflection.BlendTreeGetInputBlendValueMethod != null
+                            ? (float)(BlendTreePatchReflection.BlendTreeGetInputBlendValueMethod.Invoke(blendTree, new object[] { entry.Name }) ?? 0f)
+                            : 0f;
+                        BlendTreePatchReflection.GraphSetParameterValueMethod?.Invoke(graph, new object[] { entry.Name, value });
+                    }
+                    cache[entry.Name] = value;
+                }
+            }
+            return cache;
+        }
+
+        /* Cheap non-interactive replica of native LayoutSlot rows (input/output pins connecting edges to
+           child/parent nodes) — label only, reusing the real Styles.varPinIn/varPinOut GUIStyle so it
+           matches native look. Returns the y position after the drawn rows. */
+        static GUIStyle _pinInRowStyle, _pinOutRowStyle;
+
+        /* Returns a cached copy of the native pin GUIStyle with alignment forced — input pins read left
+           (near the node's left edge), output pins read right (flush against the edge line's start). */
+        static GUIStyle GetPinRowStyle(FieldInfo pinStyleField, TextAnchor alignment, ref GUIStyle cache)
+        {
+            if (cache != null) return cache;
+            var baseStyle = pinStyleField?.GetValue(null) as GUIStyle;
+            if (baseStyle == null) return null;
+            cache = new GUIStyle(baseStyle) { alignment = alignment };
+            return cache;
+        }
+
+        const float SlotRowHeight = 12f;
+        // Shared with MeasureNodeContentHeight — keep these in sync with the draw math in
+        // DrawLightweightNodeBox/DrawIdleSliderRows so the box stays sized to fit its content.
+        const float TitleAreaHeight = 29f;
+        const float SliderRowHeight = 18f, SliderRowSpacing = 2f, SliderSectionGap = 2f;
+
+        /* Shortens text with a trailing "..." until it fits maxWidth under style — cheap binary search,
+           only ever run over a handful of slot rows per node, never per-repaint over the whole tree. */
+        static string TruncateToWidth(string text, float maxWidth, GUIStyle style)
+        {
+            if (string.IsNullOrEmpty(text) || style == null) return text;
+            if (style.CalcSize(new GUIContent(text)).x <= maxWidth) return text;
+            const string ellipsis = "...";
+            int lo = 0, hi = text.Length;
+            string result = ellipsis;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                var candidate = text.Substring(0, mid) + ellipsis;
+                if (style.CalcSize(new GUIContent(candidate)).x <= maxWidth) { result = candidate; lo = mid; }
+                else hi = mid - 1;
+            }
+            return result;
+        }
+
+        static float DrawIdleSlotRows(object node, Rect nodeRect, float rowY, Func<object, object> slotsGetter, FieldInfo pinStyleField, TextAnchor alignment, ref GUIStyle styleCache)
+        {
+            if (slotsGetter == null) return rowY;
+            if (slotsGetter(node) is not IEnumerable slots) return rowY;
+            var pinStyle = GetPinRowStyle(pinStyleField, alignment, ref styleCache);
+            foreach (var slot in slots)
+            {
+                var title = (BlendTreePatchReflection.SlotTitleRef != null ? BlendTreePatchReflection.SlotTitleRef(slot) : null) ?? "";
+                var slotRect = new Rect(nodeRect.x, rowY, nodeRect.width, SlotRowHeight);
+                title = TruncateToWidth(title, 180f, pinStyle); // matches native LimitStringWidth(title, 180f, pinStyle)
+                GUI.Label(slotRect, title, pinStyle ?? EditorStyles.miniLabel);
+
+                // Native DoSlot sets slot.m_Position every NodeGUI call; idle nodes skip NodeGUI entirely,
+                // so without this, EdgeGUI reads a stale/zero rect and draws edges from the corner.
+                if (BlendTreePatchReflection.SlotPositionRef != null)
+                {
+                    var unclipped = BlendTreePatchReflection.GUIClipUnclip != null
+                        ? BlendTreePatchReflection.GUIClipUnclip(slotRect)
+                        : slotRect;
+                    BlendTreePatchReflection.SlotPositionRef(slot) = unclipped;
+                }
+
+                rowY += SlotRowHeight;
+            }
+            return rowY;
+        }
+
+        /* Cheap non-interactive replica of NodeGUI's per-parameter EditorGUILayout.Slider rows — label +
+           track + thumb drawn from cached values, no live Slider control (that's the expensive part). */
+        static GUIStyle _sliderLabelStyle;
+
+        static void DrawIdleSliderRows(Rect nodeRect, float rowY, BlendTree blendTree, Dictionary<string, float> paramValues)
+        {
+            const float rowHeight = SliderRowHeight, rowSpacing = SliderRowSpacing, labelWidth = 50f, padding = 3f, valueWidth = 45f;
+            _sliderLabelStyle ??= new GUIStyle(EditorStyles.label) { alignment = TextAnchor.MiddleLeft };
+            float thumbWidth = GUI.skin.horizontalSliderThumb.fixedWidth > 0f ? GUI.skin.horizontalSliderThumb.fixedWidth : 12f;
+            float thumbHeight = GUI.skin.horizontalSliderThumb.fixedHeight > 0f ? GUI.skin.horizontalSliderThumb.fixedHeight : 12f;
+            foreach (var entry in BlendTreeRecursiveParamCache.Get(blendTree))
+            {
+                if (entry.Name == null) continue;
+                var rowRect   = new Rect(nodeRect.x + padding, rowY, nodeRect.width - padding * 2f, rowHeight);
+                var labelRect = new Rect(rowRect.x, rowRect.y, labelWidth, rowRect.height);
+                var valueRect = new Rect(rowRect.xMax - valueWidth, rowRect.y, valueWidth, rowRect.height);
+                var trackRect = new Rect(rowRect.x + labelWidth, rowRect.y, rowRect.width - labelWidth - valueWidth, rowRect.height);
+
+                GUI.Label(labelRect, entry.Name, _sliderLabelStyle);
+                // Full row-height boxes: GUI.skin.horizontalSlider/horizontalSliderThumb bake their own
+                // padding to center the thin bar/circle within whatever height they're given — squeezing
+                // them into a manually shrunk rect breaks that built-in centering.
+                GUI.Box(trackRect, GUIContent.none, GUI.skin.horizontalSlider);
+
+                float value = paramValues.TryGetValue(entry.Name, out var v) ? v : 0f;
+                float max = Mathf.Approximately(entry.Max, entry.Min) ? entry.Min + 1f : entry.Max;
+                float t = Mathf.InverseLerp(entry.Min, max, value);
+                var thumbRect = new Rect(trackRect.x + t * (trackRect.width - thumbWidth), trackRect.y + (trackRect.height - thumbHeight) / 2f, thumbWidth, thumbHeight);
+                GUI.Box(thumbRect, GUIContent.none, GUI.skin.horizontalSliderThumb);
+
+                GUI.Label(valueRect, value.ToString("0.#####"), _sliderLabelStyle);
+
+                rowY += rowHeight + rowSpacing;
+            }
+        }
+
+        /* Replica of PatchBlendTreeNodeGUI.Postfix's top-left blend-type badge and top-right threshold label,
+           since idle nodes never run through NodeGUI (and thus never through that postfix) at all. */
+        static void DrawIdleTypeAndThresholdLabels(BlendTreePatchReflection.BlendTreeNodeProxy proxy, Rect rect, BlendTree blendTree, Color color)
+        {
+            if (blendTree != null)
+            {
+                var typeRect = new Rect(rect.x + 2f, rect.y + 3f, 70f, 11f);
+                GUI.Label(typeRect, PatchBlendTreeNodeGUI.BlendTypeLabel(blendTree.blendType), PatchBlendTreeNodeGUI.GetBlendTypeLabelStyle(color));
+            }
+
+            var parentNode = proxy.Parent;
+            if (parentNode == null) return;
+            var parentBlendTree = new BlendTreePatchReflection.BlendTreeNodeProxy(parentNode).Motion as BlendTree;
+            if (parentBlendTree == null || parentBlendTree.blendType != BlendTreeType.Simple1D) return;
+            int childIndex = proxy.ChildIndex;
+            if (childIndex < 0 || childIndex >= parentBlendTree.children.Length) return;
+            float threshold = parentBlendTree.children[childIndex].threshold;
+            var thresholdRect = new Rect(rect.xMax - 40f, rect.y + 3f, 38f, 11f);
+            GUI.Label(thresholdRect, threshold.ToString("0.###"), PatchBlendTreeNodeGUI.GetThresholdLabelStyle(color));
+        }
+
+        /* Fetches the native node GUIStyle once per repaint (unselected, from a representative node) so all
+           idle boxes share the real background/border look instead of a flat default GUI.skin.box.
+           Cached per blend type (not per node) — style/texture generation is already cached by
+           PatchNodeStyles keyed on that type, so this just dedupes the reflection Invoke call. */
+        static GUIStyle GetIdleNodeStyle(object node, Dictionary<int, GUIStyle> cache)
+        {
+            var blendType = GetNodeBlendType(node);
+            int cacheKey = blendType.HasValue ? (int)blendType.Value : -1; // Dictionary<Nullable<T>,_> throws on a null key
+            if (cache.TryGetValue(cacheKey, out var cached)) return cached;
+
+            var result = ResolveNodeStyle(node, selected: false, blendType);
+            cache[cacheKey] = result;
+            return result;
+        }
+
+        static BlendTreeType? GetNodeBlendType(object node) =>
+            new BlendTreePatchReflection.BlendTreeNodeProxy(node).Motion is BlendTree blendTree ? blendTree.blendType : (BlendTreeType?)null;
+
+        /* Resolves the native node GUIStyle for one node, routing color through the lightweight-path
+           override so idle/active nodes get their real per-blend-type color instead of falling through
+           to native's FIFO queue (see AnimatorNodeColorPatch.PatchNodeStyles.Postfix). */
+        static GUIStyle ResolveNodeStyle(object node, bool selected, BlendTreeType? blendType)
+        {
+            if (BlendTreePatchReflection.GetNodeStyleMethod == null) return null;
+            object style = BlendTreePatchReflection.NodeStyleGetter?.Invoke(node);
+            object color = BlendTreePatchReflection.NodeColorGetter?.Invoke(node);
+            if (style == null || color == null) return null;
+
+            PatchBlendTreeOnGraphGUI.LightweightOverrideActive    = true;
+            PatchBlendTreeOnGraphGUI.LightweightOverrideBlendType = blendType;
+            var result = BlendTreePatchReflection.GetNodeStyleMethod.Invoke(null, new[] { style, color, selected }) as GUIStyle;
+            PatchBlendTreeOnGraphGUI.LightweightOverrideActive = false;
+            return result;
+        }
+
+        /* Draws the real native window for the currently active node — same call shape as native OnGraphGUI. */
+        static Rect DrawActiveNodeWindow(object graphGUI, object node, Rect rect)
+        {
+            bool selected = ReferenceEquals(node, PatchBlendTreeNodeGUI.SelectedNode);
+            // Called before NodeGUI runs, so InNodeGUI/CurrentBlendType aren't set yet — resolve
+            // this node's own type explicitly instead of falling through to the FIFO queue.
+            var nodeStyle = ResolveNodeStyle(node, selected, GetNodeBlendType(node));
+
+            return GUILayout.Window(node.GetHashCode(), rect, delegate
+            {
+                try { BlendTreePatchReflection.NodeGUIMethod.Invoke(graphGUI, new[] { node }); }
+                catch (TargetInvocationException) { /* graph's param dict lags one frame after breadcrumb nav — self-heals next repaint */ }
+            }, "", nodeStyle ?? GUI.skin.window, GUILayout.Width(0f), GUILayout.Height(0f));
+        }
+
+        /* Cheap static replica for an idle (non-interacted) node — box + name label, no GUILayout.Window.
+           ponytail: no native focus ring / title-bar-only drag; click anywhere promotes to SelectedNode,
+           real window takes over next repaint (one-frame hitch). Traded for skipping Window() on ~all nodes. */
+        static void DrawLightweightNodeBox(object node, BlendTreePatchReflection.BlendTreeNodeProxy proxy, Rect rect, AnimatorDefaultSettings settings, Vector2 mousePos, GUIStyle idleNodeStyle, Dictionary<string, float> paramValues)
+        {
+            var currentEvent = Event.current;
+            if (currentEvent.type == EventType.Repaint)
+            {
+                var motion = proxy.Motion;
+                // proxy.Position.height only gets auto-sized by native when the node actually runs
+                // real NodeGUI at least once (see DrawActiveNodeWindow) — idle nodes never do, so a
+                // never-hovered node's stored height can be stale/short. Grow the box to fit what
+                // we're about to draw instead of trusting it, so content never spills past the border.
+                if (motion != null)
+                {
+                    float contentHeight = MeasureNodeContentHeight(node, motion as BlendTree);
+                    if (contentHeight > rect.height) rect.height = contentHeight;
+                }
+
+                GUI.Box(rect, GUIContent.none, idleNodeStyle ?? GUI.skin.box);
+                if (motion != null)
+                {
+                    var titleRect = new Rect(rect.x, rect.y + 5f, rect.width, 18f);
+                    GUI.Label(titleRect, motion.name, PatchBlendTreeNodeGUI.GetNameLabelStyle(settings.overlayActiveColor));
+                    float rowY = rect.y + TitleAreaHeight;
+
+                    rowY = DrawIdleSlotRows(node, rect, rowY, BlendTreePatchReflection.NodeInputSlotsGetter, BlendTreePatchReflection.VarPinInField, TextAnchor.MiddleLeft, ref _pinInRowStyle);
+                    rowY = DrawIdleSlotRows(node, rect, rowY, BlendTreePatchReflection.NodeOutputSlotsGetter, BlendTreePatchReflection.VarPinOutField, TextAnchor.MiddleRight, ref _pinOutRowStyle);
+
+                    if (motion is BlendTree blendTree)
+                        DrawIdleSliderRows(rect, rowY + SliderSectionGap, blendTree, paramValues);
+
+                    if (settings.overlayEnabled)
+                        DrawIdleTypeAndThresholdLabels(proxy, rect, motion as BlendTree, settings.overlayActiveColor);
+                }
+            }
+            else if (currentEvent.type == EventType.MouseDown && currentEvent.button == 0 && rect.Contains(mousePos))
+            {
+                PatchBlendTreeNodeGUI.SelectedNode = node;
+                if (proxy.Parent != null)
+                    BlendTreeReparentState.DragCandidate = node;
+                currentEvent.Use();
+            }
+        }
+
+        /* Same row math as the draw calls below (title + pin rows + slider rows), just totalled up
+           front instead of drawn, so the box can be sized to fit before anything is rendered into it. */
+        static float MeasureNodeContentHeight(object node, BlendTree blendTree)
+        {
+            float height = TitleAreaHeight
+                + CountSlots(BlendTreePatchReflection.NodeInputSlotsGetter, node) * SlotRowHeight
+                + CountSlots(BlendTreePatchReflection.NodeOutputSlotsGetter, node) * SlotRowHeight;
+
+            int paramCount = blendTree != null ? BlendTreeRecursiveParamCache.Get(blendTree).Length : 0;
+            if (paramCount > 0) height += SliderSectionGap + paramCount * (SliderRowHeight + SliderRowSpacing);
+
+            return height + 4f; // bottom margin
+        }
+
+        static int CountSlots(Func<object, object> slotsGetter, object node)
+        {
+            if (slotsGetter?.Invoke(node) is not IEnumerable slots) return 0;
+            int count = 0;
+            foreach (var _ in slots) count++;
+            return count;
         }
 
         [HarmonyPostfix]

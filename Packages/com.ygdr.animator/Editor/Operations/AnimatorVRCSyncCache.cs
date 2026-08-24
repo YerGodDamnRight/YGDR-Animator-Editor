@@ -359,6 +359,54 @@ namespace YGDR.Editor.Animation
         internal static GameObject GetSearchRoot() =>
             _cachedAvatarRoot ?? _cachedSelectedGO;
 
+        // Drops the cached avatar binding so this cache stops driving any sync ops (param sync
+        // badges, eager force-push of the controller into the native window) for the currently
+        // selected GameObject. Used when the user is deliberately editing a controller that
+        // doesn't match what's linked on that GameObject's Animator component — resumes normally
+        // once Selection actually changes and this class's own selectionChanged handler rebinds.
+        internal static void InvalidateBinding() => ClearCache();
+
+        // True if controller is any layer on the avatar's VRCAvatarDescriptor, or any VRCFury
+        // FullController's assigned controller, anywhere under the current search root — not just
+        // the one Selection's Animator component happens to be linked to.
+        internal static bool AvatarOwnsController(AnimatorController controller)
+        {
+            if (controller == null) return false;
+            var avatarRoot = GetSearchRoot();
+            if (avatarRoot == null) return false;
+
+            var descriptor = avatarRoot.GetComponent<VRCAvatarDescriptor>();
+            if (descriptor != null)
+            {
+                foreach (var layer in descriptor.baseAnimationLayers)
+                    if (layer.animatorController == controller) return true;
+                foreach (var layer in descriptor.specialAnimationLayers)
+                    if (layer.animatorController == controller) return true;
+            }
+
+            if (!EnsureVrcFuryReflection()) return false;
+            foreach (var component in avatarRoot.GetComponentsInChildren(_vrcfuryType, true))
+            {
+                var features = _getAllFeaturesMethod.Invoke(component, null) as System.Collections.IEnumerable;
+                if (features == null) continue;
+                foreach (var feature in features)
+                {
+                    if (feature?.GetType().FullName != "VF.Model.Feature.FullController") continue;
+                    var featureType = feature.GetType();
+                    var entries = AccessTools.Field(featureType, "controllers")?.GetValue(feature) as System.Collections.IEnumerable;
+                    if (entries == null) continue;
+                    foreach (var entry in entries)
+                    {
+                        if (entry == null) continue;
+                        var guidRef = AccessTools.Field(entry.GetType(), "controller")?.GetValue(entry);
+                        if (guidRef == null) continue;
+                        if (AccessTools.Field(guidRef.GetType(), "objRef")?.GetValue(guidRef) as AnimatorController == controller) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         internal static List<VRCExpressionsMenu> GetVrcFuryExpressionsMenus()
         {
             var result = new List<VRCExpressionsMenu>();

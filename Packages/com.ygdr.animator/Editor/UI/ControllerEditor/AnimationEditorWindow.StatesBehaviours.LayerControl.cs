@@ -124,6 +124,37 @@ namespace YGDR.Editor.Animation
         static bool IsExpandedByDefault(Dictionary<string, bool> expandedByName, string name)
             => !expandedByName.TryGetValue(name, out var stored) || stored;
 
+        static VisualElement BuildGoalWeightRow(float value, bool showMixedValue, Action<float> onChanged)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-behavior-field-row");
+            var label = new Label(L10n.Get("vrc.goal_weight")) { tooltip = L10n.Get("vrc.tooltip.goal_weight") };
+            label.AddToClassList("ygdr-behavior-field-label");
+            row.Add(label);
+
+            var slider = new Slider(0f, 1f) { value = value, showMixedValue = showMixedValue };
+            slider.AddToClassList("ygdr-menu-value-slider");
+            var floatField = new FloatField { value = value, showMixedValue = showMixedValue };
+            floatField.AddToClassList("ygdr-menu-value-field");
+
+            slider.RegisterValueChangedCallback(evt =>
+            {
+                floatField.SetValueWithoutNotify(evt.newValue);
+                onChanged(evt.newValue);
+            });
+            floatField.RegisterValueChangedCallback(evt =>
+            {
+                float clamped = Mathf.Clamp01(evt.newValue);
+                floatField.SetValueWithoutNotify(clamped);
+                slider.SetValueWithoutNotify(clamped);
+                onChanged(clamped);
+            });
+
+            row.Add(slider);
+            row.Add(floatField);
+            return row;
+        }
+
         VisualElement BuildLayerControlInstanceBody(AnimatorState[] statesWithName, Func<AnimatorState, VRCAnimatorLayerControl> resolver)
         {
             var body = new VisualElement();
@@ -164,18 +195,17 @@ namespace YGDR.Editor.Animation
             });
             body.Add(BuildBehaviorFieldRow(L10n.Get("vrc.layer"), L10n.Get("vrc.tooltip.sub_layer_index"), layerField));
 
-            var goalWeightField = new Slider(0f, 1f) { value = first.goalWeight, showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(resolver(state).goalWeight, first.goalWeight)) };
-            goalWeightField.RegisterValueChangedCallback(evt =>
-            {
-                foreach (var state in statesWithName)
+            body.Add(BuildGoalWeightRow(first.goalWeight, multi && statesWithControl.Any(state => !Mathf.Approximately(resolver(state).goalWeight, first.goalWeight)),
+                newValue =>
                 {
-                    var control = GetOrCreateLayerControl(state, resolver);
-                    Undo.RecordObject(control, "Edit Layer Control Goal Weight");
-                    control.goalWeight = evt.newValue;
-                    EditorUtility.SetDirty(control);
-                }
-            });
-            body.Add(BuildBehaviorFieldRow(L10n.Get("vrc.goal_weight"), L10n.Get("vrc.tooltip.goal_weight"), goalWeightField));
+                    foreach (var state in statesWithName)
+                    {
+                        var control = GetOrCreateLayerControl(state, resolver);
+                        Undo.RecordObject(control, "Edit Layer Control Goal Weight");
+                        control.goalWeight = newValue;
+                        EditorUtility.SetDirty(control);
+                    }
+                }));
 
             var blendDurationField = new FloatField { value = first.blendDuration, showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(resolver(state).blendDuration, first.blendDuration)) };
             blendDurationField.RegisterValueChangedCallback(evt =>
@@ -290,18 +320,17 @@ namespace YGDR.Editor.Animation
             });
             body.Add(BuildBehaviorFieldRow(L10n.Get("vrc.layer"), L10n.Get("vrc.tooltip.layer"), layerField));
 
-            var goalWeightField = new Slider(0f, 1f) { value = first.goalWeight, showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(resolver(state).goalWeight, first.goalWeight)) };
-            goalWeightField.RegisterValueChangedCallback(evt =>
-            {
-                foreach (var state in statesWithName)
+            body.Add(BuildGoalWeightRow(first.goalWeight, multi && statesWithControl.Any(state => !Mathf.Approximately(resolver(state).goalWeight, first.goalWeight)),
+                newValue =>
                 {
-                    var control = GetOrCreatePlayableLayer(state, resolver);
-                    Undo.RecordObject(control, "Edit Playable Layer Goal Weight");
-                    control.goalWeight = evt.newValue;
-                    EditorUtility.SetDirty(control);
-                }
-            });
-            body.Add(BuildBehaviorFieldRow(L10n.Get("vrc.goal_weight"), L10n.Get("vrc.tooltip.goal_weight"), goalWeightField));
+                    foreach (var state in statesWithName)
+                    {
+                        var control = GetOrCreatePlayableLayer(state, resolver);
+                        Undo.RecordObject(control, "Edit Playable Layer Goal Weight");
+                        control.goalWeight = newValue;
+                        EditorUtility.SetDirty(control);
+                    }
+                }));
 
             var blendDurationField = new FloatField { value = first.blendDuration, showMixedValue = multi && statesWithControl.Any(state => !Mathf.Approximately(resolver(state).blendDuration, first.blendDuration)) };
             blendDurationField.RegisterValueChangedCallback(evt =>

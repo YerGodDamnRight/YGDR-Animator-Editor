@@ -895,7 +895,7 @@ namespace YGDR.Editor.Animation
             AddResetButtonPlaceholder(header);
 
             var exitRow = MakeRow(body);
-            var hasExitLabel = new Label(L10n.Get("transitions.has_exit_time")); hasExitLabel.style.width = 160;
+            var hasExitLabel = new Label(L10n.Get("transitions.has_exit_time")); hasExitLabel.style.width = 220;
             exitRow.Add(hasExitLabel);
             var hasExitToggle = new Toggle { value = settings.transHasExitTime };
             hasExitToggle.RegisterValueChangedCallback(evt => { settings.transHasExitTime = evt.newValue; settings.Save(); });
@@ -908,7 +908,7 @@ namespace YGDR.Editor.Animation
             exitRow.Add(exitTimeField);
 
             var durationRow = MakeRow(body);
-            var hasFixedLabel = new Label(L10n.Get("transitions.has_fixed_duration")); hasFixedLabel.style.width = 160;
+            var hasFixedLabel = new Label(L10n.Get("transitions.has_fixed_duration")); hasFixedLabel.style.width = 220;
             durationRow.Add(hasFixedLabel);
             var hasFixedToggle = new Toggle { value = settings.transHasFixedDuration };
             hasFixedToggle.RegisterValueChangedCallback(evt => { settings.transHasFixedDuration = evt.newValue; settings.Save(); });
@@ -921,7 +921,7 @@ namespace YGDR.Editor.Animation
             durationRow.Add(durationField);
 
             var offsetRow = MakeRow(body);
-            var offsetLabel = new Label(L10n.Get("transitions.offset")); offsetLabel.style.width = 160;
+            var offsetLabel = new Label(L10n.Get("transitions.offset")); offsetLabel.style.width = 220;
             offsetRow.Add(offsetLabel);
             var offsetField = new FloatField { value = settings.transOffset };
             offsetField.style.flexGrow = 1;
@@ -929,7 +929,7 @@ namespace YGDR.Editor.Animation
             offsetRow.Add(offsetField);
 
             var interruptionRow = MakeRow(body);
-            var interruptionLabel = new Label(L10n.Get("transitions.interruption_source")); interruptionLabel.style.width = 160;
+            var interruptionLabel = new Label(L10n.Get("transitions.interruption_source")); interruptionLabel.style.width = 220;
             interruptionRow.Add(interruptionLabel);
             var interruptionChoices = new List<string>
             {
@@ -943,7 +943,7 @@ namespace YGDR.Editor.Animation
             interruptionRow.Add(interruptionPopup);
 
             var orderedRow = MakeRow(body);
-            var orderedLabel = new Label(L10n.Get("transitions.ordered_interruption")); orderedLabel.style.width = 160;
+            var orderedLabel = new Label(L10n.Get("transitions.ordered_interruption")); orderedLabel.style.width = 220;
             orderedRow.Add(orderedLabel);
             var orderedToggle = new Toggle { value = settings.transOrderedInterruption };
             orderedToggle.RegisterValueChangedCallback(evt => { settings.transOrderedInterruption = evt.newValue; settings.Save(); });
@@ -956,14 +956,21 @@ namespace YGDR.Editor.Animation
             orderedRow.Add(muteToggle);
 
             var soloRow = MakeRow(body);
-            var soloLabel = new Label(L10n.Get("transitions.solo")); soloLabel.style.width = 160;
+            var soloLabel = new Label(L10n.Get("transitions.solo")); soloLabel.style.width = 220;
             soloRow.Add(soloLabel);
             var soloToggle = new Toggle { value = settings.transSolo };
             soloToggle.RegisterValueChangedCallback(evt => { settings.transSolo = evt.newValue; settings.Save(); });
             soloRow.Add(soloToggle);
 
+            var canTransitionToSelfRow = MakeRow(body);
+            var canTransitionToSelfLabel = new Label(L10n.Get("transitions.can_transition_to_self_anystate")); canTransitionToSelfLabel.style.width = 220;
+            canTransitionToSelfRow.Add(canTransitionToSelfLabel);
+            var canTransitionToSelfToggle = new Toggle { value = settings.transCanTransitionToSelfAnyState };
+            canTransitionToSelfToggle.RegisterValueChangedCallback(evt => { settings.transCanTransitionToSelfAnyState = evt.newValue; settings.Save(); });
+            canTransitionToSelfRow.Add(canTransitionToSelfToggle);
+
             var writeDefaultsRow = MakeRow(body);
-            var writeDefaultsLabel = new Label($"{L10n.Get("states.write_defaults")} ({L10n.Get("settings.section.state_defaults")})"); writeDefaultsLabel.style.width = 160;
+            var writeDefaultsLabel = new Label($"{L10n.Get("states.write_defaults")} ({L10n.Get("settings.section.state_defaults")})"); writeDefaultsLabel.style.width = 220;
             writeDefaultsRow.Add(writeDefaultsLabel);
             var writeDefaultsToggle = new Toggle { value = settings.stateWriteDefaultValues };
             writeDefaultsToggle.RegisterValueChangedCallback(evt => { settings.stateWriteDefaultValues = evt.newValue; settings.Save(); });

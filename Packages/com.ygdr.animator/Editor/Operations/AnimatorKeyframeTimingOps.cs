@@ -304,6 +304,140 @@ namespace YGDR.Editor.Animation
 
             InternalEditorUtility.RepaintAllViews();
         }
+
+        // Shifts every keyframe's value on the given bindings by a fixed offset.
+        internal static void OffsetKeyframes(
+            List<(AnimationClip clip, EditorCurveBinding binding)> orderedBindings, float offset)
+        {
+            foreach (var (clip, bindings) in GroupByClip(orderedBindings))
+            {
+                Undo.RegisterCompleteObjectUndo(clip, "Offset Keyframes");
+                foreach (var binding in bindings)
+                {
+                    var curve = AnimationUtility.GetEditorCurve(clip, binding);
+                    if (curve == null || curve.length == 0) continue;
+
+                    var keys = curve.keys;
+                    for (int k = 0; k < keys.Length; k++)
+                        keys[k].value += offset;
+                    curve.keys = keys;
+                    AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
+            }
+
+            InternalEditorUtility.RepaintAllViews();
+        }
+
+        // Same value offset as OffsetKeyframes, but expanded from the selected bindings to
+        // every clip on the controller carrying a matching path/type/propertyName binding —
+        // e.g. offsetting one clip's rotation.z also offsets every other clip's rotation.z.
+        internal static void OffsetKeyframesAllClips(
+            List<(AnimationClip clip, EditorCurveBinding binding)> orderedBindings,
+            UnityEditor.Animations.AnimatorController controller, float offset)
+        {
+            var targetBindings = orderedBindings.Select(entry => entry.binding).Distinct().ToList();
+
+            var expanded = new List<(AnimationClip clip, EditorCurveBinding binding)>();
+            foreach (var clip in AnimatorClipRemapper.CollectAllClips(controller))
+            {
+                var clipBindings = AnimationUtility.GetCurveBindings(clip);
+                foreach (var target in targetBindings)
+                {
+                    foreach (var candidate in clipBindings)
+                    {
+                        if (candidate.path == target.path && candidate.type == target.type
+                            && candidate.propertyName == target.propertyName)
+                        {
+                            expanded.Add((clip, candidate));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            OffsetKeyframes(expanded, offset);
+        }
+
+        // Adds an independent random offset in [-maxBound, maxBound] to each keyframe's value.
+        internal static void JitterKeyframes(
+            List<(AnimationClip clip, EditorCurveBinding binding)> orderedBindings, float maxBound)
+        {
+            foreach (var (clip, bindings) in GroupByClip(orderedBindings))
+            {
+                Undo.RegisterCompleteObjectUndo(clip, "Jitter Keyframes");
+                foreach (var binding in bindings)
+                {
+                    var curve = AnimationUtility.GetEditorCurve(clip, binding);
+                    if (curve == null || curve.length == 0) continue;
+
+                    var keys = curve.keys;
+                    for (int k = 0; k < keys.Length; k++)
+                        keys[k].value += UnityEngine.Random.Range(-maxBound, maxBound);
+                    curve.keys = keys;
+                    AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
+            }
+
+            InternalEditorUtility.RepaintAllViews();
+        }
+
+        // Same random-value-per-key jitter as JitterKeyframes, but restricted to the specific
+        // (clip, binding, time) keys the caller selected in the dopesheet, instead of every key
+        // on the binding.
+        internal static void JitterSelectedKeyframes(
+            List<(AnimationClip clip, EditorCurveBinding binding, float time)> selectedKeys, float maxBound)
+        {
+            foreach (var clipGroup in selectedKeys.GroupBy(entry => entry.clip))
+            {
+                var clip = clipGroup.Key;
+                Undo.RegisterCompleteObjectUndo(clip, "Jitter Selected Keyframes");
+                foreach (var bindingGroup in clipGroup.GroupBy(entry => entry.binding))
+                {
+                    var curve = AnimationUtility.GetEditorCurve(clip, bindingGroup.Key);
+                    if (curve == null || curve.length == 0) continue;
+
+                    var targetTimes = bindingGroup.Select(entry => entry.time).ToList();
+                    var keys = curve.keys;
+                    for (int k = 0; k < keys.Length; k++)
+                    {
+                        if (!targetTimes.Any(t => Mathf.Approximately(t, keys[k].time))) continue;
+                        keys[k].value += UnityEngine.Random.Range(-maxBound, maxBound);
+                    }
+    curve.keys = keys;
+                    AnimationUtility.SetEditorCurve(clip, bindingGroup.Key, curve);
+                }
+            }
+
+            InternalEditorUtility.RepaintAllViews();
+        }
+
+        // Linearly rescales each binding's own value range into [newMin, newMax], independently
+        // per binding — a flat curve (min == max) is left untouched since there's no range to scale.
+        internal static void RemapKeyframeRange(
+            List<(AnimationClip clip, EditorCurveBinding binding)> orderedBindings, float newMin, float newMax)
+        {
+            foreach (var (clip, bindings) in GroupByClip(orderedBindings))
+            {
+                Undo.RegisterCompleteObjectUndo(clip, "Remap Keyframe Range");
+                foreach (var binding in bindings)
+                {
+                    var curve = AnimationUtility.GetEditorCurve(clip, binding);
+                    if (curve == null || curve.length == 0) continue;
+
+                    var keys = curve.keys;
+                    float oldMin = keys.Min(key => key.value);
+                    float oldMax = keys.Max(key => key.value);
+                    if (Mathf.Approximately(oldMin, oldMax)) continue;
+
+                    for (int k = 0; k < keys.Length; k++)
+                        keys[k].value = newMin + (keys[k].value - oldMin) / (oldMax - oldMin) * (newMax - newMin);
+                    curve.keys = keys;
+                    AnimationUtility.SetEditorCurve(clip, binding, curve);
+                }
+            }
+
+            InternalEditorUtility.RepaintAllViews();
+        }
     }
 }
 #endif

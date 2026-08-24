@@ -170,6 +170,18 @@ namespace YGDR.Editor.Animation
         internal static readonly PropertyInfo AnimationWindowCurveBindingProperty =
             AccessTools.Property(AnimationWindowCurveType, "binding");
 
+        // AnimationWindowKeyframe / AnimationWindowState.selectedKeys — the dopesheet's actual
+        // per-key selection (as opposed to the row-level binding selection above), used by the
+        // "Jitter > Selected Keyframes" menu item to target only the keys the user selected.
+        internal static readonly Type AnimationWindowKeyframeType =
+            AccessTools.TypeByName("UnityEditorInternal.AnimationWindowKeyframe");
+        internal static readonly PropertyInfo AnimationWindowKeyframeCurveProperty =
+            AccessTools.Property(AnimationWindowKeyframeType, "curve");
+        internal static readonly PropertyInfo AnimationWindowKeyframeTimeProperty =
+            AccessTools.Property(AnimationWindowKeyframeType, "time");
+        internal static readonly PropertyInfo AnimationWindowStateSelectedKeysProperty =
+            AccessTools.Property(AnimationWindowStateType, "selectedKeys");
+
         // The popup doesn't reference its owning AnimationWindow directly, only the shared state object.
         internal static readonly FieldInfo AnimationWindowClipPopupStateField =
             AccessTools.Field(AnimationWindowClipPopupType, "state");

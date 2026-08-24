@@ -77,10 +77,10 @@ namespace YGDR.Editor.Animation
         {
             _cachedVersion    = null;
             _paletteApplied   = false;
-            _helpTransitions  = MdvHelpAction("Transitions", 62, 86);
-            _helpStates       = MdvHelpAction("States", 89, 136);
-            _helpController   = MdvHelpAction("Controller", 139, 192);
-            _helpSettings     = MdvHelpAction("Settings", 195, 293);
+            _helpTransitions  = MdvHelpAction("Transitions", 63, 94);
+            _helpStates       = MdvHelpAction("States", 97, 144);
+            _helpController   = MdvHelpAction("Controller", 147, 200);
+            _helpSettings     = MdvHelpAction("Settings", 203, 301);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;
@@ -88,6 +88,7 @@ namespace YGDR.Editor.Animation
             Undo.undoRedoPerformed += OnUndoRedo;
             EditorApplication.hierarchyChanged += OnHierarchyChangedRefresh;
             L10n.OnLanguageChanged += RefreshLocalizedLabels;
+            AssemblyReloadEvents.beforeAssemblyReload += TeardownTransitionPreview;
             wantsMouseMove = true;
             OnSelectionChanged();
         }
@@ -101,6 +102,8 @@ namespace YGDR.Editor.Animation
             EditorApplication.hierarchyChanged -= OnHierarchyChangedRefresh;
             SharedWindowStyles.UnregisterPaletteRefresh(RefreshPaletteColors);
             L10n.OnLanguageChanged -= RefreshLocalizedLabels;
+            AssemblyReloadEvents.beforeAssemblyReload -= TeardownTransitionPreview;
+            TeardownTransitionPreview();
             SetAutoRepathEnabled(false);
         }
 
@@ -203,14 +206,44 @@ namespace YGDR.Editor.Animation
             _subContextPath = BuildSubSMPath(controller, layerName, activeStateMachine);
             RefreshLayerBar();
             Repaint();
+#if VRC_SDK_VRCSDK3
+            InvalidateBindingIfDetached(controller);
+#endif
         }
+
+        static Animator GetSelectedAnimator() =>
+            Selection.activeGameObject != null ? Selection.activeGameObject.GetComponent<Animator>() : null;
 
         static AnimatorController TryGetControllerFromSelection()
         {
             if (Selection.activeObject is AnimatorController selectedController) return selectedController;
-            var animator = Selection.activeGameObject != null ? Selection.activeGameObject.GetComponent<Animator>() : null;
-            return animator != null ? animator.runtimeAnimatorController as AnimatorController : null;
+            var animator = GetSelectedAnimator();
+            if (animator == null) return null;
+            try { return animator.runtimeAnimatorController as AnimatorController; }
+            catch (MissingComponentException) { return null; }
         }
+
+#if VRC_SDK_VRCSDK3
+        // The user manually opened a controller that isn't what the selected GameObject's Animator
+        // component links to (still a real avatar-owned controller, e.g. editing a non-default layer
+        // directly). Stop VRCSyncCache from treating that GameObject as "bound" — that's what drives
+        // both the eager-sync force-push into the native window and the parameter-sync bookkeeping,
+        // neither of which should be fighting a deliberate, detached edit. Once selection actually
+        // moves elsewhere, VRCSyncCache's own Selection.selectionChanged handler rebinds normally.
+        static void InvalidateBindingIfDetached(AnimatorController editedController)
+        {
+            if (editedController == null || !VRCSyncCache.AvatarOwnsController(editedController)) return;
+            var animator = GetSelectedAnimator();
+            if (animator != null && animator.runtimeAnimatorController == editedController)
+            {
+                // Back to editing the GameObject's own linked controller — resync in case a prior
+                // divergent edit left the binding invalidated with no Selection change since to fix it.
+                VRCSyncCache.EnsureSynced();
+                return;
+            }
+            VRCSyncCache.InvalidateBinding();
+        }
+#endif
 
         AnimatorController TryGetControllerFromBlendTreeGraph()
         {
@@ -405,7 +438,7 @@ namespace YGDR.Editor.Animation
             if (!AnimatorDefaultSettings.Load().inspectorModeEnabled) return;
 
             bool stateSelected = _selectedStates.Length > 0;
-            bool transitionSelected = _selectedTransitions.Length > 0;
+            bool transitionSelected = _selectedTransitions.Length > 0 || _selectedEntryTransitions.Length > 0;
 
             SetTabOpen(0, transitionSelected);
             SetTabOpen(1, stateSelected);
