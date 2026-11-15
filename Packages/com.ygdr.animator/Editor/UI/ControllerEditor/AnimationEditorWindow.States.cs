@@ -863,6 +863,33 @@ namespace YGDR.Editor.Animation
             foreach (var childStateMachine in sm.stateMachines)
                 CollectStateNamesExcluding(childStateMachine.stateMachine, exclude, names);
         }
+
+        /* Renames newBehavior to "{name} (N)" if another behaviour of the same type on state already has that name. */
+        internal static void EnsureUniqueName(AnimatorState state, StateMachineBehaviour newBehavior)
+        {
+            var taken = new HashSet<string>(state.behaviours
+                .Where(b => b != newBehavior && b.GetType() == newBehavior.GetType())
+                .Select(b => b.name));
+            if (!taken.Contains(newBehavior.name)) return;
+
+            var baseName = newBehavior.name;
+            int suffix = 1;
+            string candidate;
+            do candidate = $"{baseName} ({++suffix})";
+            while (taken.Contains(candidate));
+            newBehavior.name = candidate;
+        }
+
+        /* Shifts array[oldIndex] to newIndex, preserving the order of everything between. */
+        static void MoveArrayElement<T>(T[] array, int oldIndex, int newIndex)
+        {
+            T item = array[oldIndex];
+            if (oldIndex < newIndex)
+                Array.Copy(array, oldIndex + 1, array, oldIndex, newIndex - oldIndex);
+            else
+                Array.Copy(array, newIndex, array, newIndex + 1, oldIndex - newIndex);
+            array[newIndex] = item;
+        }
     }
 }
 #endif

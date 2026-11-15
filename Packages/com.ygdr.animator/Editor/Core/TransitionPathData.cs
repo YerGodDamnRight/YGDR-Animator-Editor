@@ -53,6 +53,19 @@ namespace YGDR.Editor.Animation
 
         static int IdOf(AnimatorState state) => state == null ? 0 : state.GetInstanceID();
 
+        // Undo/redo swaps `entries` for freshly deserialized objects without touching _dataVersion, leaving
+        // _lookup pointing at stale entries (phantom manual-path edges that block native edge selection).
+        [InitializeOnLoadMethod]
+        static void InvalidateLookupsOnUndoRedo()
+        {
+            Undo.undoRedoPerformed += () =>
+            {
+                foreach (var pathData in Resources.FindObjectsOfTypeAll<TransitionPathData>())
+                    pathData.BumpVersion();
+                UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+            };
+        }
+
         void EnsureLookup()
         {
             if (_lookup != null && _lookupVersion == _dataVersion) return;

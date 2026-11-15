@@ -124,11 +124,13 @@ namespace YGDR.Editor.Animation
         static bool IsExpandedByDefault(Dictionary<string, bool> expandedByName, string name)
             => !expandedByName.TryGetValue(name, out var stored) || stored;
 
-        static VisualElement BuildGoalWeightRow(float value, bool showMixedValue, Action<float> onChanged)
+        static bool _isDraggingSlider;
+
+        static VisualElement BuildGoalWeightRow(float value, bool showMixedValue, Action<float> onChanged, string labelText = null, string tooltipText = null)
         {
             var row = new VisualElement();
             row.AddToClassList("ygdr-behavior-field-row");
-            var label = new Label(L10n.Get("vrc.goal_weight")) { tooltip = L10n.Get("vrc.tooltip.goal_weight") };
+            var label = new Label(labelText ?? L10n.Get("vrc.goal_weight")) { tooltip = labelText == null ? L10n.Get("vrc.tooltip.goal_weight") : tooltipText };
             label.AddToClassList("ygdr-behavior-field-label");
             row.Add(label);
 
@@ -137,6 +139,9 @@ namespace YGDR.Editor.Animation
             var floatField = new FloatField { value = value, showMixedValue = showMixedValue };
             floatField.AddToClassList("ygdr-menu-value-field");
 
+            slider.RegisterCallback<PointerDownEvent>(_ => _isDraggingSlider = true, TrickleDown.TrickleDown);
+            slider.RegisterCallback<PointerUpEvent>(_ => _isDraggingSlider = false, TrickleDown.TrickleDown);
+            slider.RegisterCallback<PointerCaptureOutEvent>(_ => _isDraggingSlider = false, TrickleDown.TrickleDown);
             slider.RegisterValueChangedCallback(evt =>
             {
                 floatField.SetValueWithoutNotify(evt.newValue);

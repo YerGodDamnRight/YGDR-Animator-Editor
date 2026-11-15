@@ -221,8 +221,29 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
             AnimatorParameterOps.CollectParameterDriverNames(controller, _conditionUsedParams);
 #endif
+#if VRC_SDK_BITWIDTH
+            _valueRanges = AnimatorParameterOps.CollectParameterValueRanges(controller);
+#endif
             return _conditionUsedParams;
         }
+
+#if VRC_SDK_BITWIDTH
+        static Dictionary<string, (float min, float max)> _valueRanges;
+
+        static GUIContent _rangeWarningIcon;
+        static GUIContent RangeWarningIcon => _rangeWarningIcon ??= EditorGUIUtility.IconContent("console.warnicon.sml");
+
+        static bool TryGetRangeWarning(AnimatorController controller, string paramName, VRCExpressionParameters.Parameter vrcParameter, out string message)
+        {
+            message = null;
+            if (!VRCSyncCache.TryGetValueRange(vrcParameter, out float allowedMin, out float allowedMax)) return false;
+            GetConditionUsedParams(controller); // rebuilds _valueRanges when stale
+            if (!_valueRanges.TryGetValue(paramName, out var usedRange)) return false;
+            if (usedRange.min >= allowedMin && usedRange.max <= allowedMax) return false;
+            message = $"Used values exceed synced range {allowedMin:0.###} to {allowedMax:0.###} ({VRCSyncCache.GetBitCost(vrcParameter)} bit)";
+            return true;
+        }
+#endif
 
         internal static void InvalidateConditionCache()
         {
@@ -294,6 +315,14 @@ namespace YGDR.Editor.Animation
                 AnimatorControllerParameterType.Bool    => vrcType == VRCExpressionParameters.ValueType.Bool,
                 AnimatorControllerParameterType.Trigger => vrcType == VRCExpressionParameters.ValueType.Bool,
                 _ => true
+            };
+
+        static Color VrcTypeColor(VRCExpressionParameters.ValueType vrcType, AnimatorDefaultSettings settings) =>
+            vrcType switch
+            {
+                VRCExpressionParameters.ValueType.Float => settings.paramColorFloat,
+                VRCExpressionParameters.ValueType.Int   => settings.paramColorInt,
+                _                                        => settings.paramColorBool,
             };
 #endif
 
@@ -483,8 +512,14 @@ namespace YGDR.Editor.Animation
                 const float iconPadding = 2f;
                 const float clipIconSize = 20f;
                 const float vrcLabelWidth = 23f;
+                const float compactLabelWidth = 10f;
+#if VRC_SDK_VRCSDK3
+                const float compactSepWidth = 5f;
+#endif
 
                 float cursorX = rect.xMax - 72f;
+                // Right-to-left cursor for compact single-letter labels, anchored at the value field edge.
+                float compactCursorX = rect.xMax - 2f;
 
 #if VRC_SDK_VRCSDK3
                 const float iconSize = 14f;
@@ -525,6 +560,17 @@ namespace YGDR.Editor.Animation
                             EditorUtility.SetDirty(expParams);
                         });
                         cursorX -= iconPadding;
+
+#if VRC_SDK_BITWIDTH
+                        if (settings.showParamBudget && isSynced && ViewFrameController != null
+                            && TryGetRangeWarning(ViewFrameController, parameter.name, vrcParam, out string rangeWarning))
+                        {
+                            cursorX -= iconSize;
+                            var warningIconRect = new Rect(cursorX, rect.y + (rect.height - iconSize) * 0.5f, iconSize, iconSize);
+                            GUI.Label(warningIconRect, new GUIContent(RangeWarningIcon.image, rangeWarning));
+                            cursorX -= iconPadding;
+                        }
+#endif
                     }
                 }
 #endif
@@ -540,66 +586,95 @@ namespace YGDR.Editor.Animation
                         _ => Color.white
                     };
 
-                    string typeText = parameter.type.ToString();
-                    if (!_typeWidthCache.TryGetValue(typeText, out float typeTextWidth))
+                    if (settings.paramCompactTypeLabels)
                     {
-                        _tempContent.text = typeText;
-                        typeTextWidth = TypeStyle.CalcSize(_tempContent).x;
-                        _typeWidthCache[typeText] = typeTextWidth;
+                        // Single-letter label(s) at the value field edge; leaves cursorX untouched so other icons keep their layout.
+                        var prevCompactColor = GUI.color;
+#if VRC_SDK_VRCSDK3
+                        if (hasMismatch)
+                        {
+                            // vrc letter + "/" sit right of the controller letter, matching the non-compact "controller / vrc" order.
+                            compactCursorX -= compactLabelWidth;
+                            GUI.color = VrcTypeColor(vrcValueType, settings);
+                            GUI.Label(new Rect(compactCursorX, rect.y, compactLabelWidth, rect.height),
+                                vrcValueType.ToString().Substring(0, 1), TypeStyle);
+                            compactCursorX -= compactSepWidth;
+                            GUI.color = new Color(0.5f, 0.5f, 0.5f);
+                            GUI.Label(new Rect(compactCursorX, rect.y, compactSepWidth, rect.height), "/", TypeStyle);
+                        }
+#endif
+                        compactCursorX -= compactLabelWidth;
+                        GUI.color = typeColor;
+                        GUI.Label(new Rect(compactCursorX, rect.y, compactLabelWidth, rect.height),
+                            parameter.type.ToString().Substring(0, 1), TypeStyle);
+                        GUI.color = prevCompactColor;
                     }
+                    else
+                    {
+                        string typeText = parameter.type.ToString();
+                        if (!_typeWidthCache.TryGetValue(typeText, out float typeTextWidth))
+                        {
+                            _tempContent.text = typeText;
+                            typeTextWidth = TypeStyle.CalcSize(_tempContent).x;
+                            _typeWidthCache[typeText] = typeTextWidth;
+                        }
 
 #if VRC_SDK_VRCSDK3
-                    if (hasMismatch)
-                    {
-                        var vrcColor = vrcValueType switch
+                        if (hasMismatch)
                         {
-                            VRCExpressionParameters.ValueType.Float => settings.paramColorFloat,
-                            VRCExpressionParameters.ValueType.Int   => settings.paramColorInt,
-                            _                                        => settings.paramColorBool,
-                        };
+                            var vrcColor = VrcTypeColor(vrcValueType, settings);
 
-                        string vrcTypeText = vrcValueType.ToString();
-                        if (!_typeWidthCache.TryGetValue(vrcTypeText, out float vrcTypeWidth))
-                        {
-                            _tempContent.text = vrcTypeText;
-                            vrcTypeWidth = TypeStyle.CalcSize(_tempContent).x;
-                            _typeWidthCache[vrcTypeText] = vrcTypeWidth;
-                        }
-                        var prevColor = GUI.color;
-                        GUI.color = vrcColor;
-                        cursorX -= vrcTypeWidth;
-                        GUI.Label(new Rect(cursorX, rect.y, vrcTypeWidth, rect.height), vrcTypeText, TypeStyle);
+                            string vrcTypeText = vrcValueType.ToString();
+                            if (!_typeWidthCache.TryGetValue(vrcTypeText, out float vrcTypeWidth))
+                            {
+                                _tempContent.text = vrcTypeText;
+                                vrcTypeWidth = TypeStyle.CalcSize(_tempContent).x;
+                                _typeWidthCache[vrcTypeText] = vrcTypeWidth;
+                            }
+                            var prevColor = GUI.color;
+                            GUI.color = vrcColor;
+                            cursorX -= vrcTypeWidth;
+                            GUI.Label(new Rect(cursorX, rect.y, vrcTypeWidth, rect.height), vrcTypeText, TypeStyle);
 
-                        if (!_typeWidthCache.TryGetValue("/", out float sepWidth))
-                        {
-                            _tempContent.text = "/";
-                            sepWidth = TypeStyle.CalcSize(_tempContent).x;
-                            _typeWidthCache["/"] = sepWidth;
+                            if (!_typeWidthCache.TryGetValue("/", out float sepWidth))
+                            {
+                                _tempContent.text = "/";
+                                sepWidth = TypeStyle.CalcSize(_tempContent).x;
+                                _typeWidthCache["/"] = sepWidth;
+                            }
+                            cursorX -= sepWidth;
+                            GUI.color = new Color(0.5f, 0.5f, 0.5f);
+                            GUI.Label(new Rect(cursorX, rect.y, sepWidth, rect.height), "/", TypeStyle);
+                            GUI.color = prevColor;
                         }
-                        cursorX -= sepWidth;
-                        GUI.color = new Color(0.5f, 0.5f, 0.5f);
-                        GUI.Label(new Rect(cursorX, rect.y, sepWidth, rect.height), "/", TypeStyle);
-                        GUI.color = prevColor;
-                    }
 #endif
 
-                    var savedColor = GUI.color;
-                    GUI.color = typeColor;
-                    cursorX -= typeTextWidth;
-                    GUI.Label(new Rect(cursorX, rect.y, typeTextWidth, rect.height), typeText, TypeStyle);
-                    GUI.color = savedColor;
+                        var savedColor = GUI.color;
+                        GUI.color = typeColor;
+                        cursorX -= typeTextWidth;
+                        GUI.Label(new Rect(cursorX, rect.y, typeTextWidth, rect.height), typeText, TypeStyle);
+                        GUI.color = savedColor;
 
-                    cursorX -= iconPadding;
+                        cursorX -= iconPadding;
+                    }
                 }
 
                 if (showVrc && VrcBuiltinNames.Contains(parameter.name))
                 {
-                    cursorX -= vrcLabelWidth;
                     var prevVrcColor = GUI.color;
                     GUI.color = settings.paramColorVrcLabel;
-                    GUI.Label(new Rect(cursorX, rect.y, vrcLabelWidth, rect.height), "VRC", VrcBuiltinStyle);
+                    if (settings.paramCompactTypeLabels)
+                    {
+                        compactCursorX -= compactLabelWidth;
+                        GUI.Label(new Rect(compactCursorX, rect.y, compactLabelWidth, rect.height), "V", TypeStyle);
+                    }
+                    else
+                    {
+                        cursorX -= vrcLabelWidth;
+                        GUI.Label(new Rect(cursorX, rect.y, vrcLabelWidth, rect.height), "VRC", VrcBuiltinStyle);
+                        cursorX -= iconPadding;
+                    }
                     GUI.color = prevVrcColor;
-                    cursorX -= iconPadding;
                 }
 
 #if VRC_SDK_VRCSDK3
@@ -635,9 +710,20 @@ namespace YGDR.Editor.Animation
                     bool usedAsAap = ViewFrameClipUsedParams != null && ViewFrameClipUsedParams.Contains(parameter.name);
                     if (!conditionUsedParams.Contains(parameter.name) && !usedAsAap)
                     {
-                        cursorX -= clipIconSize;
-                        GUI.Label(new Rect(cursorX, rect.y + (rect.height - clipIconSize) * 0.5f, clipIconSize, clipIconSize), UnusedParamIcon);
-                        cursorX -= iconPadding;
+                        if (settings.paramCompactTypeLabels)
+                        {
+                            // Unused marker joins the right-edge single-letter cluster; drawn larger than the letters so it reads at a glance.
+                            const float unusedIconSize = 16f;
+                            compactCursorX -= unusedIconSize;
+                            GUI.DrawTexture(new Rect(compactCursorX, rect.y + (rect.height - unusedIconSize) * 0.5f, unusedIconSize, unusedIconSize),
+                                UnusedParamIcon.image, ScaleMode.ScaleToFit);
+                        }
+                        else
+                        {
+                            cursorX -= clipIconSize;
+                            GUI.Label(new Rect(cursorX, rect.y + (rect.height - clipIconSize) * 0.5f, clipIconSize, clipIconSize), UnusedParamIcon);
+                            cursorX -= iconPadding;
+                        }
                     }
                 }
             }
@@ -975,9 +1061,11 @@ namespace YGDR.Editor.Animation
 #else
             bool hasVrcParams = false;
 #endif
+            string convertRoot = L10n.Get("params_menu.convert_to");
             if (hasVrcParams)
             {
 #if VRC_SDK_VRCSDK3
+                // Convert to ▸ <Type> ▸ Controller / VRC Params / Both
                 bool existsInVrc = VRCSyncCache.TryGetVrcValueType(parameter.name, out var currentVrcType);
                 var capturedConvertExpParams = expressionParameters;
                 var capturedConvertParamName = parameter.name;
@@ -985,22 +1073,37 @@ namespace YGDR.Editor.Animation
                          Enum.GetValues(typeof(AnimatorControllerParameterType)))
                 {
                     var capturedType = type;
-                    string convertToLabel = $"{L10n.Get("params_menu.convert_to")} {type}";
-                    bool controllerAlreadyMatches = type == parameter.type;
-                    if (controllerAlreadyMatches)
-                        menu.AddDisabledItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_controller")}"), false);
-                    else
-                        menu.AddItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_controller")}"), false, () =>
-                            AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
-                    bool vrcAlreadyMatches = existsInVrc && (
+                    string typePath = $"{convertRoot}/{type}";
+                    bool controllerMatches = type == parameter.type;
+                    bool vrcSupportsType = type != AnimatorControllerParameterType.Trigger;
+                    bool vrcMatches = existsInVrc && vrcSupportsType && (
                         type == AnimatorControllerParameterType.Float ? currentVrcType == VRCExpressionParameters.ValueType.Float :
                         type == AnimatorControllerParameterType.Int   ? currentVrcType == VRCExpressionParameters.ValueType.Int   :
                         currentVrcType == VRCExpressionParameters.ValueType.Bool);
-                    if (existsInVrc && !vrcAlreadyMatches)
-                        menu.AddItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_vrc_params")}"), false, () =>
+
+                    var controllerItem = new GUIContent($"{typePath}/{L10n.Get("params_menu.convert_controller")}");
+                    if (controllerMatches)
+                        menu.AddDisabledItem(controllerItem);
+                    else
+                        menu.AddItem(controllerItem, false, () =>
+                            AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
+
+                    var vrcItem = new GUIContent($"{typePath}/{L10n.Get("params_menu.convert_vrc_params")}");
+                    if (existsInVrc && vrcSupportsType && !vrcMatches)
+                        menu.AddItem(vrcItem, false, () =>
                             AnimatorParameterOps.ConvertVrcParameter(capturedConvertExpParams, capturedConvertParamName, capturedType));
                     else
-                        menu.AddDisabledItem(new GUIContent($"{convertToLabel}/{L10n.Get("params_menu.convert_vrc_params")}"));
+                        menu.AddDisabledItem(vrcItem);
+
+                    var bothItem = new GUIContent($"{typePath}/{L10n.Get("params_menu.convert_both")}");
+                    if (existsInVrc && vrcSupportsType && !(controllerMatches && vrcMatches))
+                        menu.AddItem(bothItem, false, () =>
+                        {
+                            if (!controllerMatches) AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType);
+                            if (!vrcMatches) AnimatorParameterOps.ConvertVrcParameter(capturedConvertExpParams, capturedConvertParamName, capturedType);
+                        });
+                    else
+                        menu.AddDisabledItem(bothItem);
                 }
 #endif
             }
@@ -1010,10 +1113,11 @@ namespace YGDR.Editor.Animation
                          Enum.GetValues(typeof(AnimatorControllerParameterType)))
                 {
                     var capturedType = type;
+                    var item = new GUIContent($"{convertRoot}/{type}");
                     if (type == parameter.type)
-                        menu.AddDisabledItem(new GUIContent($"{L10n.Get("params_menu.convert_to")} {type}"), false);
+                        menu.AddDisabledItem(item);
                     else
-                        menu.AddItem(new GUIContent($"{L10n.Get("params_menu.convert_to")} {type}"), false, () =>
+                        menu.AddItem(item, false, () =>
                             AnimatorParameterOps.ConvertParameter(controller, capturedIndex, capturedType));
                 }
             }
@@ -1221,6 +1325,50 @@ namespace YGDR.Editor.Animation
 #endif
         }
 
+        /* Cache is updated before the write so the changesPublished watcher sees no diff and skips its sibling dialog. */
+        internal static void RenameParametersBatch(AnimatorController controller, IReadOnlyList<(string oldName, string newName)> renames)
+        {
+            var newNameByOldName = renames.ToDictionary(rename => rename.oldName, rename => rename.newName);
+            var serializedController = new SerializedObject(controller);
+            var parametersProperty = serializedController.FindProperty("m_AnimatorParameters");
+            var newNames = new string[parametersProperty.arraySize];
+
+            _isProcessingSiblingRenames = true;
+            try
+            {
+                for (int i = 0; i < parametersProperty.arraySize; i++)
+                {
+                    var nameProperty = parametersProperty.GetArrayElementAtIndex(i).FindPropertyRelative("m_Name");
+                    if (newNameByOldName.TryGetValue(nameProperty.stringValue, out var renamed))
+                        nameProperty.stringValue = renamed;
+                    newNames[i] = nameProperty.stringValue;
+                }
+                _paramNameCache[controller.GetInstanceID()] = newNames;
+                serializedController.ApplyModifiedProperties();
+
+                // Blend trees and states first: RemapParameter enumerates clips, and Unity warns about any blend tree still using a missing name.
+                foreach (var (oldName, newName) in renames)
+                    foreach (var layer in controller.layers)
+                        AnimatorTemplateParameterWindow.UpdateParamRefsInSM(layer.stateMachine, oldName, newName);
+
+                foreach (var (oldName, newName) in renames)
+                {
+                    AnimatorParameterOps.RemapParameter(controller, oldName, newName);
+#if VRC_SDK_VRCSDK3
+                    if (PatchParameterRow.GetVrcComponentUsedParams().Contains(oldName))
+                        AnimatorFindUsageWindow.RemapVrcComponentParameters(oldName, newName);
+#endif
+                }
+                EditorUtility.SetDirty(controller);
+            }
+            finally
+            {
+                _isProcessingSiblingRenames = false;
+            }
+            BlendTreeRecursiveParamCache.Invalidate();
+            AnimatorBulkTransitionOps.RebuildAnimatorGraph();
+        }
+
         class ParameterRemapDropdown : YgdrAdvancedDropdownBase
         {
             readonly AnimatorController _controller;
@@ -1300,16 +1448,9 @@ namespace YGDR.Editor.Animation
 #if VRC_SDK_VRCSDK3
                 if (VRCSyncCache.TryGetSync(parameter.name, out bool isSynced) && isSynced)
                 {
-                    int syncedCost = VRCSyncCache.TryGetVrcValueType(parameter.name, out VRCExpressionParameters.ValueType vrcType)
-                        ? vrcType switch
-                        {
-                            VRCExpressionParameters.ValueType.Float => 8,
-                            VRCExpressionParameters.ValueType.Int   => 8,
-                            VRCExpressionParameters.ValueType.Bool  => 1,
-                            _ => 0
-                        }
+                    syncedBits += VRCSyncCache.TryGetParameter(parameter.name, out var vrcParameter)
+                        ? VRCSyncCache.GetBitCost(vrcParameter)
                         : cost;
-                    syncedBits += syncedCost;
                 }
 #endif
             }

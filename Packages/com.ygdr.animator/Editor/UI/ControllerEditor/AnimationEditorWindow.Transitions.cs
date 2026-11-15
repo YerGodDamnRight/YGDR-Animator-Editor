@@ -304,20 +304,20 @@ namespace YGDR.Editor.Animation
         void BuildTransitionsProperties(VisualElement parent)
         {
             _hasExitTimeToggle = new Toggle(L10n.Get("transitions.has_exit_time"));
-            _hasExitTimeToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetOnAll(transition => transition.hasExitTime = value); });
+            _hasExitTimeToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetOnAll(transition => transition.hasExitTime = value);  _hasExitTimeToggle.showMixedValue = false; });
             _exitTimeField = new FloatField(L10n.Get("transitions.exit_time"));
-            _exitTimeField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetOnAll(transition => transition.exitTime = value); });
+            _exitTimeField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetOnAll(transition => transition.exitTime = value);  _exitTimeField.showMixedValue = false; });
             parent.Add(BuildPropertyRow(_hasExitTimeToggle, _exitTimeField));
 
             _hasFixedDurationToggle = new Toggle(L10n.Get("transitions.has_fixed_duration"));
-            _hasFixedDurationToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetOnAll(transition => transition.hasFixedDuration = value); });
+            _hasFixedDurationToggle.RegisterValueChangedCallback(evt => { bool value = evt.newValue; SetOnAll(transition => transition.hasFixedDuration = value);  _hasFixedDurationToggle.showMixedValue = false; });
             _durationField = new FloatField(L10n.Get("transitions.duration"));
-            _durationField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetOnAll(transition => transition.duration = value); });
+            _durationField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetOnAll(transition => transition.duration = value);  _durationField.showMixedValue = false; });
             parent.Add(BuildPropertyRow(_hasFixedDurationToggle, _durationField));
 
             _offsetField = new FloatField(L10n.Get("transitions.offset"));
             _offsetField.AddToClassList("ygdr-transitions-property-field-wide");
-            _offsetField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetOnAll(transition => transition.offset = value); });
+            _offsetField.RegisterValueChangedCallback(evt => { float value = evt.newValue; SetOnAll(transition => transition.offset = value);  _offsetField.showMixedValue = false; });
             var offsetRow = new VisualElement();
             offsetRow.AddToClassList("ygdr-transitions-property-row");
             offsetRow.AddToClassList("u-row");
@@ -390,16 +390,19 @@ namespace YGDR.Editor.Animation
 
             _hasExitTimeToggle.SetValueWithoutNotify(first.hasExitTime);
             _hasExitTimeToggle.showMixedValue = multi && _selectedTransitions.Any(x => x.hasExitTime != first.hasExitTime);
-            _exitTimeField.SetValueWithoutNotify(first.exitTime);
-            _exitTimeField.showMixedValue = multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.exitTime, first.exitTime));
+            bool exitTimeMixed = multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.exitTime, first.exitTime));
+            _exitTimeField.SetValueWithoutNotify(exitTimeMixed ? float.NaN : first.exitTime);
+            _exitTimeField.showMixedValue = exitTimeMixed;
 
             _hasFixedDurationToggle.SetValueWithoutNotify(first.hasFixedDuration);
             _hasFixedDurationToggle.showMixedValue = multi && _selectedTransitions.Any(x => x.hasFixedDuration != first.hasFixedDuration);
-            _durationField.SetValueWithoutNotify(first.duration);
-            _durationField.showMixedValue = multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.duration, first.duration));
+            bool durationMixed = multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.duration, first.duration));
+            _durationField.SetValueWithoutNotify(durationMixed ? float.NaN : first.duration);
+            _durationField.showMixedValue = durationMixed;
 
-            _offsetField.SetValueWithoutNotify(first.offset);
-            _offsetField.showMixedValue = multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.offset, first.offset));
+            bool offsetMixed = multi && _selectedTransitions.Any(x => !Mathf.Approximately(x.offset, first.offset));
+            _offsetField.SetValueWithoutNotify(offsetMixed ? float.NaN : first.offset);
+            _offsetField.showMixedValue = offsetMixed;
 
             int interruptionIndex = Mathf.Clamp((int)first.interruptionSource, 0, _interruptionSourcePopup.choices.Count - 1);
             _interruptionSourcePopup.SetValueWithoutNotify(_interruptionSourcePopup.choices[interruptionIndex]);
@@ -894,8 +897,10 @@ namespace YGDR.Editor.Animation
             paramButton.tabIndex = -1;
             StyleAccentButton(paramButton);
             paramCell.Add(paramButton);
-            SetTruncatedDropdownLabel(paramButton, entry.mixedName ? "—" : condition.parameter, 74f);
-            RegisterDropdownLabelResize(paramButton, 74f);
+            /* USS clips the display from the left (-unity-text-overflow-position: start); tooltip keeps the full name. */
+            var paramName = entry.mixedName ? "—" : condition.parameter;
+            paramButton.text = paramName;
+            paramButton.tooltip = paramName;
 
             /* Type label / duplicate warning / filter icon overlay on top of the dropdown button, not beside it. */
             paramButton.Add(BuildDropdownArrow());
@@ -1089,8 +1094,7 @@ namespace YGDR.Editor.Animation
             return ellipsis;
         }
 
-        /* Truncated from the left (tail stays visible) since USS text-overflow only ellipsizes from the right.
-           fullText is stashed on tooltip so ApplyTruncatedDropdownLabel can re-truncate against the button's current width. */
+        /* fullText stashed on tooltip so ApplyTruncatedDropdownLabel can re-truncate against the button's current width. */
         static void SetTruncatedDropdownLabel(Button button, string fullText, float reservedWidth)
         {
             button.tooltip = fullText;
@@ -1105,7 +1109,6 @@ namespace YGDR.Editor.Animation
                 : button.tooltip;
         }
 
-        /* Handles both initial layout (not yet resolved at creation time) and later resizes. */
         static void RegisterDropdownLabelResize(Button button, float reservedWidth)
         {
             button.RegisterCallback<GeometryChangedEvent>(_ => ApplyTruncatedDropdownLabel(button, reservedWidth));

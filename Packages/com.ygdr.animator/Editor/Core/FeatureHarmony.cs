@@ -95,6 +95,9 @@ namespace YGDR.Editor.Animation
                 typeof(PatchDuplicateSmartNaming),
                 typeof(PatchStateSpeedParameterToggle),
                 typeof(PatchStateOverrideParameterToggle),
+#if VRC_SDK_VRCSDK3
+                typeof(PatchKeepPinnedControllerSource),
+#endif
             },
             [GridBgId] = new[]
             {

@@ -49,7 +49,8 @@ namespace YGDR.Editor.Animation
                         0 => L10n.Get("controller.count.state_machines").Replace("{n}", (_subAssetsByType[0]?.Length ?? 0).ToString()),
                         1 => L10n.Get("controller.count.states").Replace("{n}", (_subAssetsByType[1]?.Length ?? 0).ToString()),
                         2 => L10n.Get("controller.count.blend_trees").Replace("{n}", (_subAssetsByType[2]?.Length ?? 0).ToString()),
-                        3 => L10n.Get("controller.count.clips").Replace("{n}", (_subAssetsByType[3]?.Length ?? 0).ToString()),
+                        3 => L10n.Get("controller.count.parameters").Replace("{n}", _controller.parameters.Length.ToString()),
+                        4 => L10n.Get("controller.count.clips").Replace("{n}", (_subAssetsByType[4]?.Length ?? 0).ToString()),
                         _ => null
                     };
                 return null;
@@ -821,16 +822,17 @@ namespace YGDR.Editor.Animation
 
             _subAssetsFilterBar = new VisualElement();
             _subAssetsFilterBar.AddToClassList("ygdr-subassets-filter-bar");
-            _subAssetFilterButtons = new Button[4];
-            _subAssetFilterLabels = new Label[4];
             var filterKeys = new[]
             {
                 "controller.subassets.state_machines",
                 "controller.subassets.states",
                 "controller.subassets.blend_trees",
+                "controller.subassets.parameters",
                 "controller.subassets.clips",
             };
-            for (int i = 0; i < 4; i++)
+            _subAssetFilterButtons = new Button[filterKeys.Length];
+            _subAssetFilterLabels = new Label[filterKeys.Length];
+            for (int i = 0; i < filterKeys.Length; i++)
             {
                 int index = i;
                 var button = new Button(() => SetSubAssetTypeFilter(index));
@@ -851,6 +853,9 @@ namespace YGDR.Editor.Animation
 
             _clipRemapperSection = BuildClipRemapperSection();
             _subAssetsPanel.Add(_clipRemapperSection);
+
+            _paramRenameSection = BuildParamRenameSection();
+            _subAssetsPanel.Add(_paramRenameSection);
 
             _subAssetSearchRow = new VisualElement();
             _subAssetSearchRow.AddToClassList("ygdr-subassets-search-row");
@@ -878,6 +883,9 @@ namespace YGDR.Editor.Animation
             _subAssetListScroll = new ScrollView(ScrollViewMode.Vertical) { verticalScrollerVisibility = ScrollerVisibility.Auto };
             _subAssetListScroll.AddToClassList("ygdr-subassets-list-scroll");
             _subAssetRowsContainer = new VisualElement();
+            _subAssetRowsContainer.RegisterCallback<PointerDownEvent>(OnParamRowPointerDown);
+            _subAssetRowsContainer.RegisterCallback<PointerMoveEvent>(OnParamRowPointerMove);
+            _subAssetRowsContainer.RegisterCallback<PointerUpEvent>(OnParamRowPointerUp);
             _subAssetListScroll.Add(_subAssetRowsContainer);
             _subAssetsPanel.Add(_subAssetListScroll);
 
@@ -980,6 +988,200 @@ namespace YGDR.Editor.Animation
             section.Add(_clipRemapConfirmButton);
 
             return section;
+        }
+
+        // ── Parameters mass rename ────────────────────────────────────────────
+
+        HashSet<string> _selectedParamNames = new HashSet<string>();
+        HashSet<string> _paramDragBaseNames = new HashSet<string>();
+        readonly List<string> _visibleParamNames = new List<string>();
+        readonly List<(VisualElement row, VisualElement chip, Label label)> _paramRowViews = new List<(VisualElement, VisualElement, Label)>();
+        string _paramRenameFrom = "";
+        string _paramRenameTo = "";
+        int _paramAnchorIndex = -1;
+        int _paramDragLastIndex = -1;
+        bool _paramDragging;
+        bool _paramDragRemoving;
+        VisualElement _paramRenameSection;
+        TextField _paramRenameFromField;
+        TextField _paramRenameToField;
+        Button _paramRenameConfirmButton;
+
+        VisualElement BuildParamRenameSection()
+        {
+            var section = new VisualElement();
+            section.AddToClassList("ygdr-clipremap-section");
+            _paramRenameFromField = BuildParamRenameFieldRow(section, "controller.params.find", value => _paramRenameFrom = value);
+            _paramRenameToField = BuildParamRenameFieldRow(section, "controller.params.replace", value => _paramRenameTo = value);
+
+            _paramRenameConfirmButton = new Button(RunParamRename);
+            _paramRenameConfirmButton.AddToClassList("ygdr-clipremap-confirm-btn");
+            StyleSecondaryButton(_paramRenameConfirmButton);
+            section.Add(_paramRenameConfirmButton);
+            _controllerRelabelActions.Add(RefreshParamRowStates);
+            return section;
+        }
+
+        TextField BuildParamRenameFieldRow(VisualElement section, string labelKey, Action<string> onChanged)
+        {
+            var row = new VisualElement();
+            row.AddToClassList("ygdr-clipremap-row");
+            var label = new Label(L10n.Get(labelKey));
+            _controllerRelabelActions.Add(() => label.text = L10n.Get(labelKey));
+            label.AddToClassList("ygdr-clipremap-label-narrow");
+            label.AddToClassList("ygdr-params-rename-label");
+            row.Add(label);
+            var field = new TextField();
+            field.AddToClassList("ygdr-clipremap-field");
+            field.RegisterValueChangedCallback(evt => { onChanged(evt.newValue); RefreshParamRowStates(); });
+            row.Add(field);
+            section.Add(row);
+            return field;
+        }
+
+        List<(string oldName, string newName, bool isConflict)> PreviewParamRenames()
+        {
+            var previews = new List<(string oldName, string newName, bool isConflict)>();
+            if (_controller == null) return previews;
+
+            var existingNames = new HashSet<string>(_controller.parameters.Select(parameter => parameter.name));
+            var claimedNames = new HashSet<string>();
+            foreach (var parameter in _controller.parameters)
+            {
+                if (!_selectedParamNames.Contains(parameter.name)) continue;
+                string renamed = string.IsNullOrEmpty(_paramRenameFrom)
+                    ? _paramRenameTo + parameter.name
+                    : parameter.name.Replace(_paramRenameFrom, _paramRenameTo);
+                if (renamed == parameter.name) continue;
+                bool isConflict = string.IsNullOrEmpty(renamed) || existingNames.Contains(renamed) || !claimedNames.Add(renamed);
+                previews.Add((parameter.name, renamed, isConflict));
+            }
+            return previews;
+        }
+
+        void RefreshParamRowStates()
+        {
+            var previews = PreviewParamRenames();
+            var previewByName = new Dictionary<string, (string newName, bool isConflict)>();
+            foreach (var item in previews) previewByName[item.oldName] = (item.newName, item.isConflict);
+
+            for (int i = 0; i < _paramRowViews.Count; i++)
+            {
+                string name = _visibleParamNames[i];
+                var views = _paramRowViews[i];
+                views.chip.EnableInClassList("ygdr-subassets-row-selected", _selectedParamNames.Contains(name));
+                bool hasPreview = previewByName.TryGetValue(name, out var rowPreview);
+                views.label.text = hasPreview ? $"{name}  →  {rowPreview.newName}" : name;
+                views.label.style.color = hasPreview && rowPreview.isConflict
+                    ? new StyleColor(new Color(1f, 0.4f, 0.4f))
+                    : new StyleColor(StyleKeyword.Null);
+            }
+
+            if (_paramRenameConfirmButton == null) return;
+            _paramRenameConfirmButton.text = $"{L10n.Get("controller.params.rename_selected")} ({previews.Count})";
+            _paramRenameConfirmButton.SetEnabled(previews.Count > 0 && !previews.Any(item => item.isConflict));
+        }
+
+        void RefreshParameterList()
+        {
+            var allNames = _controller.parameters.Select(parameter => parameter.name).ToList();
+            _selectedParamNames.IntersectWith(allNames);
+            bool hasSearch = !string.IsNullOrEmpty(_subAssetSearch);
+            _visibleParamNames.Clear();
+            _visibleParamNames.AddRange(allNames.Where(name => !hasSearch || name.IndexOf(_subAssetSearch, StringComparison.OrdinalIgnoreCase) >= 0));
+            _paramRowViews.Clear();
+            _subAssetRowsContainer.Clear();
+            _paramAnchorIndex = -1;
+
+            _subAssetEmptyTypeLabel.style.display = allNames.Count == 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            _subAssetNoMatchesLabel.style.display = allNames.Count > 0 && _visibleParamNames.Count == 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            _subAssetListScroll.style.display = _visibleParamNames.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+
+            for (int i = 0; i < _visibleParamNames.Count; i++)
+            {
+                var row = new VisualElement();
+                row.AddToClassList("ygdr-subassets-row");
+                if (i % 2 == 1) row.style.backgroundColor = SharedWindowStyles.RowAltColor;
+                var chip = new VisualElement();
+                chip.AddToClassList("ygdr-subassets-row-chip");
+                var label = new Label(_visibleParamNames[i]);
+                label.AddToClassList("ygdr-subassets-row-btn");
+                chip.Add(label);
+                row.Add(chip);
+                _subAssetRowsContainer.Add(row);
+                _paramRowViews.Add((row, chip, label));
+            }
+            RefreshParamRowStates();
+        }
+
+        /* Rows are matched by Y only, so dragging above or below the list clamps to the first or last row. */
+        int ParamRowIndexAt(Vector2 worldPosition)
+        {
+            for (int i = 0; i < _paramRowViews.Count; i++)
+                if (worldPosition.y < _paramRowViews[i].row.worldBound.yMax) return i;
+            return _paramRowViews.Count - 1;
+        }
+
+        void OnParamRowPointerDown(PointerDownEvent evt)
+        {
+            if (_subAssetTypeFilter != 3 || evt.button != 0 || _paramRowViews.Count == 0) return;
+            int index = ParamRowIndexAt(evt.position);
+            bool additive = evt.actionKey;
+            _paramDragBaseNames = additive ? new HashSet<string>(_selectedParamNames) : new HashSet<string>();
+            if (evt.shiftKey && _paramAnchorIndex >= 0)
+                _paramDragRemoving = false;
+            else
+            {
+                _paramDragRemoving = additive && _selectedParamNames.Contains(_visibleParamNames[index]);
+                _paramAnchorIndex = index;
+            }
+            _paramDragging = true;
+            _paramDragLastIndex = -1;
+            _subAssetRowsContainer.CapturePointer(evt.pointerId);
+            ApplyParamDragRange(index);
+            evt.StopPropagation();
+        }
+
+        void OnParamRowPointerMove(PointerMoveEvent evt)
+        {
+            if (!_paramDragging) return;
+            ApplyParamDragRange(ParamRowIndexAt(evt.position));
+        }
+
+        void OnParamRowPointerUp(PointerUpEvent evt)
+        {
+            if (!_paramDragging) return;
+            _paramDragging = false;
+            _subAssetRowsContainer.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        void ApplyParamDragRange(int toIndex)
+        {
+            if (toIndex == _paramDragLastIndex) return;
+            _paramDragLastIndex = toIndex;
+            _selectedParamNames = new HashSet<string>(_paramDragBaseNames);
+            int firstIndex = Mathf.Min(_paramAnchorIndex, toIndex);
+            int lastIndex = Mathf.Max(_paramAnchorIndex, toIndex);
+            for (int i = firstIndex; i <= lastIndex; i++)
+            {
+                if (_paramDragRemoving) _selectedParamNames.Remove(_visibleParamNames[i]);
+                else _selectedParamNames.Add(_visibleParamNames[i]);
+            }
+            RefreshParamRowStates();
+        }
+
+        void RunParamRename()
+        {
+            var renames = PreviewParamRenames().Select(item => (item.oldName, item.newName)).ToList();
+            if (renames.Count == 0) return;
+            PatchParameterContextMenu.RenameParametersBatch(_controller, renames);
+            _selectedParamNames = new HashSet<string>(renames.Select(rename => rename.newName));
+            _paramRenameFrom = "";
+            _paramRenameTo = "";
+            _paramRenameFromField.SetValueWithoutNotify("");
+            _paramRenameToField.SetValueWithoutNotify("");
+            RefreshSubAssetsBody();
         }
 
         void SetSubAssetTypeFilter(int index)
@@ -1132,6 +1334,7 @@ namespace YGDR.Editor.Animation
             if (!hasController)
             {
                 _clipRemapperSection.style.display = DisplayStyle.None;
+                _paramRenameSection.style.display = DisplayStyle.None;
                 HideSubAssetSearchAndList();
                 return;
             }
@@ -1139,7 +1342,7 @@ namespace YGDR.Editor.Animation
             if (_subAssetsByType == null || _subAssetCachedController != _controller)
                 RebuildSubAssetCache();
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < _subAssetFilterButtons.Length; i++)
             {
                 _subAssetFilterButtons[i].EnableInClassList("ygdr-subassets-filter-btn-active", _subAssetTypeFilter == i);
                 ApplySubTabAccent(_subAssetFilterButtons[i], _subAssetTypeFilter == i);
@@ -1148,11 +1351,13 @@ namespace YGDR.Editor.Animation
             if (_subAssetsByType == null)
             {
                 _clipRemapperSection.style.display = DisplayStyle.None;
+                _paramRenameSection.style.display = DisplayStyle.None;
                 HideSubAssetSearchAndList();
                 return;
             }
 
-            bool showClipRemapper = _subAssetTypeFilter == 3;
+            _paramRenameSection.style.display = _subAssetTypeFilter == 3 ? DisplayStyle.Flex : DisplayStyle.None;
+            bool showClipRemapper = _subAssetTypeFilter == 4;
             _clipRemapperSection.style.display = showClipRemapper ? DisplayStyle.Flex : DisplayStyle.None;
             if (showClipRemapper)
             {
@@ -1198,6 +1403,12 @@ namespace YGDR.Editor.Animation
             _subAssetSearchField.SetValueWithoutNotify(_subAssetSearch);
             _subAssetSearchHintLabel.style.display = string.IsNullOrEmpty(_subAssetSearch) ? DisplayStyle.Flex : DisplayStyle.None;
 
+            if (_subAssetTypeFilter == 3)
+            {
+                RefreshParameterList();
+                return;
+            }
+
             var assets = _subAssetsByType[_subAssetTypeFilter];
             if (assets == null || assets.Length == 0)
             {
@@ -1233,7 +1444,7 @@ namespace YGDR.Editor.Animation
 
         VisualElement BuildSubAssetRow(UnityEngine.Object asset, int rowIndex)
         {
-            bool isClips = _subAssetTypeFilter == 3;
+            bool isClips = _subAssetTypeFilter == 4;
             var row = new VisualElement();
             row.AddToClassList("ygdr-subassets-row");
             if (rowIndex % 2 == 1) row.style.backgroundColor = SharedWindowStyles.RowAltColor;
@@ -1301,6 +1512,7 @@ namespace YGDR.Editor.Animation
             EditorGUIUtility.IconContent("d_AnimatorController Icon").image as Texture2D,
             EditorGUIUtility.IconContent("AnimatorState Icon").image as Texture2D,
             EditorGUIUtility.IconContent("d_BlendTree Icon").image as Texture2D,
+            EditorGUIUtility.IconContent("d_Settings").image as Texture2D,
             EditorGUIUtility.IconContent("AnimationClip Icon").image as Texture2D,
         };
 
@@ -1385,10 +1597,18 @@ namespace YGDR.Editor.Animation
                 if (!relevant) continue;
                 _subAssetsByType = null;
                 InvalidateConditionCache();
-                if (_suppressExternalRepaint)
+                if (_selectedStates.Length > 0)
                 {
-                    EditorApplication.delayCall += () => _suppressExternalRepaint = false;
-                    return;
+                    RefreshStatePropertyValues();
+#if VRC_SDK_VRCSDK3
+                    if (!IsTypingInTextField())
+                    {
+                        RefreshDriverBody();
+                        RefreshAudioBody();
+                        RefreshLayerControlBody();
+                        RefreshOtherBehaviorsBody();
+                    }
+#endif
                 }
                 RefreshSubAssetsBody();
                 Repaint();
@@ -1436,6 +1656,7 @@ namespace YGDR.Editor.Animation
                 stateMachines.OrderBy(a => a.name).ToArray(),
                 states.OrderBy(a => a.name).ToArray(),
                 blendTrees.OrderBy(a => a.name).ToArray(),
+                Array.Empty<UnityEngine.Object>(),
                 clips
             };
             _brokenIdsDirty = true;
@@ -1788,13 +2009,20 @@ namespace YGDR.Editor.Animation
             else _slotController = animator.runtimeAnimatorController as AnimatorController;
         }
 
-        bool _suppressExternalRepaint;
+        /* Rebuilding behavior bodies mid-edit destroys the focused field and drops focus after the first character. */
+        bool IsTypingInTextField()
+        {
+            if (_isDraggingSlider) return true;
+            var focused = rootVisualElement.panel?.focusController?.focusedElement as VisualElement;
+            for (var element = focused; element != null; element = element.parent)
+                if (element is TextField || element is FloatField || element is IntegerField) return true;
+            return false;
+        }
 
         void OnHierarchyChangedRefresh()
         {
             _brokenIdsDirty = true;
             if (_clipRemapAvatarRoot != null) RefreshAvatarSlot();
-            if (_suppressExternalRepaint) return;
             RefreshSubAssetsBody();
             Repaint();
         }

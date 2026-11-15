@@ -61,6 +61,8 @@ Open via **YGDR → Animator Editor → Open**.
 
 Tabbed interface for editing currently selected object(s) in Animator graph. Updates automatically as selection changes in Animator window.
 
+**Header (above the tabs)** — Shows the current controller > layer breadcrumbs, plus a **Controller** source dropdown choosing which controller the window edits: the selected object's `Animator` component, or one of the `VRCAvatarDescriptor` playable layers (Base, Additive, Gesture, Action, FX, etc.). The chosen source stays pinned instead of snapping back to the Animator's controller. Requires the VRC SDK.
+
 ### Transitions Tab
 
 Edit multiple transitions at once. Select one or more transitions in Animator graph → tab shows all selected together → mass-edit shared properties. Drag bottom right triangle to change height of section to see all selected transitions or shrink to a scrollable list.
@@ -85,6 +87,13 @@ Below Transition Details, the condition toolbar (left to right):
 **Condition Rows** — Each row displays parameter name, comparison mode, threshold value, and a filter icon.
 
 **Select Matching Transitions** — Click a row's filter icon to select every transition on the current layer whose conditions match that row, using the active **N / M / V** criteria above. Replaces current selection.
+
+**Transition Preview** — Collapsible section at the bottom of the tab. Plays the selected transition on your avatar, right in the viewport.
+
+- Select multiple transitions in a row (one leading into the next) to preview them chained together — native Animator preview can only show one transition at a time.
+- Editing exit time, duration, or offset above updates the preview instantly.
+- Can zoom in closer than the native preview (handy for small props), and the camera position/zoom stays put between transitions instead of resetting.
+- Both states need an AnimationClip (not a BlendTree).
 
 ---
 
@@ -143,7 +152,6 @@ Sections start hidden. Click **+ Add Behavior** to open a dropdown listing every
 Shows currently active `AnimatorController` and management tools.
 
 **Overview** — Tabs for Per-Layer Write Defaults, Network Sync, Sub-Assets, Menus. Includes dedicated `Clean` button for controllers with orphaned sub-assets.
-
 #### Write Defaults
 
 Two-column layer list with WD on/off state. Buttons for setting individual layers or all layers on/off. Mixed layers listed at bottom when present.
@@ -179,7 +187,14 @@ Embedded editor for the avatar's `VRCExpressionsMenu` asset.
 
 #### Sub-Assets
 
-Sub-tabs listing all layers, states, blend trees, and clips in controller. Each entry shows warning icons for empty layers, invalid transitions, empty motion fields, and broken animation bindings. Searchable. Click item → focuses in graph.
+Sub-tabs listing all layers, states, blend trees, clips, and parameters in controller. Each entry shows warning icons for empty layers, invalid transitions, empty motion fields, and broken animation bindings. Searchable. Click item → focuses in graph.
+
+**Parameters mass rename** — Parameters sub-tab with batch find/replace.
+
+- Click to select parameters; click-drag to select or deselect a range.
+- **Find / Replace** — Replaces the Find text in every selected parameter name. Leave Find empty to add the Replace text as a prefix.
+- Each selected row previews `old → new`. Name conflicts (duplicate or empty result) show red and block the rename button.
+- **Rename Selected (n)** — Applies all renames at once, updating every reference (transitions, blend trees, behaviours, VRC parameters).
 
 #### Clip Remapper
 
@@ -212,7 +227,7 @@ UI toggles.
 - **VRC Comp Icons** — Marks parameters bound to VRC contact / physbone / raycast components → click to locate component. Also shows sync status and saved status → click either icon to toggle that flag on the VRC expression parameter. Parameter default value stays linked both ways with its VRC expression parameter (editing either side updates the other); if both change at once, the VRC expression parameter's value wins.
   - **Mark for Sync** icon (left edge of row) — toggles whether the parameter is included when running **Sync VRC Parameters Asset**. Marked-off parameters are skipped by both the add and remove side of that sync. Defaults to whatever existed on the VRC expression parameters asset at the time it was last synced from the selected GameObject.
   - Click-drag down (or up) through a column of Mark / Sync / Saved icons to mass-toggle every row the drag passes over to the value of the row the drag started on.
-- **Param Budget** — Displays current parameters, synced count, total allowed
+- **Param Budget** — Displays current parameters, synced count, total allowed. Also enables a warning icon on synced parameters whose used values (conditions, drivers) exceed what their bit width can hold; hover shows the allowed range and bit cost (requires a VRC SDK with bit width support)
 - **Empty Params** — Highlights parameters with no usages in the controller
 
 Color pickers:
@@ -292,6 +307,7 @@ Disable individual Harmony patches if they conflict with other tools.
 
 > [!IMPORTANT]
 > Editor patch guard recovery: **YGDR → Animator Editor → Reset All Feature Prefs (Recovery)**. Renables All patches by resetting false registry flags.
+
 ---
 
 ## Layer Panel Enhancements

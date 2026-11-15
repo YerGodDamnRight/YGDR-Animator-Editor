@@ -74,9 +74,29 @@
 .ygdr-layer-bar {
     flex-direction: row;
     align-items: center;
-    height: 28px;
+    height: 18px;
     padding-left: 8px;
     flex-shrink: 0;
+}
+
+.ygdr-source-row {
+    flex-direction: row;
+    align-items: center;
+    margin-left: auto;
+    margin-right: 6px;
+}
+
+.ygdr-source-label {
+    margin-right: 4px;
+}
+
+.ygdr-source-button {
+    min-width: 110px;
+}
+
+.ygdr-breadcrumb-segment,
+.ygdr-breadcrumb-separator {
+    font-size: 11px;
 }
 
 .ygdr-breadcrumb-segment {
@@ -357,7 +377,7 @@
 /* ── Settings tab (Phase 5, native) ────────────────────────────────────── */
 
 .ygdr-settings-root {
-    padding: 4px 0;
+    padding: 0 0 4px 0;
 }
 
 .ygdr-settings-section-header {
@@ -498,7 +518,7 @@
 .ygdr-accordion-header {
     flex-direction: row;
     align-items: center;
-    height: 28px;
+    height: 24px;
     padding-left: 8px;
     padding-right: 4px;
     cursor: link;
@@ -506,7 +526,7 @@
 
 .ygdr-accordion-title {
     -unity-text-align: middle-left;
-    font-size: 13px;
+    font-size: 12px;
     -unity-font-style: bold;
     color: rgb(255, 255, 255);
     flex-grow: 1;
@@ -520,8 +540,8 @@
 }
 
 .ygdr-accordion-help-button {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
 }
 
 /* ── Transitions tab (Phase 3) — tags + properties native; conditions grid still IMGUI-bridged ── */
@@ -697,11 +717,12 @@
     color: rgb(219, 38, 38);
 }
 
+/* Takes the row's slack; high flex-shrink so it collapses (to the 40px floor) before the mode/value fields give any ground. */
 .ygdr-cond-param-cell {
-    flex-grow: 0;
-    flex-shrink: 0;
-    flex-basis: 46%;
-    min-width: 0;
+    flex-grow: 1;
+    flex-shrink: 6;
+    flex-basis: 100%;
+    min-width: 40px;
     height: 100%;
     position: relative;
 }
@@ -720,6 +741,7 @@
     -unity-text-align: middle-left;
     overflow: hidden;
     text-overflow: ellipsis;
+    -unity-text-overflow-position: start;
     white-space: nowrap;
 }
 
@@ -766,12 +788,12 @@
     -unity-background-scale-mode: scale-to-fit;
 }
 
-/* Shared 18px-tall, flex-filling, borderless condition-row field base. */
+/* Condition-row field base: 18px tall, fixed width (92/64 below); collapses only after the param cell floors. */
 .ygdr-cond-mode-dropdown,
 .ygdr-cond-value-field,
 .ygdr-cond-bool-btn {
-    flex-grow: 1;
-    flex-basis: 0;
+    flex-grow: 0;
+    flex-shrink: 1;
     min-width: 0;
     height: 18px;
     min-height: 18px;
@@ -786,6 +808,12 @@
 .ygdr-cond-mode-dropdown,
 .ygdr-cond-bool-btn {
     margin-left: 4px;
+    width: 92px;
+}
+
+.ygdr-cond-value-field {
+    margin-left: 4px;
+    width: 64px;
 }
 
 /* Unity's built-in FloatField/IntegerField wrap an inner input container that carries its
@@ -1456,6 +1484,11 @@
 .ygdr-clipremap-label-narrow {
     width: 60px;
     font-size: 11px;
+}
+
+.ygdr-params-rename-label {
+    width: 125px;
+    flex-shrink: 0;
 }
 
 .ygdr-clipremap-field {

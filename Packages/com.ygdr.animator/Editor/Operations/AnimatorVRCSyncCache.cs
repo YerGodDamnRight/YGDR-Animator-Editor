@@ -73,6 +73,15 @@ namespace YGDR.Editor.Animation
         // (subscription order depends on which type touches VRCSyncCache first).
         internal static void EnsureSynced() => OnSelectionChanged();
 
+        // True while a non-Animator source is pinned and the selection is the bound GameObject or a
+        // non-GameObject (a state/transition clicked in the graph clears activeGameObject).
+        internal static bool IsPinnedSourceSelected()
+        {
+            if (_sourceController == null || ControllerSource == AnimatorComponentSource || _cachedSelectedGO == null) return false;
+            var activeGO = Selection.activeGameObject;
+            return activeGO == null || ReferenceEquals(activeGO, _cachedSelectedGO);
+        }
+
         static void OnSelectionChanged()
         {
             var activeGO = Selection.activeGameObject;
@@ -92,6 +101,65 @@ namespace YGDR.Editor.Animation
 
             if (FindFirstFullControllerData(activeGO, out var fullControllerController, out var fullControllerParams, out var fullControllerMenu))
                 RebuildFromVrcFury(activeGO, fullControllerController, fullControllerParams, fullControllerMenu);
+        }
+
+        const string ControllerSourcePrefKey = "YGDR.AnimatorTools.ControllerSource";
+        internal const int AnimatorComponentSource = -1;
+
+        // -1 = the Animator component's controller; otherwise a VRCAvatarDescriptor.AnimLayerType value.
+        internal static int ControllerSource => EditorPrefs.GetInt(ControllerSourcePrefKey, AnimatorComponentSource);
+
+        internal static void SetControllerSource(int source)
+        {
+            EditorPrefs.SetInt(ControllerSourcePrefKey, source);
+            _cachedSelectedGO = null;
+            OnSelectionChanged();
+        }
+
+        static bool TryGetSourceLayerType(out VRCAvatarDescriptor.AnimLayerType layerType)
+        {
+            layerType = default;
+            var source = ControllerSource;
+            if (source == AnimatorComponentSource) return false;
+            layerType = (VRCAvatarDescriptor.AnimLayerType)source;
+            return true;
+        }
+
+        static AnimatorController ResolveDescriptorController(VRCAvatarDescriptor avatarDescriptor)
+        {
+            if (!TryGetSourceLayerType(out var layerType))
+                return avatarDescriptor.GetComponent<Animator>()?.runtimeAnimatorController as AnimatorController;
+
+            foreach (var layer in avatarDescriptor.baseAnimationLayers)
+                if (layer.type == layerType && layer.animatorController is AnimatorController baseController) return baseController;
+            foreach (var layer in avatarDescriptor.specialAnimationLayers)
+                if (layer.type == layerType && layer.animatorController is AnimatorController specialController) return specialController;
+            return null;
+        }
+
+        // First controller entry whose layer type matches the chosen source (legacy single-controller
+        // format checked last), or the GameObject's Animator component controller when that is chosen.
+        static AnimatorController ResolveFullControllerController(GameObject go, object feature, Type featureType)
+        {
+            if (!TryGetSourceLayerType(out var layerType))
+                return go.GetComponent<Animator>()?.runtimeAnimatorController as AnimatorController;
+
+            var entries = AccessTools.Field(featureType, "controllers")?.GetValue(feature) as System.Collections.IEnumerable;
+            if (entries != null)
+            {
+                foreach (var entry in entries)
+                {
+                    if (entry == null) continue;
+                    if (!Equals(AccessTools.Field(entry.GetType(), "type")?.GetValue(entry), layerType)) continue;
+                    var guidRef = AccessTools.Field(entry.GetType(), "controller")?.GetValue(entry);
+                    var entryController = guidRef == null ? null : AccessTools.Field(guidRef.GetType(), "objRef")?.GetValue(guidRef) as AnimatorController;
+                    if (entryController != null) return entryController;
+                }
+            }
+
+            if (!Equals(AccessTools.Field(featureType, "type")?.GetValue(feature), layerType)) return null;
+            var directRef = AccessTools.Field(featureType, "controller")?.GetValue(feature);
+            return directRef == null ? null : AccessTools.Field(directRef.GetType(), "objRef")?.GetValue(directRef) as AnimatorController;
         }
 
         static void OnUndoRedo()
@@ -175,9 +243,12 @@ namespace YGDR.Editor.Animation
                 // Force-pushing the controller on every rebuild (like RebuildFromVrcFury does) keeps the
                 // native window's graph in an eager-sync mode; without this, clip changes made through our
                 // dropdown only actually commit to state.motion while the graph tab is visible.
-                var animator = avatarDescriptor.GetComponent<Animator>();
-                if (animator != null && animator.runtimeAnimatorController is AnimatorController animatorController)
-                    OpenControllerInAnimatorWindow(animatorController);
+                var sourceController = ResolveDescriptorController(avatarDescriptor);
+                if (sourceController != null)
+                {
+                    _sourceController = sourceController;
+                    OpenControllerInAnimatorWindow(sourceController);
+                }
             }
             catch (Exception e)
             {
@@ -197,7 +268,10 @@ namespace YGDR.Editor.Animation
                 _vrcFuryMenu = expressionsMenu;
 
                 if (controller != null)
+                {
+                    _sourceController = controller;
                     OpenControllerInAnimatorWindow(controller);
+                }
 
                 if (expressionParameters?.parameters == null) return;
 #if VRC_SDK_VRCSDK3
@@ -222,7 +296,12 @@ namespace YGDR.Editor.Animation
             _vrcFuryParams = null;
             _vrcFuryController = null;
             _vrcFuryMenu = null;
+            _sourceController = null;
         }
+
+        // Controller this cache last pushed into the animator window; the window must not treat it as a detached edit.
+        static AnimatorController _sourceController;        internal static bool IsSourceController(AnimatorController controller) =>
+            controller != null && controller == _sourceController;
 
         static void BuildSyncMaps(VRCExpressionParameters.Parameter[] parameters)
         {
@@ -321,7 +400,7 @@ namespace YGDR.Editor.Animation
                     if (feature?.GetType().FullName != "VF.Model.Feature.FullController") continue;
 
                     var featureType = feature.GetType();
-                    controller           = ExtractObjRef<AnimatorController>      (feature, featureType, "controllers", "controller",  "controller");
+                    controller           = ResolveFullControllerController(go, feature, featureType);
                     expressionParameters = ExtractObjRef<VRCExpressionParameters>  (feature, featureType, "prms",        "parameters",  "parameters");
                     expressionsMenu      = ExtractObjRef<VRCExpressionsMenu>        (feature, featureType, "menus",       "menu",        "menu");
 
@@ -344,6 +423,37 @@ namespace YGDR.Editor.Animation
             valueType = default;
             if (_valueTypeMap == null) return false;
             return _valueTypeMap.TryGetValue(paramName, out valueType);
+        }
+
+#if VRC_SDK_BITWIDTH
+        internal static bool TryGetValueRange(VRCExpressionParameters.Parameter parameter, out float minValue, out float maxValue)
+        {
+            minValue = 0f;
+            maxValue = 1f;
+            switch (parameter.valueType)
+            {
+                case VRCExpressionParameters.ValueType.Float:
+                    if (!parameter.flippedRepresentation) minValue = -1f;
+                    return true;
+                case VRCExpressionParameters.ValueType.Int:
+                    int bitWidth = GetBitCost(parameter);
+                    minValue = parameter.flippedRepresentation ? -(1 << (bitWidth - 1)) : 0;
+                    maxValue = parameter.flippedRepresentation ? (1 << (bitWidth - 1)) - 1 : (1 << bitWidth) - 1;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+#endif
+
+        // Unset (0) or out-of-range widths fall back to 8, matching the SDK's own default.
+        internal static int GetBitCost(VRCExpressionParameters.Parameter parameter)
+        {
+            if (parameter.valueType == VRCExpressionParameters.ValueType.Bool) return 1;
+#if VRC_SDK_BITWIDTH
+            if (parameter.bitWidth >= 1 && parameter.bitWidth <= 8) return parameter.bitWidth;
+#endif
+            return 8;
         }
 
         internal static bool TryGetParameter(string paramName, out VRCExpressionParameters.Parameter parameter)
@@ -468,6 +578,27 @@ namespace YGDR.Editor.Animation
             var avatarDescriptor = _cachedAvatarRoot.GetComponent<VRCAvatarDescriptor>();
             return avatarDescriptor != null ? avatarDescriptor.expressionsMenu : null;
         }
+    }
+
+    // Native rebinds to the selected Animator's controller from two places, undoing the pinned source:
+    // DetectAnimatorControllerFromSelection (OnFocus/OnSelectionChange/OnProjectChange, when the current
+    // controller isn't among the Animator's playables — always, in edit mode) and OnControllerChange
+    // (every OnGUI, via the preview animator that OnFocus/OnSelectionChange set).
+    [HarmonyPatch]
+    internal static class PatchKeepPinnedControllerSource
+    {
+        [HarmonyPrepare]
+        static bool Prepare() => AnimatorEditorInit.AnimatorControllerToolType != null;
+
+        [HarmonyTargetMethods]
+        static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(AnimatorEditorInit.AnimatorControllerToolType, "DetectAnimatorControllerFromSelection");
+            yield return AccessTools.Method(AnimatorEditorInit.AnimatorControllerToolType, "OnControllerChange");
+        }
+
+        [HarmonyPrefix]
+        static bool Prefix() => !VRCSyncCache.IsPinnedSourceSelected();
     }
 }
 #endif

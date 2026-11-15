@@ -284,6 +284,69 @@ namespace YGDR.Editor.Animation
                 if (!string.IsNullOrEmpty(playAudio.ParameterName))
                     result.Add(playAudio.ParameterName);
         }
+
+#if VRC_SDK_BITWIDTH
+        /* Literal values the controller compares against or drives into each parameter. Greater/Less conditions and Add drivers are skipped: their thresholds don't imply a reachable value. */
+        internal static Dictionary<string, (float min, float max)> CollectParameterValueRanges(AnimatorController controller)
+        {
+            var ranges = new Dictionary<string, (float min, float max)>();
+            foreach (var layer in controller.layers)
+                CollectValueRanges(layer.stateMachine, ranges);
+            return ranges;
+        }
+
+        static void CollectValueRanges(AnimatorStateMachine stateMachine, Dictionary<string, (float min, float max)> ranges)
+        {
+            IncludeConditionValues(stateMachine.anyStateTransitions, ranges);
+            IncludeConditionValues(stateMachine.entryTransitions, ranges);
+            IncludeDriverValues(stateMachine.behaviours, ranges);
+            foreach (var childState in stateMachine.states)
+            {
+                IncludeConditionValues(childState.state.transitions, ranges);
+                IncludeDriverValues(childState.state.behaviours, ranges);
+            }
+            foreach (var childStateMachine in stateMachine.stateMachines)
+                CollectValueRanges(childStateMachine.stateMachine, ranges);
+        }
+
+        static void IncludeValue(Dictionary<string, (float min, float max)> ranges, string parameterName, float value)
+        {
+            if (string.IsNullOrEmpty(parameterName)) return;
+            ranges[parameterName] = ranges.TryGetValue(parameterName, out var range)
+                ? (Mathf.Min(range.min, value), Mathf.Max(range.max, value))
+                : (value, value);
+        }
+
+        static void IncludeConditionValues(AnimatorTransitionBase[] transitions, Dictionary<string, (float min, float max)> ranges)
+        {
+            foreach (var transition in transitions)
+                foreach (var condition in transition.conditions)
+                    if (condition.mode == AnimatorConditionMode.Equals || condition.mode == AnimatorConditionMode.NotEqual)
+                        IncludeValue(ranges, condition.parameter, condition.threshold);
+        }
+
+        static void IncludeDriverValues(StateMachineBehaviour[] behaviours, Dictionary<string, (float min, float max)> ranges)
+        {
+            foreach (var driver in behaviours.OfType<VRCAvatarParameterDriver>())
+                foreach (var driverParameter in driver.parameters)
+                {
+                    switch (driverParameter.type)
+                    {
+                        case VRC_AvatarParameterDriver.ChangeType.Set:
+                            IncludeValue(ranges, driverParameter.name, driverParameter.value);
+                            break;
+                        case VRC_AvatarParameterDriver.ChangeType.Random:
+                            IncludeValue(ranges, driverParameter.name, driverParameter.valueMin);
+                            IncludeValue(ranges, driverParameter.name, driverParameter.valueMax);
+                            break;
+                        case VRC_AvatarParameterDriver.ChangeType.Copy when driverParameter.convertRange:
+                            IncludeValue(ranges, driverParameter.name, driverParameter.destMin);
+                            IncludeValue(ranges, driverParameter.name, driverParameter.destMax);
+                            break;
+                    }
+                }
+        }
+#endif
 #endif
 
         internal static void DeleteParameterAndClean(AnimatorController controller, string paramName)

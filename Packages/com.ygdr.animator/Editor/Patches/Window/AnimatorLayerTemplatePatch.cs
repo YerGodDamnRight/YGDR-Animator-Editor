@@ -1291,7 +1291,7 @@ namespace YGDR.Editor.Animation
 #endif
         }
 
-        static void UpdateParamRefsInSM(AnimatorStateMachine sm, string oldName, string newName)
+        internal static void UpdateParamRefsInSM(AnimatorStateMachine sm, string oldName, string newName)
         {
             foreach (var anyStateTransition in sm.anyStateTransitions)
                 UpdateTransitionConditions(anyStateTransition, oldName, newName);

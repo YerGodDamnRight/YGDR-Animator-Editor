@@ -77,10 +77,10 @@ namespace YGDR.Editor.Animation
         {
             _cachedVersion    = null;
             _paletteApplied   = false;
-            _helpTransitions  = MdvHelpAction("Transitions", 63, 94);
-            _helpStates       = MdvHelpAction("States", 97, 144);
-            _helpController   = MdvHelpAction("Controller", 147, 200);
-            _helpSettings     = MdvHelpAction("Settings", 203, 301);
+            _helpTransitions  = MdvHelpAction("Transitions", 66, 96);
+            _helpStates       = MdvHelpAction("States", 100, 146);
+            _helpController   = MdvHelpAction("Controller", 150, 208);
+            _helpSettings     = MdvHelpAction("Settings", 212, 309);
             _helpDocs         = MdvHelpAction("Tool Docs", -1, -1);
             Selection.selectionChanged += OnSelectionChanged;
             EditorApplication.update += PollAnimatorWindow;
@@ -232,7 +232,7 @@ namespace YGDR.Editor.Animation
         // moves elsewhere, VRCSyncCache's own Selection.selectionChanged handler rebinds normally.
         static void InvalidateBindingIfDetached(AnimatorController editedController)
         {
-            if (editedController == null || !VRCSyncCache.AvatarOwnsController(editedController)) return;
+            if (editedController == null || VRCSyncCache.IsSourceController(editedController) || !VRCSyncCache.AvatarOwnsController(editedController)) return;
             var animator = GetSelectedAnimator();
             if (animator != null && animator.runtimeAnimatorController == editedController)
             {
@@ -546,7 +546,58 @@ namespace YGDR.Editor.Animation
                     AddBreadcrumbSegment(_subContextPath[i], isLeaf: i == _subContextPath.Length - 1);
                 }
             }
+
+#if VRC_SDK_VRCSDK3
+            _layerBarRoot.Add(GetControllerSourceDropdown());
+#endif
         }
+
+#if VRC_SDK_VRCSDK3
+        Button _controllerSourceButton;
+
+        // Index 0 = Animator component (-1); index n>0 = AnimLayerType value n-1.
+        static string[] GetControllerSourceChoices()
+        {
+            var choices = new System.Collections.Generic.List<string> { L10n.Get("tab_menu.animator_component") };
+            choices.AddRange(Enum.GetNames(typeof(VRC.SDK3.Avatars.Components.VRCAvatarDescriptor.AnimLayerType)));
+            return choices.ToArray();
+        }
+
+        VisualElement _controllerSourceRow;
+
+        VisualElement GetControllerSourceDropdown()
+        {
+            var choices = GetControllerSourceChoices();
+            if (_controllerSourceRow == null)
+            {
+                _controllerSourceRow = new VisualElement();
+                _controllerSourceRow.AddToClassList("ygdr-source-row");
+
+                var sourceLabel = new Label(L10n.Get("tab_menu.controller_source"));
+                sourceLabel.AddToClassList("ygdr-breadcrumb-segment");
+                sourceLabel.AddToClassList("ygdr-source-label");
+                _controllerSourceRow.Add(sourceLabel);
+
+                _controllerSourceButton = new Button();
+                _controllerSourceButton.AddToClassList("ygdr-network-dropdown-field");
+                _controllerSourceButton.AddToClassList("ygdr-source-button");
+                StyleAccentButton(_controllerSourceButton);
+                _controllerSourceButton.Add(BuildDropdownArrow());
+                _controllerSourceRow.Add(_controllerSourceButton);
+                _controllerSourceButton.clicked += () =>
+                {
+                    var sourceChoices = GetControllerSourceChoices();
+                    ShowLayerDropdown(_controllerSourceButton.worldBound, sourceChoices, VRCSyncCache.ControllerSource + 1, index =>
+                    {
+                        VRCSyncCache.SetControllerSource(index - 1);
+                        _controllerSourceButton.text = sourceChoices[index];
+                    });
+                };
+            }
+            _controllerSourceButton.text = choices[VRCSyncCache.ControllerSource + 1];
+            return _controllerSourceRow;
+        }
+#endif
 
         void AddBreadcrumbSegment(string text, bool isLeaf)
         {
@@ -585,7 +636,7 @@ namespace YGDR.Editor.Animation
         static Action MdvHelpAction(string title, int lineMin, int lineMax)
         {
 #if YGDR_MDV
-            return () => YGDR.MDV.MDViewer.Open(MdvDocGuid, null, title, lineMin, lineMax, false);
+            return () => YGDR.MDV.MDViewer.Open(MdvDocGuid, null, title, lineMin - 1, lineMax, false);
 #else
             return () => EditorApplication.delayCall += () => EditorUtility.DisplayDialog(
                 "YGDR Markdown Viewer not installed",
@@ -719,6 +770,7 @@ namespace YGDR.Editor.Animation
             RefreshSettingsPaletteColors();
 #if VRC_SDK_VRCSDK3
             RefreshSharedBehaviorsPaletteColors();
+            if (_controllerSourceButton != null) _controllerSourceButton.style.backgroundColor = SharedWindowStyles.AccentColor;
 #endif
         }
     }

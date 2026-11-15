@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.2.2
+#### Added
+- Added parameter mass rename
+- Added controller source dropdown
+- Added out of range warning for synced parameter bitwidths
+
+#### Fixed
+- Fixed parameter dropdowns not syncing from native inspector
+- Fixed custom transition routing undo
+- Fixed shared behavior and menu parameter fields losing focus
+- Fixed layer weight and random chance sliders losing focus
+- Fixed mixed transition properties not updating all selected
+
 ## v1.2.1
 #### Added
 - Added transitions tab animation preview

@@ -103,6 +103,7 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool  showParamVrcComponentIcons = true;
         [SerializeField] internal bool  showParamBudget           = false;
         [SerializeField] internal bool  showParamUnusedIcon       = true;
+        [SerializeField] internal bool  paramCompactTypeLabels    = false;
         [SerializeField] internal Color paramColorFloat    = new Color(0.35f, 0.75f, 0.35f, 1f);
         [SerializeField] internal Color paramColorInt      = new Color(0.35f, 0.60f, 1.00f, 1f);
         [SerializeField] internal Color paramColorBool     = new Color(1.00f, 0.55f, 0.20f, 1f);
@@ -124,6 +125,7 @@ namespace YGDR.Editor.Animation
         [SerializeField] internal bool overlayShowMotion     = true;
         [SerializeField] internal bool overlayShowMotionName = true;
         [SerializeField] internal bool overlayShowCoords    = false;
+        [SerializeField] internal bool overlayCompact       = false;
         [SerializeField] internal Color overlayActiveColor = Color.white;
         [SerializeField] internal Color overlayInactiveColor = new Color(0.45f, 0.45f, 0.45f, 1f);
 

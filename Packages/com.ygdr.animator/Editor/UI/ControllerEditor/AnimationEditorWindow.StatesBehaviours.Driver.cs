@@ -409,19 +409,18 @@ namespace YGDR.Editor.Animation
             }
             else if (isBool && param.type == VRC_AvatarParameterDriver.ChangeType.Random)
             {
-                var slider = new Slider(0f, 1f) { value = param.chance, showMixedValue = entry.hasMixedValues };
-                slider.RegisterValueChangedCallback(evt =>
-                    ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, chance: evt.newValue)));
-                element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.chance"), null, slider));
+                element.Add(BuildGoalWeightRow(param.chance, entry.hasMixedValues,
+                    newValue => ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, chance: newValue)),
+                    L10n.Get("vrc.param_driver.chance")));
             }
             else if (param.type == VRC_AvatarParameterDriver.ChangeType.Random)
             {
-                var minField = new FloatField { value = param.valueMin, showMixedValue = entry.hasMixedValues };
+                var minField = new FloatField { value = param.valueMin, showMixedValue = entry.hasMixedValues, isDelayed = true };
                 minField.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, valueMin: evt.newValue)));
                 element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.min_value"), null, minField));
 
-                var maxField = new FloatField { value = param.valueMax, showMixedValue = entry.hasMixedValues };
+                var maxField = new FloatField { value = param.valueMax, showMixedValue = entry.hasMixedValues, isDelayed = true };
                 maxField.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, valueMax: evt.newValue)));
                 element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.max_value"), null, maxField));
@@ -435,15 +434,14 @@ namespace YGDR.Editor.Animation
                 }
                 else
                 {
-                    var chanceSlider = new Slider(0f, 1f) { value = param.chance, showMixedValue = entry.hasMixedValues };
-                    chanceSlider.RegisterValueChangedCallback(evt =>
-                        ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, chance: evt.newValue)));
-                    element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.chance"), null, chanceSlider));
+                    element.Add(BuildGoalWeightRow(param.chance, entry.hasMixedValues,
+                        newValue => ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, chance: newValue)),
+                        L10n.Get("vrc.param_driver.chance")));
                 }
             }
             else
             {
-                var valueField = new FloatField { value = param.value, showMixedValue = entry.hasMixedValues };
+                var valueField = new FloatField { value = param.value, showMixedValue = entry.hasMixedValues, isDelayed = true };
                 valueField.RegisterValueChangedCallback(evt =>
                     ReplaceDriverParam(statesWithName, resolver, entry, CloneParam(entry.param, value: evt.newValue)));
                 element.Add(BuildBehaviorFieldRow(L10n.Get("vrc.param_driver.value"), null, valueField));
@@ -462,7 +460,7 @@ namespace YGDR.Editor.Animation
             minLabel.AddToClassList("ygdr-driver-minmax-label");
             row.Add(minLabel);
 
-            var minField = new FloatField { value = min, showMixedValue = mixedMin };
+            var minField = new FloatField { value = min, showMixedValue = mixedMin, isDelayed = true };
             minField.AddToClassList("ygdr-driver-minmax-field");
             minField.RegisterValueChangedCallback(evt => onMinChanged(evt.newValue));
             row.Add(minField);
@@ -471,7 +469,7 @@ namespace YGDR.Editor.Animation
             maxLabel.AddToClassList("ygdr-driver-minmax-label");
             row.Add(maxLabel);
 
-            var maxField = new FloatField { value = max, showMixedValue = mixedMax };
+            var maxField = new FloatField { value = max, showMixedValue = mixedMax, isDelayed = true };
             maxField.AddToClassList("ygdr-driver-minmax-field");
             maxField.RegisterValueChangedCallback(evt => onMaxChanged(evt.newValue));
             row.Add(maxField);

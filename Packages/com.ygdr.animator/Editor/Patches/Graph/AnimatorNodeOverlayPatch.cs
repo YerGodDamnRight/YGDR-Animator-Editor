@@ -129,6 +129,7 @@ namespace YGDR.Editor.Animation
 
             // Left-anchored  Rect(nodeRect.x + offsetX, nodeRect.y + offsetY, width, height)
             bool hasMotion = state.motion != null;
+            bool compact   = settings.overlayCompact;
 
             if (settings.overlayShowLoopEmpty)
             {
@@ -166,28 +167,54 @@ namespace YGDR.Editor.Animation
             }
 
             // Right-anchored  Rect(nodeRect.x + nodeRect.width + offsetX, nodeRect.y + offsetY, width, height)  (offsetX is negative)
-            if (settings.overlayShowB)
+            if (compact)
             {
-                GUI.contentColor = state.behaviours.Length > 0 ? settings.overlayActiveColor : settings.overlayInactiveColor;
-                GUI.Label(new Rect(nodeRect.x + nodeRect.width + -14f, nodeRect.y + -28f, 13f, 15f), "B",  AnimatorStyles.IndicatorStyle);
-            }
+                // Single vertical rail down the right edge, spread across the full node height: WD, B, M, S
+                var railItems = new List<(string label, bool active)>(4);
+                if (settings.overlayShowWD)     railItems.Add(("WD", state.writeDefaultValues));
+                if (settings.overlayShowB)      railItems.Add(("B",  state.behaviours.Length > 0));
+                if (settings.overlayShowMotion) railItems.Add(("M",  state.timeParameterActive));
+                if (settings.overlayShowSpeed)  railItems.Add(("S",  state.speedParameterActive));
 
-            if (settings.overlayShowWD)
-            {
-                GUI.contentColor = state.writeDefaultValues ? settings.overlayActiveColor : settings.overlayInactiveColor;
-                GUI.Label(new Rect(nodeRect.x + nodeRect.width + -36f, nodeRect.y + -28f, 22f, 15f), "WD", AnimatorStyles.IndicatorStyle);
+                if (railItems.Count > 0)
+                {
+                    const float rowHeight = 12f;
+                    float railX     = nodeRect.x + nodeRect.width - 22f;
+                    float railTop   = nodeRect.y - 28f;
+                    float railBottom = nodeRect.yMax - rowHeight;
+                    float step = railItems.Count > 1 ? (railBottom - railTop) / (railItems.Count - 1) : 0f;
+                    for (int i = 0; i < railItems.Count; i++)
+                    {
+                        GUI.contentColor = railItems[i].active ? settings.overlayActiveColor : settings.overlayInactiveColor;
+                        GUI.Label(new Rect(railX, railTop + step * i, 20f, rowHeight), railItems[i].label, AnimatorStyles.IndicatorCompactStyle);
+                    }
+                }
             }
-
-            if (settings.overlayShowSpeed)
+            else
             {
-                GUI.contentColor = state.speedParameterActive ? settings.overlayActiveColor : settings.overlayInactiveColor;
-                GUI.Label(new Rect(nodeRect.x + nodeRect.width + -14f, nodeRect.y + -5f, 13f, 15f), "S",  AnimatorStyles.IndicatorStyle);
-            }
+                if (settings.overlayShowB)
+                {
+                    GUI.contentColor = state.behaviours.Length > 0 ? settings.overlayActiveColor : settings.overlayInactiveColor;
+                    GUI.Label(new Rect(nodeRect.x + nodeRect.width + -14f, nodeRect.y + -28f, 13f, 15f), "B",  AnimatorStyles.IndicatorStyle);
+                }
 
-            if (settings.overlayShowMotion)
-            {
-                GUI.contentColor = state.timeParameterActive ? settings.overlayActiveColor : settings.overlayInactiveColor;
-                GUI.Label(new Rect(nodeRect.x + nodeRect.width + -36f, nodeRect.y + -5f, 22f, 15f), "M",  AnimatorStyles.IndicatorStyle);
+                if (settings.overlayShowWD)
+                {
+                    GUI.contentColor = state.writeDefaultValues ? settings.overlayActiveColor : settings.overlayInactiveColor;
+                    GUI.Label(new Rect(nodeRect.x + nodeRect.width + -36f, nodeRect.y + -28f, 22f, 15f), "WD", AnimatorStyles.IndicatorStyle);
+                }
+
+                if (settings.overlayShowSpeed)
+                {
+                    GUI.contentColor = state.speedParameterActive ? settings.overlayActiveColor : settings.overlayInactiveColor;
+                    GUI.Label(new Rect(nodeRect.x + nodeRect.width + -14f, nodeRect.y + -5f, 13f, 15f), "S",  AnimatorStyles.IndicatorStyle);
+                }
+
+                if (settings.overlayShowMotion)
+                {
+                    GUI.contentColor = state.timeParameterActive ? settings.overlayActiveColor : settings.overlayInactiveColor;
+                    GUI.Label(new Rect(nodeRect.x + nodeRect.width + -36f, nodeRect.y + -5f, 22f, 15f), "M",  AnimatorStyles.IndicatorStyle);
+                }
             }
 
             if (settings.overlayShowMotionName && MotionRenameState.RenameTargetState != state)
@@ -227,7 +254,8 @@ namespace YGDR.Editor.Animation
         {
             var previousContentColor = GUI.contentColor;
             GUI.contentColor = settings.overlayActiveColor;
-            GUI.Label(new Rect(nodeRect.x, nodeRect.y - 25f, nodeRect.width, 20f), state.name, AnimatorStyles.NodeNameStyle);
+            var nameStyle = settings.overlayCompact ? AnimatorStyles.MotionNameStyle : AnimatorStyles.NodeNameStyle;
+            GUI.Label(new Rect(nodeRect.x, nodeRect.y - 25f, nodeRect.width, 20f), state.name, nameStyle);
             GUI.contentColor = previousContentColor;
         }
 

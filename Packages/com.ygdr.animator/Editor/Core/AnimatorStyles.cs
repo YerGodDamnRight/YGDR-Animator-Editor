@@ -38,6 +38,17 @@ namespace YGDR.Editor.Animation
             clipping  = TextClipping.Clip,
         };
 
+        static GUIStyle _indicatorCompactStyle;
+        internal static GUIStyle IndicatorCompactStyle => _indicatorCompactStyle ??= new GUIStyle(EditorStyles.miniLabel)
+        {
+            fontSize  = 10,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleRight,
+            padding   = new RectOffset(0, 0, 0, 0),
+            margin    = new RectOffset(0, 0, 0, 0),
+            clipping  = TextClipping.Clip,
+        };
+
         static GUIStyle _loopStyle;
         internal static GUIStyle LoopStyle => _loopStyle ??= new GUIStyle(EditorStyles.miniLabel)
         {

@@ -19,6 +19,11 @@
             "define": "VRC_SDK_VRCSDK3"
         },
         {
+            "name": "com.vrchat.avatars",
+            "expression": "3.10.6",
+            "define": "VRC_SDK_BITWIDTH"
+        },
+        {
             "name": "com.ygdr.mdv",
             "expression": "",
             "define": "YGDR_MDV"

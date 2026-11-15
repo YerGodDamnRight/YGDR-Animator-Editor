@@ -563,6 +563,7 @@ namespace YGDR.Editor.Animation
             AddGridToggle(toggleGrid2, 4, L10n.Get("settings.vrc_comp_icons"), settings.showParamVrcComponentIcons, v => { settings.showParamVrcComponentIcons = v; settings.Save(); });
             AddGridToggle(toggleGrid2, 4, L10n.Get("settings.param_budget"),   settings.showParamBudget,            v => { settings.showParamBudget = v; settings.Save(); });
             AddGridToggle(toggleGrid2, 4, L10n.Get("settings.empty_params"),   settings.showParamUnusedIcon,        v => { settings.showParamUnusedIcon = v; settings.Save(); });
+            AddGridToggle(toggleGrid2, 4, L10n.Get("settings.compact_icons"),  settings.paramCompactTypeLabels,     v => { settings.paramCompactTypeLabels = v; settings.Save(); });
 
             _paletteColorFields[0] = MakeColorRow(body, L10n.Get("settings.palette.primary"), 150, settings.paletteColorPrimary, AnimatorDefaultSettings.DefaultPrimary,
                 c => { settings.paletteColorPrimary = c; SharedWindowStyles.ApplyPalette(settings.paletteColorPrimary, settings.paletteColorSecondary, settings.paletteColorAccent); settings.Save(); },
@@ -762,6 +763,9 @@ namespace YGDR.Editor.Animation
             AddGridToggle(toggleGrid2, 4, L10n.Get("settings.overlay.clip_name"), settings.overlayShowMotionName, v => { settings.overlayShowMotionName = v; settings.Save(); });
             AddGridToggle(toggleGrid2, 4, L10n.Get("settings.overlay.motion"),    settings.overlayShowMotion,     v => { settings.overlayShowMotion = v; settings.Save(); });
             AddGridToggle(toggleGrid2, 4, L10n.Get("settings.overlay.speed"),     settings.overlayShowSpeed,      v => { settings.overlayShowSpeed = v; settings.Save(); });
+
+            var toggleGrid3 = MakeToggleGrid(body, 4);
+            AddGridToggle(toggleGrid3, 4, L10n.Get("settings.overlay.compact"),   settings.overlayCompact,        v => { settings.overlayCompact = v; settings.Save(); });
 
             _paletteColorFields[22] = MakeColorRow(body, L10n.Get("settings.overlay.active"),   150, settings.overlayActiveColor,   Color.white, c => { settings.overlayActiveColor = c; settings.Save(); });
             _paletteColorFields[23] = MakeColorRow(body, L10n.Get("settings.overlay.inactive"), 150, settings.overlayInactiveColor, new Color(0.45f, 0.45f, 0.45f, 1f), c => { settings.overlayInactiveColor = c; settings.Save(); });
